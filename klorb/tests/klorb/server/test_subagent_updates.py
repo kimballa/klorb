@@ -19,13 +19,13 @@ def _add_subagent(root: Session, role: str = "explorer", title: str = "find the 
     return handle
 
 
-def test_root_only_tree_reports_one_node_with_the_acp_id_override() -> None:
+def test_root_only_tree_reports_one_node() -> None:
     root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
 
-    snapshot = build_subagent_tree_snapshot(root, acp_session_id="acp-front-door")
+    snapshot = build_subagent_tree_snapshot(root)
 
     assert snapshot["nodes"] == [{
-        "id": "acp-front-door",
+        "id": root.id,
         "parentId": None,
         "address": "1",
         "title": None,
@@ -41,15 +41,15 @@ def test_root_only_tree_reports_one_node_with_the_acp_id_override() -> None:
     }]
 
 
-def test_subagent_node_reports_its_parent_by_the_overridden_root_id() -> None:
+def test_subagent_node_reports_its_parent_by_the_root_id() -> None:
     root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
     handle = _add_subagent(root)
 
-    snapshot = build_subagent_tree_snapshot(root, acp_session_id="acp-front-door")
+    snapshot = build_subagent_tree_snapshot(root)
 
     child_node = snapshot["nodes"][1]
     assert child_node["id"] == handle.session.id
-    assert child_node["parentId"] == "acp-front-door"
+    assert child_node["parentId"] == root.id
     assert child_node["address"] == "1.1"
     assert child_node["state"] == "running"
 
@@ -59,7 +59,7 @@ def test_grandchild_subagent_reports_its_direct_parent_not_the_root() -> None:
     handle = _add_subagent(root, title="find the bug")
     grandchild = _add_subagent(handle.session, title="dig deeper")
 
-    snapshot = build_subagent_tree_snapshot(root, acp_session_id="acp-front-door")
+    snapshot = build_subagent_tree_snapshot(root)
 
     grandchild_node = next(
         node for node in snapshot["nodes"] if node["id"] == grandchild.session.id)
@@ -73,7 +73,7 @@ def test_finished_handle_with_abort_marker_reports_aborted() -> None:
     handle.state = "finished"
     handle.output = f"partial\n\n{SUBAGENT_ABORTED_MARKER}"
 
-    snapshot = build_subagent_tree_snapshot(root, acp_session_id="acp-front-door")
+    snapshot = build_subagent_tree_snapshot(root)
 
     child_node = snapshot["nodes"][1]
     assert child_node["state"] == "finished"
@@ -86,7 +86,7 @@ def test_finished_handle_without_abort_marker_reports_not_aborted() -> None:
     handle.state = "finished"
     handle.output = "all done"
 
-    snapshot = build_subagent_tree_snapshot(root, acp_session_id="acp-front-door")
+    snapshot = build_subagent_tree_snapshot(root)
 
     child_node = snapshot["nodes"][1]
     assert child_node["aborted"] is False

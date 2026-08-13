@@ -19,16 +19,16 @@ from tui.conftest import (
 )
 
 from klorb.agents.runtime import SubagentHandle
-from klorb.api_provider import ResponseAborted
+from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
 from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, Session, SessionConfig
-from klorb.session_naming import SessionName, rename_session_id
+from klorb.session_naming import SessionName
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, NEW_SESSION_LABEL, PROMPT_INPUT_ID, SESSION_NAME_ID
 from klorb.tui.widgets.prompt_input import PromptInput
-from klorb.tui.widgets.tool_call_widgets import GettingReadyStatic, ToolCallStatic, TurnWaitingStatic
+from klorb.tui.widgets.tool_call_widgets import ToolCallStatic, TurnWaitingStatic
 from klorb.workspace import Workspace
 
 
@@ -1060,7 +1060,12 @@ async def test_session_name_line_starts_as_new_session() -> None:
         assert _session_name_line(app) == NEW_SESSION_LABEL
 
 
-async def test_first_submit_triggers_naming_and_renames_session_id_and_status_line() -> None:
+async def test_first_submit_triggers_naming_and_updates_status_line_without_renaming_id() -> None:
+    """Session naming runs on a background thread (`SessionCoreMixin._start_session_naming`) and
+    only ever derives a title -- `Session.id` never changes, and the status line update lands
+    whenever that thread finishes, not necessarily by the time the turn's own worker completes
+    (`app.workers.wait_for_complete()` only covers the latter), so the test polls via
+    `_wait_until` instead of asserting immediately."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
     app = ReplApp(session=_session(mock_provider))
@@ -1068,24 +1073,23 @@ async def test_first_submit_triggers_naming_and_renames_session_id_and_status_li
 
     with patch(
         "klorb.session.mixins.core.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
+        return_value=SessionName(title="Fix auth bug"),
     ) as mock_generate_session_name:
         async with app.run_test() as pilot:
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             prompt_input.text = "please fix the auth bug"
             await pilot.press("enter")
             await app.workers.wait_for_complete()
-            await pilot.pause()
+            await _wait_until(pilot, lambda: _session_name_line(app) == "Session: Fix auth bug")
 
-            assert app._session.id == rename_session_id(original_id, "fix-auth-bug")
-            assert _session_name_line(app) == "Session: Fix auth bug"
+            assert app._session.id == original_id
             assert app._session.session_naming_pending is False
 
     mock_generate_session_name.assert_called_once()
     assert mock_generate_session_name.call_args.args[0] == "please fix the auth bug"
 
 
-async def test_naming_failure_leaves_id_unchanged_and_shows_the_fallback_title() -> None:
+async def test_naming_failure_shows_the_fallback_title() -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
     app = ReplApp(session=_session(mock_provider))
@@ -1099,15 +1103,25 @@ async def test_naming_failure_leaves_id_unchanged_and_shows_the_fallback_title()
             prompt_input.text = "hello"
             await pilot.press("enter")
             await app.workers.wait_for_complete()
-            await pilot.pause()
+            await _wait_until(pilot, lambda: _session_name_line(app) == "Session: hello...")
 
             assert app._session.id == original_id
-            assert _session_name_line(app) == "Session: hello..."
 
 
-async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_after() -> None:
+async def test_turn_waiting_widget_mounts_immediately_even_while_naming_is_still_running() -> None:
+    """The classifier no longer blocks the turn's own dispatch -- `TurnWaitingStatic` must mount
+    right away on the first submitted prompt, the same as any other turn, even while a slow
+    classifier call is still in flight on its own background thread. The turn's own response is
+    also held back (`turn_release`) so it can't remove the widget before the assertion below runs
+    -- otherwise a fast mocked turn could race past the naming thread and finish first."""
     mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
+    turn_release = threading.Event()
+
+    def blocking_send_prompt(*args: Any, **kwargs: Any) -> ProviderResponse:
+        turn_release.wait(timeout=5)
+        return _reply("hi there")
+
+    mock_provider.send_prompt.side_effect = blocking_send_prompt
     app = ReplApp(session=_session(mock_provider))
     naming_started = threading.Event()
     release_naming = threading.Event()
@@ -1115,7 +1129,7 @@ async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_aft
     def fake_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
         naming_started.set()
         release_naming.wait(timeout=5)
-        return SessionName(title="Fix auth bug", slug="fix-auth-bug")
+        return SessionName(title="Fix auth bug")
 
     with patch(
         "klorb.session.mixins.core.generate_session_name",
@@ -1128,119 +1142,12 @@ async def test_getting_ready_widget_is_mounted_while_naming_runs_and_removed_aft
 
             await _wait_until(pilot, naming_started.is_set)
             history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-            assert len(history.query(GettingReadyStatic)) == 1
+            assert len(history.query(TurnWaitingStatic)) == 1
 
             release_naming.set()
+            turn_release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
-
-            assert len(history.query(GettingReadyStatic)) == 0
-
-
-async def test_turn_waiting_widget_does_not_appear_until_getting_ready_widget_is_gone() -> None:
-    """On a session's first submitted prompt, `TurnWaitingStatic` must not show up while the
-    session-naming classifier's own `GettingReadyStatic` is still up -- the two "still working"
-    notices should never be visible at the same time."""
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider))
-    naming_started = threading.Event()
-    release_naming = threading.Event()
-
-    def fake_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
-        naming_started.set()
-        release_naming.wait(timeout=5)
-        return SessionName(title="Fix auth bug", slug="fix-auth-bug")
-
-    with patch(
-        "klorb.session.mixins.core.generate_session_name",
-        side_effect=fake_generate_session_name,
-    ):
-        async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "please fix the auth bug"
-            await pilot.press("enter")
-
-            await _wait_until(pilot, naming_started.is_set)
-            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
-            assert len(history.query(GettingReadyStatic)) == 1
-            assert len(history.query(TurnWaitingStatic)) == 0
-            assert app._turn_waiting_widget is None
-
-            release_naming.set()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert len(history.query(GettingReadyStatic)) == 0
-
-
-async def test_naming_renames_the_session_log_file_when_session_log_enabled() -> None:
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider), session_log_enabled=True)
-    original_id = app._session.id
-
-    with patch(
-        "klorb.session.mixins.core.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
-    ), patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
-        async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "please fix the auth bug"
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-    new_id = rename_session_id(original_id, "fix-auth-bug")
-    mock_configure_logging.assert_any_call(repl_mode=True, log_path=None)
-    mock_configure_logging.assert_any_call(repl_mode=True, log_path=session_log_path(new_id))
-
-
-async def test_naming_actually_renames_the_log_file_on_disk_preserving_its_content() -> None:
-    """End-to-end (no `configure_logging` mock, real -- but test-isolated, see `conftest.
-    _redirect_session_logs` -- `SESSION_LOGS_DIR`) check that the pre-existing log file is
-    renamed rather than recreated empty: its content survives the rename."""
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider), session_log_enabled=True)
-    original_id = app._session.id
-    old_log_path = session_log_path(original_id)
-    old_log_path.parent.mkdir(parents=True, exist_ok=True)
-    old_log_path.write_text("startup log line\n", encoding="utf-8")
-
-    with patch(
-        "klorb.session.mixins.core.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
-    ):
-        async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "please fix the auth bug"
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-    new_log_path = session_log_path(rename_session_id(original_id, "fix-auth-bug"))
-    assert not old_log_path.exists()
-    assert new_log_path.read_text(encoding="utf-8").startswith("startup log line\n")
-
-
-async def test_naming_skips_log_rename_when_session_log_disabled() -> None:
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider), session_log_enabled=False)
-
-    with patch(
-        "klorb.session.mixins.core.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
-    ), patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
-        async with app.run_test() as pilot:
-            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
-            prompt_input.text = "please fix the auth bug"
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-
-    mock_configure_logging.assert_not_called()
 
 
 async def test_clear_session_resets_naming_pending_and_status_line() -> None:
@@ -1250,16 +1157,14 @@ async def test_clear_session_resets_naming_pending_and_status_line() -> None:
 
     with patch(
         "klorb.session.mixins.core.generate_session_name",
-        return_value=SessionName(title="Fix auth bug", slug="fix-auth-bug"),
+        return_value=SessionName(title="Fix auth bug"),
     ) as mock_generate_session_name:
         async with app.run_test() as pilot:
             prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
             prompt_input.text = "please fix the auth bug"
             await pilot.press("enter")
             await app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert _naming_pending(app) is False
+            await _wait_until(pilot, lambda: _naming_pending(app) is False)
 
             await _invoke_clear_session(pilot)
 
@@ -1269,9 +1174,7 @@ async def test_clear_session_resets_naming_pending_and_status_line() -> None:
             prompt_input.text = "another prompt"
             await pilot.press("enter")
             await app.workers.wait_for_complete()
-            await pilot.pause()
-
-            assert _naming_pending(app) is False
+            await _wait_until(pilot, lambda: _naming_pending(app) is False)
 
     assert mock_generate_session_name.call_count == 2
 

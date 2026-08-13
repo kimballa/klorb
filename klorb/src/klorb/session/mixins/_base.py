@@ -116,6 +116,7 @@ class SessionBase:
     _context_files_seeded: bool
     _metadata_seeded: bool
     _session_naming_pending: bool
+    _session_naming_token: object | None
     _session_started_at: datetime
     _last_modified_at: datetime | None
     _pending_permission_framework_interjection: str | None
@@ -134,7 +135,6 @@ class SessionBase:
     _session_lock: Lockfile | None
     _session_subdir: str | None
     _session_claimed: bool
-    aliases: list[str]
     _wake_handler: Callable[[], None] | None
 
     def close(self) -> None: ...
@@ -175,6 +175,12 @@ class SessionBase:
 
     def _run_session_naming(self, prompt_text: str) -> "SessionName | None":
         raise NotImplementedError
+
+    def _start_session_naming(
+        self, prompt_text: str, callbacks: "TurnEventHandlers | None",
+    ) -> None: ...
+
+    def cancel_session_naming(self) -> None: ...
 
     def _ensure_skill_catalog(self) -> None: ...
 

@@ -251,21 +251,6 @@ class _CrawlAnimatedStatic(Static):
         self.remove()
 
 
-_GETTING_READY_TEXT = "Getting ready..."
-"""The literal text shown with a crawling bold-character animation (`crawl_animation_text`)
-while the first-turn session-naming classifier call (`klorb.session_naming`) is in flight."""
-
-
-class GettingReadyStatic(_CrawlAnimatedStatic):
-    """Animated notice mounted into history while the first-turn session-naming classifier
-    call is in flight -- the naming-step analog of `RunningToolCallStatic`'s "Running..."
-    animation, via the same `crawl_animation_text`.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(_GETTING_READY_TEXT)
-
-
 _TURN_WAITING_TEXTS = (
     "Working...",
     "Klorbing...",
@@ -278,11 +263,10 @@ which one shows for a given turn."""
 
 
 class TurnWaitingStatic(_CrawlAnimatedStatic):
-    """Animated notice mounted into history once a submitted turn is actually under way (right
-    after `_run_session_naming`, if the turn triggered one, has cleared its own
-    `GettingReadyStatic` -- see `PromptSubmissionMixin._send_prompt`), showing one of
-    `_TURN_WAITING_TEXTS` (chosen at random) under `crawl_animation_text`'s pulse animation
-    until the turn's own content starts arriving.
+    """Animated notice mounted into history as soon as a submitted turn is dispatched (see
+    `PromptSubmissionMixin._send_prompt`), showing one of `_TURN_WAITING_TEXTS` (chosen at
+    random) under `crawl_animation_text`'s pulse animation until the turn's own content starts
+    arriving.
     `PromptSubmissionMixin._clear_turn_waiting_widget` removes it as soon as the first
     response/thinking chunk or the first actually-running tool call widget is mounted for the
     turn, whichever comes first -- a tool call only counts once it's far enough along to mount

@@ -1,16 +1,15 @@
 # © Copyright 2026 Aaron Kimball
-"""LLM-driven session naming: derive a short human title and a kebab-case id slug for a fresh
-klorb session from its first user prompt. See docs/specs/process-and-session-config.md's
-"Session naming" section for the full design and `klorb.permissions.risk_classifier`, which
-this module deliberately mirrors (structured JSON output, `e2e_timeout` wrapper, one parse
-retry, "never raises" contract) for a second, unrelated small-model classification task.
+"""LLM-driven session naming: derive a short human title for a fresh klorb session from its
+first user prompt. See docs/specs/process-and-session-config.md's "Session naming" section for
+the full design and `klorb.permissions.risk_classifier`, which this module deliberately mirrors
+(structured JSON output, `e2e_timeout` wrapper, one parse retry, "never raises" contract) for a
+second, unrelated small-model classification task.
 
-`generate_session_name()` is pure with respect to `Session`: it never reads or writes
-`Session.id` or any other session state -- it only sends one request and returns a
-`SessionName | None`. `klorb.session.mixins.core.SessionCoreMixin._run_session_naming` owns
-deciding when to call it and what to do with the result (renaming `Session.id`/`Session.root_id`
-via `Session.set_id()`), same division of responsibility as `klorb.permissions.risk_classifier`'s
-`resolve_item_risk_assessment` vs. `classify_command_risk`.
+`generate_session_name()` is pure with respect to `Session`: it never reads or writes any session
+state -- it only sends one request and returns a `SessionName | None`. `klorb.session.mixins.
+core.SessionCoreMixin._run_session_naming` owns deciding when to call it and what to do with the
+result (setting `Session.name`), same division of responsibility as `klorb.permissions.
+risk_classifier`'s `resolve_item_risk_assessment` vs. `classify_command_risk`.
 """
 
 import json
@@ -21,7 +20,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError
 
 from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
@@ -40,43 +39,19 @@ default cheap/fast classifier model for small structured-output tasks such as se
 -- see `_default_naming_model`. Named generically (not e.g. `SESSION_NAMER`) since this same
 model choice may be reused for other small classification tasks beyond naming."""
 
-MAX_SLUG_WORDS = 4
-"""Maximum number of hyphen-separated words `SessionName.slug` may contain -- see
-`_SLUG_PATTERN`."""
-
-_SLUG_PATTERN = re.compile(rf"^[a-z0-9]+(-[a-z0-9]+){{0,{MAX_SLUG_WORDS - 1}}}$")
-"""Kebab-case, all-lowercase, at most `MAX_SLUG_WORDS` hyphen-separated words -- what
-`SessionName.slug` must match, e.g. `"fix-auth-bug"`."""
-
 
 class SessionName(BaseModel):
-    """One `generate_session_name()` reply: `title` is a short, human-readable summary of the
-    user's first prompt (shown in the TUI's status line as `"Session: <title>"`); `slug` is a
-    kebab-case, at-most-`MAX_SLUG_WORDS`-word identifier derived from the same prompt, used to
-    replace the random nonce in `Session.id` (see `rename_session_id`)."""
+    """One `generate_session_name()` reply: a short, human-readable summary of the user's first
+    prompt, shown in the TUI's status line as `"Session: <title>"`."""
 
     title: str
-    slug: str
-
-    @field_validator("slug")
-    @classmethod
-    def _validate_slug(cls, value: str) -> str:
-        if not _SLUG_PATTERN.match(value):
-            raise ValueError(
-                f"slug {value!r} is not kebab-case of at most {MAX_SLUG_WORDS} lowercase words")
-        return value
 
 
 _SYSTEM_PROMPT = """
 You are naming a coding-agent session based on the user's first message to it. Read the
-message and produce two things:
-
-* `title`: a short, human-readable summary of what the user is asking for -- plain English,
-  fewer than 60 characters, suitable for display as a session label (e.g. "Fix auth token
-  refresh bug").
-* `slug`: the same idea condensed into a kebab-case identifier of at most 4 lowercase words,
-  each word separated by a single hyphen, using only lowercase letters and digits (e.g.
-  "fix-auth-token-refresh").
+message and produce a `title`: a short, human-readable summary of what the user is asking for --
+plain English, fewer than 60 characters, suitable for display as a session label (e.g. "Fix auth
+token refresh bug").
 
 ## Output format
 
@@ -129,10 +104,9 @@ def _message(role: MessageRole, content: str) -> Message:
 
 def _try_parse_name(reply_text: str) -> tuple[SessionName | None, str | None]:
     """Return `(name, None)` on success, or `(None, error_message)` if `reply_text` doesn't
-    parse as JSON or doesn't validate against `SessionName` (including a `slug` that fails
-    `_validate_slug`). `TypeError` is caught alongside `json.JSONDecodeError`, matching
-    `risk_classifier._try_parse_report`'s handling of a test double that hands back a
-    non-`str` object."""
+    parse as JSON or doesn't validate against `SessionName`. `TypeError` is caught alongside
+    `json.JSONDecodeError`, matching `risk_classifier._try_parse_report`'s handling of a test
+    double that hands back a non-`str` object."""
     try:
         raw = json.loads(reply_text)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -152,13 +126,12 @@ def generate_session_name(
     e2e_timeout: float,
     reasoning: dict[str, Any] | None = None,
 ) -> SessionName | None:
-    """Derive a `SessionName` (title + kebab-case slug) from `prompt_text` -- a session's first
-    user prompt -- using `model` via `api_provider`. Returns `None` on any failure: a request
-    error, a request that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a reply
-    that still fails to parse/validate after one retry -- so the caller can fall back to
-    today's random-nonce session id and no displayed title, exactly as if this function had
-    never run. Never raises, mirroring `klorb.permissions.risk_classifier.classify_command_risk`'s
-    own "never raises" contract.
+    """Derive a `SessionName` (a title) from `prompt_text` -- a session's first user prompt --
+    using `model` via `api_provider`. Returns `None` on any failure: a request error, a request
+    that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a reply that still fails
+    to parse/validate after one retry -- so the caller can fall back to no displayed title,
+    exactly as if this function had never run. Never raises, mirroring `klorb.permissions.
+    risk_classifier.classify_command_risk`'s own "never raises" contract.
 
     `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt`. `e2e_timeout`
     is a hard wall-clock ceiling on this whole call (the initial request and the one parse-retry
@@ -315,18 +288,3 @@ def fallback_session_title(prompt_text: str) -> str:
         words.append(word)
         total_chars = next_total
     return f"{' '.join(words)}..."
-
-
-def rename_session_id(old_id: str, slug: str) -> str:
-    """`<timestamp-prefix-of-old_id>-<slug>`, where the timestamp prefix is the first 5
-    dash-separated fields of `old_id` (`klorb.session.SESSION_ID_TIMESTAMP_FORMAT` is always
-    exactly 5 fields: year/month/day/hour/minute) -- independent of `klorb.session.
-    NONCE_WORD_COUNT` or `slug`'s own word count."""
-    return "-".join(old_id.split("-")[:5] + [slug])
-
-
-def session_id_suffix(session_id: str) -> str:
-    """The nonce/slug portion of `session_id` -- everything after its 5-field timestamp prefix
-    (see `rename_session_id`). Used as the fallback title shown in the TUI when naming fails:
-    the same random adjective-noun slug already embedded in the (unchanged) session id."""
-    return "-".join(session_id.split("-")[5:])

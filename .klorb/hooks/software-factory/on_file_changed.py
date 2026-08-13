@@ -3,7 +3,8 @@
 """FileSystemModified handler for software-factory mode, watching docs/plans/auto/.
 
 Reads EventInput JSON on stdin, prints HookOutput JSON on stdout. No-ops whenever the enable
-sentinel is absent, the agent is mid-turn, or a task is already in progress.
+sentinel is absent or owned by a different session (see `queue_utils.read_latch_owner`), the
+agent is mid-turn, or a task is already in progress.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ def main() -> None:
     event_input = queue_utils.read_hook_input()
     workspace_root = Path(event_input["workspace_root"])
 
-    if not queue_utils.enable_sentinel_path(workspace_root).is_file():
+    owner = queue_utils.read_latch_owner(queue_utils.enable_sentinel_path(workspace_root))
+    if owner is None or owner != event_input.get("root_session_id"):
         queue_utils.emit_hook_output(success=True)
         return
     if event_input.get("is_agent_active"):

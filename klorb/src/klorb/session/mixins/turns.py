@@ -579,13 +579,14 @@ class SessionTurnsMixin(SessionBase):
         table of every agent in the session tree whenever group composition or subagent activity
         changes -- polled by every `send_turn()` call.
 
-        Also on the first turn only (`self._session_naming_pending`), the session-naming
-        classifier runs against `prompt` (before any interjection is prepended) via
-        `_run_session_naming`, which renames `id`/`root_id` (via `set_id`) and sets `name` on
-        success. This runs identically whether `send_turn()` is driven by the interactive TUI or
-        a headless one-shot call (see `run_one_shot`); `callbacks.on_session_name_changed`, if
-        given, is invoked once with the result (or `None` on failure) so a caller can react --
-        e.g. the TUI updates its status line and renames its session log file.
+        Also on the first turn only (`self._session_naming_pending`), the session directory is
+        claimed and the session-naming classifier is kicked off against `prompt` on a background
+        thread (`_start_session_naming`) -- this turn's own dispatch never waits on it. `id`
+        never changes; the classifier only ever sets `name`, once it eventually resolves.
+        `callbacks.on_session_name_changed`, if given, is invoked once, from that background
+        thread, with the result (or `None` on failure) so a caller can react -- e.g. the TUI
+        updates its status line. Runs identically whether `send_turn()` is driven by the
+        interactive TUI or a headless one-shot call (see `run_one_shot`).
         """
         original_prompt = prompt
         active_model = self.active_model()
@@ -686,24 +687,16 @@ class SessionTurnsMixin(SessionBase):
             prompt = f"{wrap_system_interjection('Metadata', metadata_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
-            # The classifier call below can take several seconds; `_current_turn_handlers` is set
-            # for its duration too (not just inside `_dispatch_turn`, which hasn't started yet) so
-            # a message queued while "still setting up" fires `on_enqueue_message` like any other
-            # queued message, instead of silently sitting in `_queued_messages` with no UI feedback
-            # until the turn that follows drains it.
-            self._current_turn_handlers = callbacks or TurnEventHandlers()
-            try:
-                naming_result = self._run_session_naming(original_prompt)
-            finally:
-                self._current_turn_handlers = None
-            if callbacks is not None and callbacks.on_session_name_changed is not None:
-                callbacks.on_session_name_changed(naming_result)
-            # Only now that naming has resolved (classifier success, fallback title, or this
-            # branch didn't run at all because it was already `False`) is it safe to claim a
-            # session-id-specific directory -- see `SessionPersistenceMixin.
-            # claim_session_directory`. A no-op if already claimed (a restored session that
+            # `self.id` is fixed for the session's lifetime (unlike the classifier, which only
+            # ever derives `name`), so claiming can happen right away rather than waiting on the
+            # classifier's round trip -- and must happen *before* `_start_session_naming` spawns
+            # its background thread, since that thread's own end-of-run `persist_state()` call
+            # assumes claiming has already settled (`SessionPersistenceMixin.
+            # claim_session_directory`'s "already claimed" guard isn't thread-safe against a
+            # concurrent first attempt). A no-op if already claimed (a restored session that
             # adopted its directory before this call) or the workspace is untrusted.
             self.claim_session_directory()
+            self._start_session_naming(original_prompt, callbacks)
         fragments: list[MessageFragment] | None = None
         if mention_fragments is not None or image_fragments:
             fragments = []

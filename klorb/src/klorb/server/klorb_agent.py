@@ -88,12 +88,10 @@ class KlorbAcpAgent(acp.Agent):
     replacement, mirroring how [[terminal-repl]]'s `/clear` reuses `Session.provider`/`Session.
     model_registry`.
 
-    The ACP `sessionId` handed back to the client from `new_session()` is snapshotted into
-    `self._acp_session_id` and never re-read from the live `Session.id` afterward: `Session.id`
-    is renamed in place by the session-naming classifier on the session's first turn (see
-    `klorb.session.mixins.core.SessionCoreMixin._run_session_naming`), but the identity a
-    client keeps addressing `session/prompt`/`session/cancel` requests to must stay fixed for
-    the session's lifetime.
+    The ACP `sessionId` handed back to the client from `new_session()`/`load_session()` is
+    `self._session.id` -- fixed for the session's entire lifetime (see
+    `klorb.session.mixins.core.SessionCoreMixin.__init__`), so it's always safe to read directly
+    rather than snapshotting it into a separate field.
     """
 
     def __init__(
@@ -117,7 +115,6 @@ class KlorbAcpAgent(acp.Agent):
         self._client: acp.Client | None = None
         self._client_capabilities: ClientCapabilities | None = None
         self._session: Session | None = None
-        self._acp_session_id: str | None = None
         self._turn_bridge: TurnBridge | None = None
         self._turn_in_flight = False
 
@@ -185,25 +182,24 @@ class KlorbAcpAgent(acp.Agent):
         grants = compute_root_session_grants(self._process_config, session_config, session_config.role_name)
         session_config.skill_rules = grants.skill_rules
         if self._session is not None:
-            logger.debug("session/new replacing live ACP session %s", self._acp_session_id)
+            logger.debug("session/new replacing live ACP session %s", self._session.id)
             self._session.close()
         session = Session(
             session_config, provider=self._provider, model_registry=self._model_registry,
             process_config=self._process_config, tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles)
-        self._wire_session_notice_handler(session, session.id)
-        self._wire_session_wake_handler(session, session.id)
+        self._wire_session_notice_handler(session)
+        self._wire_session_wake_handler(session)
         session.fire_session_start_hook("NewSession")
         self._session = session
-        self._acp_session_id = session.id
         self._turn_bridge = TurnBridge(
-            session, self._require_client(), self._acp_session_id, self._process_config,
+            session, self._require_client(), session.id, self._process_config,
             raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
             ask_user_questions_capable=self._client_supports("askUserQuestions"))
-        logger.debug("session/new created ACP session %s for cwd=%s", self._acp_session_id, cwd)
+        logger.debug("session/new created ACP session %s for cwd=%s", session.id, cwd)
         await self._maybe_send_initial_plan_snapshot(workspace.path)
         return acp.NewSessionResponse(
-            session_id=self._acp_session_id,
+            session_id=session.id,
             modes=session_mode_state(session.config.permission_framework),
             field_meta={"klorb": {
                 "workspace": {"path": str(workspace.path), "trusted": workspace.trusted},
@@ -222,13 +218,13 @@ class KlorbAcpAgent(acp.Agent):
         if not (chainlink_available() and chainlink_db_exists(workspace_path)):
             return
         assert self._turn_bridge is not None
-        assert self._acp_session_id is not None
+        assert self._session is not None
         plan_update = await asyncio.to_thread(self._turn_bridge.fetch_plan_update)
         if plan_update is not None:
             logger.debug(
-                "session/new sending initial plan snapshot for ACP session %s", self._acp_session_id)
+                "session/new sending initial plan snapshot for ACP session %s", self._session.id)
             await self._require_client().session_update(
-                session_id=self._acp_session_id, update=plan_update)
+                session_id=self._session.id, update=plan_update)
 
     async def prompt(
         self, prompt: list[_PromptContentBlock], session_id: str, **kwargs: Any,
@@ -279,7 +275,7 @@ class KlorbAcpAgent(acp.Agent):
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Set the active turn's cancel event, if one is running for `session_id` -- a no-op
         otherwise (unknown session, or no turn in flight)."""
-        if self._session is None or session_id != self._acp_session_id:
+        if self._session is None or session_id != self._session.id:
             return
         cancel_event = self._session.active_cancel_event
         if cancel_event is not None:
@@ -289,12 +285,12 @@ class KlorbAcpAgent(acp.Agent):
     def close(self) -> None:
         """Close any live session -- called by `AcpServer.run()` once the client disconnects."""
         if self._session is not None:
-            logger.debug("Closing live ACP session %s on server shutdown", self._acp_session_id)
+            logger.debug("Closing live ACP session %s on server shutdown", self._session.id)
             self._session.close()
             self._session = None
 
     def _validate_session(self, session_id: str) -> None:
-        if self._session is None or session_id != self._acp_session_id:
+        if self._session is None or session_id != self._session.id:
             raise acp.RequestError.invalid_params({"sessionId": session_id, "reason": "unknown session"})
 
     def _require_client(self) -> acp.Client:
@@ -302,32 +298,29 @@ class KlorbAcpAgent(acp.Agent):
             raise RuntimeError("KlorbAcpAgent.new_session called before on_connect")
         return self._client
 
-    def _wire_session_notice_handler(self, session: Session, acp_session_id: str) -> None:
+    def _wire_session_notice_handler(self, session: Session) -> None:
         """Register this agent's ACP client as `session`'s `HookOutput.log` notice sink (see
         `Session.register_notice_handler`), sending a `_klorb/notice` extension notification.
-        `acp_session_id` is threaded through explicitly rather than read back from
-        `self._acp_session_id`, since both call sites (`new_session`/`load_session`) register
-        the handler before that field is actually assigned. The handler can fire from any
-        thread (a background `FileSystemModified`/`Timer` watcher, or this agent's own event
-        loop thread during a turn), so it hops onto the loop via `asyncio.run_coroutine_threadsafe`
-        rather than awaiting directly."""
+        The handler can fire from any thread (a background `FileSystemModified`/`Timer` watcher,
+        or this agent's own event loop thread during a turn), so it hops onto the loop via
+        `asyncio.run_coroutine_threadsafe` rather than awaiting directly."""
         loop = asyncio.get_running_loop()
 
         def notify(text: str) -> None:
-            asyncio.run_coroutine_threadsafe(self._send_notice(acp_session_id, text), loop)
+            asyncio.run_coroutine_threadsafe(self._send_notice(session.id, text), loop)
 
         session.register_notice_handler(notify)
 
-    def _wire_session_wake_handler(self, session: Session, acp_session_id: str) -> None:
+    def _wire_session_wake_handler(self, session: Session) -> None:
         """Register this agent as `session`'s wake handler (see `Session.register_wake_handler`):
         a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event that queues a message while
         no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`.
-        `acp_session_id` is threaded through the same way `_wire_session_notice_handler` is, for
-        the same reason."""
+        Hops onto the loop the same way `_wire_session_notice_handler` does, for the same
+        reason."""
         loop = asyncio.get_running_loop()
 
         def wake() -> None:
-            asyncio.run_coroutine_threadsafe(self._drain_and_submit_woken_turn(acp_session_id), loop)
+            asyncio.run_coroutine_threadsafe(self._drain_and_submit_woken_turn(session.id), loop)
 
         session.register_wake_handler(wake)
 
@@ -335,7 +328,7 @@ class KlorbAcpAgent(acp.Agent):
         """Handles a wake ping (see `_wire_session_wake_handler`): drains whatever an
         idle-triggered event or `reset_session` just queued and resubmits it via `TurnBridge.
         run_turn`, mirroring `prompt()`'s own dispatch and error handling."""
-        if self._turn_in_flight or self._session is None or self._acp_session_id != session_id:
+        if self._turn_in_flight or self._session is None or self._session.id != session_id:
             return
         text = self._session.drain_next_turn_text()
         if text is None:
@@ -458,15 +451,15 @@ class KlorbAcpAgent(acp.Agent):
                 self._process_config.session.thinking_effort = update.thinking.effort
                 persist_session_default(user_config_path(), "thinking.effort", update.thinking.effort)
         logger.debug(
-            "_klorb/setSessionConfig applied for ACP session %s: %r", self._acp_session_id, update)
+            "_klorb/setSessionConfig applied for ACP session %s: %r", self._session.id, update)
         return session_config_json(self._session, self._model_registry)
 
     def _ext_set_session_title(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply a user-driven session rename -- see `_klorb/setSessionTitle` in
         docs/specs/klorb-server.md. `title` of `None` or an empty/whitespace-only string clears
-        the title back to unnamed. Also cancels the one-shot naming classifier (see
-        `Session.session_naming_pending`) so a rename issued before the first turn isn't
-        overwritten once that turn runs."""
+        the title back to unnamed. Also cancels the one-shot naming classifier (`Session.
+        session_naming_pending` and `cancel_session_naming()`) so a rename issued before -- or
+        while -- the classifier is still resolving isn't overwritten once it finishes."""
         self._require_session_id(params)
         assert self._session is not None
         title = params.get("title")
@@ -474,10 +467,11 @@ class KlorbAcpAgent(acp.Agent):
             raise acp.RequestError.invalid_params({"reason": "title must be a string or null"})
         self._session.name = title.strip() if isinstance(title, str) and title.strip() else None
         self._session.session_naming_pending = False
+        self._session.cancel_session_naming()
         self._session.persist_state()
         logger.debug(
             "_klorb/setSessionTitle applied for ACP session %s: %r",
-            self._acp_session_id, self._session.name)
+            self._session.id, self._session.name)
         return {"title": self._session.name}
 
     def _ext_session_stats(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -491,7 +485,7 @@ class KlorbAcpAgent(acp.Agent):
         catalogs = self._session.reload_skills()
         logger.debug(
             "_klorb/reloadSkills rebuilt the skill catalog for ACP session %s: %d skill(s)",
-            self._acp_session_id, len(catalogs.canonical))
+            self._session.id, len(catalogs.canonical))
         return {"skillCount": len(catalogs.canonical)}
 
     def _ext_list_skills(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -504,7 +498,7 @@ class KlorbAcpAgent(acp.Agent):
         ]
         logger.debug(
             "_klorb/listSkills returning %d skill(s) for ACP session %s",
-            len(entries), self._acp_session_id)
+            len(entries), self._session.id)
         return {"skills": entries}
 
     def _ext_enqueue_message(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -521,7 +515,7 @@ class KlorbAcpAgent(acp.Agent):
         assert self._session is not None
         self._session.enqueue_queued_message(QueuedMessage(message_text=text))
         logger.debug(
-            "_klorb/enqueueMessage queued a message for ACP session %s", self._acp_session_id)
+            "_klorb/enqueueMessage queued a message for ACP session %s", self._session.id)
         return {"queued": True}
 
     def _find_subagent(self, subagent_id: str) -> tuple[Session, SubagentHandle] | None:
@@ -538,8 +532,7 @@ class KlorbAcpAgent(acp.Agent):
     def _ext_subagent_tree(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
-        assert self._acp_session_id is not None
-        return build_subagent_tree_snapshot(self._session, self._acp_session_id)
+        return build_subagent_tree_snapshot(self._session)
 
     def _ext_subagent_transcript(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
@@ -612,7 +605,7 @@ class KlorbAcpAgent(acp.Agent):
         self._session.fire_workspace_trust_changed_hook("AcpTrustWorkspace")
         logger.debug(
             "_klorb/trustWorkspace trusted %s for ACP session %s",
-            trusted_workspace.path, self._acp_session_id)
+            trusted_workspace.path, self._session.id)
         return {"workspace": {"path": str(trusted_workspace.path), "trusted": trusted_workspace.trusted}}
 
     async def load_session(
@@ -641,29 +634,24 @@ class KlorbAcpAgent(acp.Agent):
             raise acp.RequestError.invalid_params(
                 {"sessionId": session_id, "reason": "session is locked or no longer exists"})
         if self._session is not None:
-            logger.debug("session/load replacing live ACP session %s", self._acp_session_id)
+            logger.debug("session/load replacing live ACP session %s", self._session.id)
             self._session.close()
-        self._wire_session_notice_handler(restored, session_id)
-        self._wire_session_wake_handler(restored, session_id)
+        self._wire_session_notice_handler(restored)
+        self._wire_session_wake_handler(restored)
         restored.fire_session_start_hook("ResumeSession")
         self._session = restored
-        # Use the *client's* session_id (the parameter) as the stable ACP handle, not
-        # restored.id: the client may be loading by alias (a pre-rename id the naming
-        # classifier changed), and it will keep addressing every subsequent
-        # prompt/cancel/ext request to the id it passed here.  new_session() does the
-        # same thing (snapshot session.id at creation), but load_session's caller may
-        # have an older id that still resolves via find_recent_session's alias lookup.
-        self._acp_session_id = session_id
+        # `restored.id` is guaranteed to equal the requested `session_id`: `find_recent_session`
+        # only matches an entry's exact `session_id` (no alias lookup -- ids are never renamed),
+        # so a successful lookup+restore always returns a `Session` whose `id` is the same string
+        # the client passed in.
         self._turn_bridge = TurnBridge(
-            restored, self._require_client(), self._acp_session_id, self._process_config,
+            restored, self._require_client(), restored.id, self._process_config,
             raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),
             ask_user_questions_capable=self._client_supports("askUserQuestions"))
-        logger.debug(
-            "session/load restored ACP session %s (internal id=%s) for cwd=%s",
-            self._acp_session_id, restored.id, cwd)
+        logger.debug("session/load restored ACP session %s for cwd=%s", restored.id, cwd)
         entries = build_session_replay(restored, restored.tool_registry, workspace.path)
         await self._require_client().ext_notification(
-            "klorb/sessionReplay", {"sessionId": self._acp_session_id, "entries": entries})
+            "klorb/sessionReplay", {"sessionId": restored.id, "entries": entries})
         return LoadSessionResponse(
             modes=session_mode_state(restored.config.permission_framework),
             field_meta={"klorb": {

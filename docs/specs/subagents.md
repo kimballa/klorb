@@ -212,8 +212,8 @@ A subagent's `Session` is constructed directly (never by cloning the parent `Ses
   (a subagent's `Scratchpad` therefore never owns or removes that file; only the root session's
   does); `session_name` is pre-set from `CreateSubagent`'s `session_title` argument, which skips
   the one-shot session-naming classifier (that only fires when a session is constructed with no
-  name at all) — so a subagent's `id` keeps its timestamp + coolname slug rather than being
-  renamed, while its display `name` comes from the creator-supplied title.
+  name at all) — so a subagent's `id` is simply its own timestamp + coolname nonce, same as a
+  root session's, while its display `name` comes from the creator-supplied title.
 * `max_output_tokens`, if given to `CreateSubagent`, is threaded straight into the child
   `Session` and applied as `max_tokens` on every `ApiProvider.send_prompt()` call it makes —
   a cap on total generated tokens (reasoning plus completion, for a model that bills both

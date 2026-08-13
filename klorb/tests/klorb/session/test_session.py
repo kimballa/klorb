@@ -5,6 +5,7 @@ import io
 import json
 import re
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -43,7 +44,6 @@ from klorb.session import (
     TurnEventHandlers,
     generate_session_id,
 )
-from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
@@ -192,61 +192,6 @@ def test_get_chainlink_label_returns_group_prefixed_root_id_not_id() -> None:
     session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
 
     assert session.get_chainlink_label() == "group:root-id"
-
-
-def test_set_id_updates_root_id_too_when_not_diverged() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="old-id")
-    assert session.root_id == "old-id"
-
-    session.set_id("new-id")
-
-    assert session.id == "new-id"
-    assert session.root_id == "new-id"
-
-
-def test_set_id_leaves_root_id_alone_once_diverged() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
-
-    session.set_id("renamed-child-id")
-
-    assert session.id == "renamed-child-id"
-    assert session.root_id == "root-id"
-
-
-def test_set_id_records_previous_id_in_aliases() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="pre-rename-id")
-
-    session.set_id("final-id")
-
-    assert session.id == "final-id"
-    assert session.aliases == ["pre-rename-id"]
-
-
-def test_set_id_does_not_duplicate_when_renamed_to_the_same_id() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="stable-id")
-    session.aliases = ["old-id"]
-
-    session.set_id("stable-id")
-
-    assert session.aliases == ["old-id"]
-
-
-def test_aliases_default_to_empty_list() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="id")
-
-    assert session.aliases == []
-
-
-def test_aliases_are_restored_from_constructor() -> None:
-    config = SessionConfig()
-    session = Session(config, provider=MagicMock(), session_id="id", aliases=["a", "b"])
-
-    assert session.aliases == ["a", "b"]
 
 
 def test_set_chainlink_task_defaults_to_none() -> None:
@@ -629,35 +574,41 @@ def test_session_naming_pending_false_when_session_name_already_given() -> None:
     assert session.session_naming_pending is False
 
 
-def test_send_turn_runs_naming_classifier_on_first_call_and_renames_id(
+def test_send_turn_runs_naming_classifier_on_first_call_and_sets_title_not_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Session naming runs on a background thread (`SessionCoreMixin._start_session_naming`), so
+    the test synchronizes on `on_session_name_changed` firing rather than racing it."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name",
-        lambda *args, **kwargs: SessionName(title="Fix auth bug", slug="fix-auth-bug"))
+        lambda *args, **kwargs: SessionName(title="Fix auth bug"))
+    done = threading.Event()
+    callback = MagicMock(side_effect=lambda result: done.set())
 
-    session.send_turn("please fix the auth bug")
+    session.send_turn("please fix the auth bug", TurnEventHandlers(on_session_name_changed=callback))
 
-    assert session.id == "2026-07-21-18-10-fix-auth-bug"
-    assert session.root_id == "2026-07-21-18-10-fix-auth-bug"
+    assert done.wait(timeout=2.0), "session naming classifier did not complete in time"
+    assert session.id == "2026-07-21-18-10-old-nonce"
+    assert session.root_id == "2026-07-21-18-10-old-nonce"
     assert session.name == "Fix auth bug"
     assert session.session_naming_pending is False
 
 
-def test_send_turn_naming_failure_leaves_id_unchanged_and_sets_fallback_title(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_send_turn_naming_failure_sets_fallback_title(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: None)
+    done = threading.Event()
+    callback = MagicMock(side_effect=lambda result: done.set())
 
-    session.send_turn("hi")
+    session.send_turn("hi", TurnEventHandlers(on_session_name_changed=callback))
 
+    assert done.wait(timeout=2.0), "session naming classifier did not complete in time"
     assert session.id == "2026-07-21-18-10-old-nonce"
     assert session.name == "hi..."
     assert session.session_naming_pending is False
@@ -667,10 +618,12 @@ def test_send_turn_does_not_retrigger_naming_on_second_call(monkeypatch: pytest.
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
-    naming_spy = MagicMock(return_value=None)
+    done = threading.Event()
+    naming_spy = MagicMock(side_effect=lambda *args, **kwargs: done.set())
     monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", naming_spy)
 
     session.send_turn("first")
+    assert done.wait(timeout=2.0), "session naming classifier did not complete in time"
     session.send_turn("second")
 
     naming_spy.assert_called_once()
@@ -691,41 +644,48 @@ def test_send_turn_skips_naming_when_session_name_already_given(monkeypatch: pyt
     assert session.id == "2026-07-21-18-10-old-nonce"
 
 
+def test_send_turn_does_not_block_on_a_slow_naming_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The classifier runs on its own background thread (`_start_session_naming`), so a slow
+    classifier round trip must not delay the turn's own dispatch/response."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.return_value = _reply()
+    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    classifier_started = threading.Event()
+    release_classifier = threading.Event()
+
+    def slow_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
+        classifier_started.set()
+        release_classifier.wait(timeout=2.0)
+        return SessionName(title="Fix auth bug")
+
+    monkeypatch.setattr(
+        "klorb.session.mixins.core.generate_session_name", slow_generate_session_name)
+
+    started = time.perf_counter()
+    session.send_turn("please fix the auth bug")
+    elapsed = time.perf_counter() - started
+
+    assert classifier_started.wait(timeout=1.0), "classifier should have started"
+    assert elapsed < 1.0, "send_turn should not block on the naming classifier"
+    release_classifier.set()
+
+
 def test_send_turn_invokes_on_session_name_changed_callback(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
-    name = SessionName(title="Fix auth bug", slug="fix-auth-bug")
+    name = SessionName(title="Fix auth bug")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: name)
-    spy = MagicMock()
+    done = threading.Event()
+    spy = MagicMock(side_effect=lambda result: done.set())
 
     session.send_turn("please fix the auth bug", TurnEventHandlers(on_session_name_changed=spy))
 
+    assert done.wait(timeout=2.0), "session naming classifier did not complete in time"
     spy.assert_called_once_with(name)
-
-
-def test_enqueue_queued_message_during_naming_classifier_fires_on_enqueue_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A message queued while the session-naming classifier is still running -- the "still
-    setting up" window before `_dispatch_turn` starts and sets `_current_turn_handlers` -- must
-    fire `on_enqueue_message` immediately, not silently sit in the queue with no caller told
-    about it until the interrupted turn later drains it."""
-    mock_provider = MagicMock()
-    mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
-    enqueue_spy = MagicMock()
-
-    def fake_generate_session_name(*args: Any, **kwargs: Any) -> SessionName:
-        session.enqueue_queued_message(QueuedMessage(message_text="typed during setup"))
-        return SessionName(title="Fix auth bug", slug="fix-auth-bug")
-
-    monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", fake_generate_session_name)
-
-    session.send_turn("please fix the auth bug", TurnEventHandlers(on_enqueue_message=enqueue_spy))
-
-    enqueue_spy.assert_called_once()
 
 
 def test_send_turn_passes_system_prompt_from_registered_model() -> None:

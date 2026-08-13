@@ -13,24 +13,37 @@ logic.
 
 ## Sentinel files
 
-Both live under `docs/plans/auto/`, are gitignored, and are plain files with no content that
-matters — only their presence/absence is read.
+Both live under `docs/plans/auto/`, are gitignored, and are plain files.
 
-* **`.enable_software_factory.tmp`** — the on/off switch. Created by the `onActivateSkill` hook
-  (`.klorb/hooks/software-factory/enable_sentinel.sh`) when `/enable-software-factory` is
-  activated. Removed unconditionally by the `onProcessEnd` hook
-  (`.klorb/hooks/software-factory/disable_sentinel.sh`), so the mode never survives past the
-  klorb process that enabled it.
+* **`.enable_software_factory.tmp`** — the on/off switch, and the latch every other factory hook
+  checks before acting (see "Latch ownership" below). Its content is the `root_session_id` of the
+  session that turned the mode on, written by the `onActivateSkill` hook
+  (`.klorb/hooks/software-factory/enable_sentinel.py`) when `/enable-software-factory` is
+  activated. Removed by the `onSessionEnd` hook
+  (`.klorb/hooks/software-factory/disable_sentinel.py`) once that same session actually ends, so
+  the mode never survives past the session that enabled it.
 * **`.factory_in_progress.tmp`** — set by the `enable-software-factory` skill itself once it
   picks a task and passes its own clean-tree precondition (before branching), cleared by the
-  skill once a task's full lifecycle finishes. Since it's gitignored it never appears in
-  `git status --porcelain`, which is what lets `on_turn_end.py` tell "the factory's own task is
-  mid-flight" apart from "the tree is clean" or "something unrelated is dirty."
+  skill once a task's full lifecycle finishes. Content-free (only presence/absence is read) --
+  it's meaningless without the enable sentinel, so ownership is checked there, not here. Since
+  it's gitignored it never appears in `git status --porcelain`, which is what lets
+  `on_turn_end.py` tell "the factory's own task is mid-flight" apart from "the tree is clean" or
+  "something unrelated is dirty."
 
 Both filenames, and the `docs/plans/auto` path itself, are defined once in
 `.klorb/hooks/software-factory/queue_utils.py` (`ENABLE_SENTINEL_NAME`,
-`IN_PROGRESS_SENTINEL_NAME`, `AUTO_DIR_RELATIVE`) and imported by both Python hook scripts. The
-two bash scripts hardcode the same literal filenames, since bash can't import a Python constant.
+`IN_PROGRESS_SENTINEL_NAME`, `AUTO_DIR_RELATIVE`) and imported by every hook script.
+
+## Latch ownership
+
+A workspace can be open in more than one klorb process at once (two terminals, or a TUI and a
+`klorb server` instance), each with its own root session. Only the session whose
+`root_session_id` matches `.enable_software_factory.tmp`'s content "holds the latch"; every other
+factory hook firing (`on_turn_end.py`, `on_file_changed.py`, `disable_sentinel.py`) treats a
+missing or mismatched owner as "not mine to manage" and no-ops rather than acting on state that
+may belong to a different, still-live session in the same workspace. `queue_utils.
+read_latch_owner`/`write_latch_owner` are the shared read/write helpers every hook uses instead
+of a bare presence check.
 
 ## Queue file format
 
@@ -50,18 +63,19 @@ hook/event mechanics these entries rely on.
 
 | Hook/event | Handler | Behavior |
 | --- | --- | --- |
-| `onActivateSkill`, filtered to `skill_name matches "enable-software-factory"` | `enable_sentinel.sh` (bash) | Creates `docs/plans/auto/` if needed, touches the enable sentinel. |
-| `onProcessEnd` | `disable_sentinel.sh` (bash) | Removes both sentinel files. `rm -f`, so a missing file never produces a nonzero exit. |
+| `onActivateSkill`, filtered to `skill_name matches "enable-software-factory"` | `enable_sentinel.py` (python3, stdlib only) | Creates `docs/plans/auto/` if needed, writes the activating session's `root_session_id` into the enable sentinel. |
+| `onSessionEnd`, filtered to `reason matches "SuspendSession"` | `disable_sentinel.py` (python3, stdlib only) | Removes both sentinel files, but only if this session holds the latch (see "Latch ownership"). Filtered to `SuspendSession` (a real `Session.close()`) so the loop's own `ResetSession` restarts — which also fire `onSessionEnd` — never tear the mode down. |
 | `onAgentTurnEnd` | `on_turn_end.py` (python3, stdlib only) | See "Loop termination" below. |
 | `FileSystemModified`, `watch: "docs/plans/auto"` | `on_file_changed.py` (python3, stdlib only) | Nudges the session when new work appears while the factory is idle. |
 
-The two Python handlers are invoked as `["python3", "<script path>"]` rather than through a
-shell, so `${workspaceRoot}` macro-expansion applies to the script path itself.
+Every handler is invoked as `["python3", "<script path>"]` rather than through a shell, so
+`${workspaceRoot}` macro-expansion applies to the script path itself.
 
 ## Loop termination
 
 `on_turn_end.py` runs after every agent turn in every klorb session against this workspace, on
-or off, but no-ops immediately whenever the enable sentinel is absent. When present:
+or off, but no-ops immediately whenever the enable sentinel is absent or held by a different
+session (see "Latch ownership"). Otherwise:
 
 1. **Dirty tree, `.factory_in_progress.tmp` present** — the factory's own task is mid-flight but
    the turn ended before finishing. Emits a plain continuation message (no `reset_session`,

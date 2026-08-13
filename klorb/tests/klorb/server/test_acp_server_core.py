@@ -187,56 +187,6 @@ async def test_load_session_replaces_the_live_session_and_restores_messages(
     assert replay_params["entries"] == [{"kind": "prompt", "text": "hi", "streaming": False}]
 
 
-async def test_load_session_succeeds_when_lookup_matches_an_alias(
-    make_harness: Callable[..., Any], tmp_path: Path,
-) -> None:
-    trust_manager = TrustManager(path=tmp_path / "projects.json")
-    workspace = trust_manager.register_project(tmp_path, trusted=True)
-    saved_message = Message(
-        content="restored", role="user", num_tokens=1, processing_state="complete",
-        timestamp=datetime.now())
-    # subdir is the original minted id (the directory name); session_id is the renamed id
-    write_session_state(
-        workspace, "2026-07-28-00-58-automatic-mustang",
-        SessionConfig(model="restored/model", workspace=workspace),
-        [saved_message], session_id="2026-07-28-fix-auth",
-        aliases=["2026-07-28-00-58-automatic-mustang"], session_name="Fix auth")
-    touch_recent_session(
-        workspace, "2026-07-28-fix-auth", "2026-07-28-00-58-automatic-mustang",
-        "Fix auth", aliases=["2026-07-28-00-58-automatic-mustang"])
-
-    harness = await make_harness(provider=MagicMock())
-    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
-    await harness.client.new_session(cwd=str(tmp_path), mcp_servers=[])
-
-    response = await harness.client.load_session(
-        cwd=str(tmp_path), mcp_servers=[],
-        session_id="2026-07-28-00-58-automatic-mustang")
-
-    assert response is not None
-    restored_session = harness.server.agent.session
-    assert restored_session is not None
-    assert restored_session.config.model == "restored/model"
-    assert [m.content for m in restored_session.messages] == ["restored"]
-
-    # The ACP session id must be the alias the client passed, not the internal
-    # (renamed) id -- every subsequent ext request the client sends will use it.
-    assert harness.server.agent._acp_session_id == "2026-07-28-00-58-automatic-mustang"
-
-    replay_calls = [
-        call for call in harness.harness_client.ext_notification_calls
-        if call[0] == "klorb/sessionReplay"]
-    assert len(replay_calls) == 1
-    _, replay_params = replay_calls[0]
-    assert replay_params["sessionId"] == "2026-07-28-00-58-automatic-mustang"
-
-    # An ext method call using the alias must succeed (not raise "invalid params").
-    config = await harness.client.ext_method(
-        "klorb/getSessionConfig",
-        {"sessionId": "2026-07-28-00-58-automatic-mustang"})
-    assert config["model"]["current"] == "restored/model"
-
-
 async def test_load_session_raises_for_unknown_session_id(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:

@@ -75,26 +75,18 @@ class RecentSession(BaseModel):
     """One `sessions.json` entry: a saved session's id, which subdirectory of `sessions/` it
     lives in, and its display title.
 
-    `session_id` is the session's `Session.id`, which may be renamed in place by the
-    session-naming classifier (`klorb.session_naming.rename_session_id`) after this entry is
-    first created -- `touch_recent_session()` re-keys the entry by `session_id` on every call, so
-    a rename simply becomes a new value for this field on the existing entry, never a duplicate
-    or a move. `subdir` is set once, to the session's *original* `Session.id`, when its directory
-    is first created (`SessionPersistenceMixin.claim_session_directory`), and never renamed
-    afterward -- kept independent of `session_id` so a session's id can change without moving its
-    files. `aliases` mirrors `Session.aliases`: every prior id the session was renamed *from*,
-    so a lookup holding a pre-rename id (e.g. a client that recorded the id `session/new`
-    returned before the classifier renamed it) can still find this entry -- see
-    `find_recent_session`. `title` mirrors `Session.name`; `None` only in the narrow window
-    before a title has been assigned (shouldn't normally be observed on disk -- a session's
-    directory isn't created until after that decision is made, see `SessionPersistenceMixin`)."""
+    `session_id` is the session's `Session.id`, fixed for the session's lifetime. `subdir` is set
+    once, to that same id, when its directory is first created
+    (`SessionPersistenceMixin.claim_session_directory`) -- kept as an independent field only so a
+    session restored from a `session.json` written by an older klorb version (whose id had since
+    been renamed by the since-removed session-naming rename) still resolves to the correct
+    on-disk directory. `title` mirrors `Session.name`; `None` only in the narrow window before a
+    title has been assigned (shouldn't normally be observed on disk -- a session's directory
+    isn't created until after that decision is made, see `SessionPersistenceMixin`)."""
 
     session_id: str
     subdir: str
     title: str | None = None
-    aliases: list[str] = Field(default_factory=list)
-    """Every prior `Session.id` this session was renamed from, oldest first. Empty in files
-    written by an older klorb version that predates id aliasing."""
     last_modified_timestamp: datetime | None = None
     """When this session was last saved, mirroring `Session.last_modified_at` -- drives the
     relative-age display ("2 hours ago") in the VS Code "Load session" picker. Absent (`None`)
@@ -130,9 +122,6 @@ class SessionState(BaseModel):
     """The saved session's `Session.cur_chainlink_task_id`, if any (see
     docs/specs/chainlink-task-tracking.md). Absent (`None`) in files written by an older klorb
     version that predates chainlink task tracking."""
-    aliases: list[str] = Field(default_factory=list)
-    """The saved session's `Session.aliases` (every prior id it was renamed from, oldest
-    first). Empty in files written by an older klorb version that predates id aliasing."""
     last_modified_timestamp: datetime | None = None
     """The saved session's `Session.last_modified_at`, persisted so it can be restored on
     reload. Absent (`None`) in files written by an older klorb version that predates it."""
@@ -269,14 +258,13 @@ def _prune_sessions_index(workspace: Workspace, index: SessionsIndexState) -> No
 
 def touch_recent_session(
     workspace: Workspace, session_id: str, subdir: str, title: str | None,
-    aliases: list[str] | None = None, last_modified_timestamp: datetime | None = None,
+    last_modified_timestamp: datetime | None = None,
 ) -> None:
     """Move (or insert) the `session_id`/`subdir`/`title` entry to the front of `workspace`'s
     `sessions.json`, replacing any existing entry for the same `subdir` -- `subdir`, not
-    `session_id`, is an entry's stable identity (see `RecentSession.subdir`'s own docstring): a
-    session-naming rename changes `session_id` without changing `subdir`, so re-keying by
-    `subdir` is what makes that rename update the existing entry in place rather than leaving a
-    stale duplicate behind under the old `session_id`. Then prunes anything that falls past
+    `session_id`, is an entry's stable identity (see `RecentSession.subdir`'s own docstring), so
+    re-keying by `subdir` rather than `session_id` is what lets a session restored under a
+    legacy, pre-rename `subdir` still update in place. Then prunes anything that falls past
     `MAX_RECENT_SESSIONS` (see `_prune_sessions_index`).
 
     Guarded by `workspace.lock` (`acquire_lockfile_with_backoff`) for the duration of this one
@@ -298,7 +286,7 @@ def touch_recent_session(
             entry for entry in index.recent_sessions if entry.subdir != subdir]
         index.recent_sessions.insert(
             0, RecentSession(
-                session_id=session_id, subdir=subdir, title=title, aliases=aliases or [],
+                session_id=session_id, subdir=subdir, title=title,
                 last_modified_timestamp=last_modified_timestamp))
         _prune_sessions_index(workspace, index)
         _write_sessions_index(workspace, index)
@@ -316,7 +304,6 @@ def write_session_state(
     root_id: str | None = None,
     session_name: str | None = None,
     cur_chainlink_task_id: int | None = None,
-    aliases: list[str] | None = None,
     last_modified_timestamp: datetime | None = None,
 ) -> None:
     """Save `config` and `messages` to `sessions/<subdir>/session.json`, schema-enveloped per
@@ -329,7 +316,7 @@ def write_session_state(
         config=config, messages=[message.for_persistence() for message in messages],
         statistics=statistics,
         session_id=session_id, root_id=root_id, session_name=session_name,
-        cur_chainlink_task_id=cur_chainlink_task_id, aliases=aliases or [],
+        cur_chainlink_task_id=cur_chainlink_task_id,
         last_modified_timestamp=last_modified_timestamp)
     write_versioned_json(
         session_state_path(workspace, subdir), state.model_dump(mode="json"),
@@ -357,13 +344,8 @@ def read_session_state(workspace: Workspace, subdir: str) -> SessionState | None
 
 
 def find_recent_session(index: SessionsIndexState, session_id: str) -> RecentSession | None:
-    """Look up `session_id` in `index`, matching either an entry's current `session_id` or any
-    of its `aliases` (the prior ids a session was renamed from -- see `RecentSession.aliases`),
-    so a caller holding a pre-rename id still resolves the same session. Returns `None` if no
-    entry matches."""
+    """Look up `session_id` in `index` by its current `session_id`. Returns `None` if no entry
+    matches."""
     return next(
-        (
-            candidate for candidate in index.recent_sessions
-            if candidate.session_id == session_id or session_id in candidate.aliases
-        ),
+        (candidate for candidate in index.recent_sessions if candidate.session_id == session_id),
         None)

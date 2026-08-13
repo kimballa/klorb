@@ -32,7 +32,6 @@ from klorb.session_naming import (
     default_naming_model,
     fallback_session_title,
     generate_session_name,
-    rename_session_id,
     thinking_effort_for,
 )
 from klorb.session_statistics import SessionStatistics
@@ -89,6 +88,11 @@ registered once at root-session start (`_start_workspace_event_watchers`) and to
 a real `close()`, never recreated mid-session -- unlike `Scratchpad`/`Bash`'s persistent shell,
 which `_reset_state()` does tear down and let their owners lazily recreate."""
 
+_SESSION_NAMING_TEARDOWN_SUBJECT = "SessionNaming"
+"""Teardown subject `_start_session_naming` registers its token-invalidation callback under --
+deliberately *not* in `_INFRASTRUCTURE_TEARDOWN_SUBJECTS`, so `_reset_state()` also invalidates a
+classifier call still in flight from before a reset, the same as a real `close()` does."""
+
 
 class SessionCoreMixin(SessionBase):
     """`Session.__init__` plus the accessors, loaders, and lifecycle methods that don't belong
@@ -103,7 +107,6 @@ class SessionCoreMixin(SessionBase):
         session_id: str | None = None,
         session_name: str | None = None,
         root_id: str | None = None,
-        aliases: list[str] | None = None,
         last_modified_at: datetime | None = None,
         tool_registry: "ToolRegistry | None" = None,
         process_config: "ProcessConfig | None" = None,
@@ -114,6 +117,9 @@ class SessionCoreMixin(SessionBase):
     ) -> None:
         self.config = config
         self.id = session_id or generate_session_id()
+        """This session's identity, fixed for its entire lifetime -- set once here and never
+        reassigned. Round-trips through `session.json` (`klorb.workspace.session_store.
+        SessionState.session_id`)."""
         self.root_id = root_id or self.id
         """The `id` of the root (top-level) session this one descends from -- itself, for every
         top-level session, or `parent.root_id` for a subagent (see `parent`). Anything scoped to
@@ -163,13 +169,6 @@ class SessionCoreMixin(SessionBase):
             # model_copy()` from the parent's own `config` already carries, by design.
             self.config.permission_framework_state = PermissionFrameworkState(
                 value=self.config.permission_framework_state.value)
-        self.aliases: list[str] = list(aliases) if aliases is not None else []
-        """Every prior `id` this session was renamed from (oldest first) -- appended to by
-        `set_id`, never assigned directly. Lets a caller holding a pre-rename id (e.g. an ACP
-        client that recorded the id `session/new` returned before the session-naming classifier
-        renamed it) still resolve this session on disk; round-trips through `session.json` and
-        `sessions.json` (`klorb.workspace.session_store.SessionState.aliases`/
-        `RecentSession.aliases`) like `id`/`session_name`."""
         self._session_name: str | None = session_name
         self._role = get_role(config.role_name)
         self._provider = provider or OpenRouterApiProvider()
@@ -232,12 +231,19 @@ class SessionCoreMixin(SessionBase):
         a caller that constructs a `Session` without a `ProcessConfig` at all, as most
         unit tests do)."""
         self._session_naming_pending = self._session_name is None
-        """Whether `send_turn()` still needs to run the one-shot session-naming classifier (see
-        `_run_session_naming`) on its first call. Seeded `False` when a `session_name` was
+        """Whether `send_turn()` still needs to kick off the one-shot session-naming classifier
+        (see `_start_session_naming`) on its first call. Seeded `False` when a `session_name` was
         already supplied to this constructor (a restored session that was already named), `True`
         otherwise (a fresh session, or a restored session that was never successfully named).
         Set unconditionally the first time `send_turn()` checks it, regardless of the
-        classifier's outcome, so a failed/timed-out attempt is never retried."""
+        classifier's eventual outcome, so a failed/timed-out attempt is never retried."""
+        self._session_naming_token: object | None = None
+        """Set to a fresh sentinel object by `_start_session_naming` right before it spawns the
+        classifier's background thread; that thread only applies its result (and persists it) if
+        this is still the same object when it finishes. `cancel_session_naming()` and the
+        `_SESSION_NAMING_TEARDOWN_SUBJECT` teardown both clear this to `None`, so a superseded
+        classifier call (a user-driven title rename, a session reset, or session teardown) can
+        never overwrite a name it no longer has authority over."""
         self._last_modified_at = last_modified_at
         """When this session was last saved to `session.json`, or `None` if it hasn't been saved
         yet (or was restored from a save file that predates this field). Restored from
@@ -267,9 +273,11 @@ class SessionCoreMixin(SessionBase):
         `close()`)."""
         self._session_subdir: str | None = None
         """The `sessions/<subdir>/` name this session's state is saved under, or `None` before
-        `claim_session_directory` has run. Distinct from `self.id`: set once, to `self.id`'s
-        value *at claim time*, and never renamed afterward even if `self.id` later changes --
-        see `klorb.workspace.session_store.RecentSession.subdir`."""
+        `claim_session_directory` has run. Set once, to `self.id`'s value at claim time -- always
+        equal to `self.id` for a freshly claimed session, but kept as an independent field so a
+        session restored from a `session.json` written by an older klorb version (whose id had
+        since been renamed by the since-removed classifier rename) still resolves to the correct
+        on-disk directory -- see `klorb.workspace.session_store.RecentSession.subdir`."""
         self._session_claimed = False
         """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
@@ -279,7 +287,7 @@ class SessionCoreMixin(SessionBase):
         Called once by `__init__` itself, and again by `reset_session()` to wipe an existing
         session's conversation in place (`HookOutput.reset_session`'s effect -- see
         docs/specs/hooks-and-events.md). Deliberately leaves untouched: identity (`id`/`root_id`/
-        `parent`/`depth`/`aliases`), anything derived from `config`/`process_config` alone
+        `parent`/`depth`), anything derived from `config`/`process_config` alone
         (`_role`, `_system_prompt`, `_mention_read_file_core`, ...) -- `reset_session()` handles
         `config` and its derivatives itself, since unlike this method it must reinitialize them
         from `ProcessConfig.session`'s template rather than leave them alone -- and persistence
@@ -461,39 +469,81 @@ class SessionCoreMixin(SessionBase):
     def session_naming_pending(self, value: bool) -> None:
         self._session_naming_pending = value
 
-    def set_id(self, new_id: str) -> None:
-        """The only sanctioned way to change `self.id`. If `id == root_id` (this session hasn't
-        diverged from its root -- true for every session today, since klorb has no
-        subagent-spawning mechanism yet), `root_id` is updated to `new_id` too, keeping both in
-        sync; otherwise only `id` changes. The previous `id` is recorded in `self.aliases` so a
-        caller holding it can still resolve this session later. Callers must never assign
-        `self.id`/`self.root_id` directly -- see `get_chainlink_label()` for why `root_id`
-        staying in sync with a renamed `id` matters."""
-        if new_id != self.id and self.id not in self.aliases:
-            self.aliases.append(self.id)
-        if self.id == self.root_id:
-            self.root_id = new_id
-        self.id = new_id
+    def cancel_session_naming(self) -> None:
+        """Invalidate any in-flight background session-naming classifier call (see
+        `_start_session_naming`) so its eventual result can no longer overwrite `name` -- called
+        by a caller that renames the session itself (e.g. `KlorbAcpAgent._ext_set_session_title`)
+        before the classifier has replied."""
+        self._session_naming_token = None
+
+    def _start_session_naming(
+        self, prompt_text: str, callbacks: "TurnEventHandlers | None",
+    ) -> None:
+        """Kick off the session-naming classifier on a background daemon thread and return
+        immediately, so the first turn's own dispatch never waits on its round trip -- see
+        `SessionTurnsMixin.send_turn`. Mints a fresh sentinel and assigns it to
+        `_session_naming_token`; the thread only applies its eventual result (sets `name`,
+        persists it, and fires `callbacks.on_session_name_changed`) if that's still the current
+        token once `_run_session_naming` returns -- superseded otherwise by a later call to this
+        method, `cancel_session_naming()`, or session teardown/reset invalidating the token via
+        the `_SESSION_NAMING_TEARDOWN_SUBJECT` teardown registered below."""
+        token = object()
+        self._session_naming_token = token
+
+        def run() -> None:
+            result = self._run_session_naming(prompt_text)
+            if self._session_naming_token is not token:
+                return
+            try:
+                self.name = result.title if result is not None else fallback_session_title(prompt_text)
+                if callbacks is not None and callbacks.on_session_name_changed is not None:
+                    callbacks.on_session_name_changed(result)
+                self.persist_state()
+            except Exception:
+                # A classifier reply landing in the exact instant `close()`/`reset_session()`
+                # tears this session down is a rare, inherently racy edge case the token check
+                # above doesn't fully close -- caught here so it surfaces as a log line, not a
+                # bare, easy-to-miss daemon-thread traceback, mirroring `FileSystemWatcher.
+                # _flush`'s own dispatch-failure handling.
+                logger.warning("Session naming's post-classifier apply failed.", exc_info=True)
+
+        thread = threading.Thread(target=run, name="session-naming", daemon=True)
+
+        def _teardown() -> None:
+            # Give a call that's about to finish on its own a bounded chance to land its result
+            # before cutting it off -- this matters most for a headless one-shot run, whose
+            # process exits right after `close()`: without this join, an async classifier would
+            # almost always lose that race and the session would never get a real title. Bounded
+            # by the classifier's own end-to-end deadline, so this can't outlast a call that was
+            # already going to time out on its own.
+            thread.join(timeout=self._session_naming_e2e_timeout())
+            self._session_naming_token = None
+
+        self.register_teardown(_SESSION_NAMING_TEARDOWN_SUBJECT, _teardown)
+        thread.start()
+
+    def _session_naming_e2e_timeout(self) -> float:
+        """`ProcessConfig.session_classifier_e2e_timeout_seconds`, or
+        `DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS` when this session has no
+        `ProcessConfig` -- shared by `_run_session_naming` (bounding the classifier call itself)
+        and `_start_session_naming`'s teardown (bounding how long `close()` will wait for it)."""
+        from klorb.process_config import DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS
+        return (
+            self._process_config.session_classifier_e2e_timeout_seconds
+            if self._process_config is not None
+            else DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS
+        )
 
     def _run_session_naming(self, prompt_text: str) -> "SessionName | None":
-        """Derive a `SessionName` from `prompt_text` (this session's first submitted prompt) via
-        `klorb.session_naming.generate_session_name`, and on success rename this session's `id`
-        (via `set_id`, preserving its timestamp prefix and swapping in the derived slug) and set
-        `name` to the derived title. On failure (the classifier times out, is unavailable, or
-        never returns a valid reply), `name` is instead set to
-        `klorb.session_naming.fallback_session_title(prompt_text)` -- `id` is left alone in that
-        case, since there's no `SessionName.slug` to rename it with. Returns the classifier's
-        result (or `None` on failure) for the caller's `TurnEventHandlers.on_session_name_changed`
-        to react to; never raises, matching `generate_session_name`'s own "never raises" contract.
-        Falls back to `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS`/`_E2E_TIMEOUT_SECONDS` and
-        `default_naming_model(self)` when this session has no `ProcessConfig`
-        (`self._process_config is None`)."""
+        """Derive a `SessionName` (a title) from `prompt_text` (this session's first submitted
+        prompt) via `klorb.session_naming.generate_session_name`. Pure with respect to `Session`
+        state -- `_start_session_naming`'s background thread applies the result, this only
+        resolves it. Never raises, matching `generate_session_name`'s own "never raises" contract.
+        Falls back to `DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS` and `default_naming_model(self)`
+        when this session has no `ProcessConfig` (`self._process_config is None`)."""
         # Deferred: `klorb.process_config` imports from `klorb.session`, so a module-level
         # import here would be circular.
-        from klorb.process_config import (
-            DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS,
-            DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS,
-        )
+        from klorb.process_config import DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS
 
         model = (
             self._process_config.session_classifier_model
@@ -505,21 +555,11 @@ class SessionCoreMixin(SessionBase):
             if self._process_config is not None
             else DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS
         )
-        e2e_timeout = (
-            self._process_config.session_classifier_e2e_timeout_seconds
-            if self._process_config is not None
-            else DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS
-        )
+        e2e_timeout = self._session_naming_e2e_timeout()
         reasoning = thinking_effort_for(cast("Session", self), model)
-        result = generate_session_name(
+        return generate_session_name(
             prompt_text, api_provider=self._provider, model=model, timeout=timeout,
             e2e_timeout=e2e_timeout, reasoning=reasoning)
-        if result is not None:
-            self.set_id(rename_session_id(self.id, result.slug))
-            self.name = result.title
-        else:
-            self.name = fallback_session_title(prompt_text)
-        return result
 
     def get_chainlink_label(self) -> str:
         """Return the `chainlink` label every `klorb.tools.tasks.common.ChainlinkClient`
@@ -881,6 +921,8 @@ class SessionCoreMixin(SessionBase):
         session's conversation (see `_deliver_or_reset_event`)."""
         from klorb.hooks.dispatcher import HookDispatcher
         assert self._process_config is not None
+        event_input.session_id = self.id
+        event_input.root_session_id = self.root_id
         event_input.is_agent_active = self.current_turn_handlers() is not None
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,

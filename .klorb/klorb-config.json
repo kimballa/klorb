@@ -114,22 +114,25 @@
         "type": "bash",
         "name": "software-factory-enable-sentinel",
         "command": [
-          "bash",
-          "${workspaceRoot}/.klorb/hooks/software-factory/enable_sentinel.sh"
+          "python3",
+          "${workspaceRoot}/.klorb/hooks/software-factory/enable_sentinel.py"
         ],
         "filter": {
           "matches": "enable-software-factory"
         }
       }
     ],
-    "onProcessEnd": [
+    "onSessionEnd": [
       {
         "type": "bash",
         "name": "software-factory-disable-sentinel",
         "command": [
-          "bash",
-          "${workspaceRoot}/.klorb/hooks/software-factory/disable_sentinel.sh"
-        ]
+          "python3",
+          "${workspaceRoot}/.klorb/hooks/software-factory/disable_sentinel.py"
+        ],
+        "filter": {
+          "matches": "SuspendSession"
+        }
       }
     ],
     "onAgentTurnEnd": [

@@ -97,12 +97,13 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   id); an unrecognized `thinking.effort` string is a JSON-RPC `invalid params` error. Result:
   the same shape `_klorb/getSessionConfig` returns, reflecting the change.
 * **`_klorb/setSessionTitle`** — renames the session's title, mirroring the classifier-driven
-  rename `_run_session_naming` performs on the first turn (see "Session naming and token usage"
+  title `_start_session_naming` derives on the first turn (see "Session naming and token usage"
   below), but user-driven and callable at any time. Params: `{sessionId: string, title: string |
   null}` — `null`, `""`, or a whitespace-only string all clear the title back to unnamed; anything
   else is stored trimmed. Result: `{title: string | null}`, the stored value. Also cancels
-  `Session.session_naming_pending` if the rename lands before the first turn, so the classifier
-  doesn't overwrite it once that turn runs.
+  `Session.session_naming_pending` and calls `Session.cancel_session_naming()`, so a classifier
+  call that lands before -- or is still resolving when -- this fires can't overwrite the
+  explicit rename once it eventually completes.
 * **`_klorb/sessionStats`** — the `SessionStatistics` payload the TUI's "Show session stats"
   command renders. Params: `{sessionId: string}`. Result: `Session.statistics.model_dump(mode=
   "json")` verbatim (`user_messages`, `response_messages`, `thinking_messages`, `tool_calls`,
@@ -135,8 +136,8 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   (`klorb.server.subagent_updates.build_subagent_tree_snapshot`), the root session included
   first: `{id, parentId, address, title, role, state: "running" | "finished" | null, aborted:
   boolean, model, thinkingEnabled, thinkingEffort, usedTokens, maxTokens, outputTokens}` — `id`/
-  `parentId` are `Session.id` (the root's own `id` is overridden to the client-stable ACP session
-  id, since `Session.id` itself can be renamed by the session-naming classifier — see
+  `parentId` are `Session.id`, fixed for a session's entire lifetime (the root's own `id` is
+  always the same one the client already addresses this session by — see
   `KlorbAcpAgent`'s own class docstring), `state`/`aborted` are `null`/`false` for the root (no
   `SubagentHandle` describes it), and `model`/`thinking*`/`*Tokens` are that session's own
   `SessionConfig`/token tally, so a client can render the header/status row for whichever session
@@ -268,12 +269,15 @@ of one ACP session.
 
 Session naming (see docs/specs/session-and-turns.md's "Session naming" section) already ran on
 every session's first turn before this checkpoint; `TurnBridge` now bridges its result out over
-ACP. `TurnEventHandlers.on_session_name_changed` enqueues a `session_info_update` (`title`: the
-derived title on success, `null` on failure) the same way `on_chunk`/`on_thinking_chunk` do, so
-it's ordered relative to them like any other fire-and-forget callback for that turn. `session/
-new`'s `_meta.klorb.title` additionally reports the session's name at the moment `session/new`
-returns (always `null` today — see "Single top-level session": every session this server builds
-is fresh, never restored).
+ACP. The classifier runs on `Session`'s own background thread and can resolve after
+`session/prompt` has already returned to the client, so `TurnEventHandlers.
+on_session_name_changed` can't go through the per-iteration update queue every other callback
+(`on_chunk`/`on_thinking_chunk`, ...) uses — it schedules a `session_info_update` (`title`: the
+derived title on success, `null` on failure) directly onto the event loop via `asyncio.
+run_coroutine_threadsafe` instead, whenever the classifier actually finishes. `session/new`'s
+`_meta.klorb.title` additionally reports the session's name at the moment `session/new` returns
+(always `null` today — see "Single top-level session": every session this server builds is
+fresh, never restored).
 
 ## Chainlink task-plan updates
 
@@ -338,12 +342,10 @@ richer view from that same detail.
   * The `ApiProvider`/`ModelRegistry` — constructed once (or injected, for tests) and reused
     across every `session/new` replacement, mirroring how [[terminal-repl]]'s `/clear` reuses
     `Session.provider`/`Session.model_registry` rather than rebuilding them.
-  * At most one live `Session`, plus a stable `self._acp_session_id` snapshotted from
-    `Session.id` the moment `session/new` builds it. Every later `session/prompt`/
-    `session/cancel` is validated against this stable id, **not** the live `Session.id` — the
-    session-naming classifier renames `Session.id` in place on the session's first turn (see
-    docs/specs/session-and-turns.md's "Session naming" section), but the identity a client
-    keeps addressing requests to has to stay fixed for the session's lifetime regardless.
+  * At most one live `Session`. `Session.id` is fixed for the session's entire lifetime (see
+    docs/specs/session-and-turns.md's "Session naming" section — the classifier only ever
+    derives a display title, never a rename), so every later `session/prompt`/`session/cancel`
+    is validated directly against the live `self._session.id`, with no separate snapshot needed.
   * `initialize()`: negotiates `protocolVersion` (always replies `acp.PROTOCOL_VERSION`) and
     returns `agentCapabilities._meta` with the flags listed in "Wire protocol" above.
   * `new_session(cwd, mcp_servers)`: resolves a `Workspace` for `cwd` (`TrustManager.
