@@ -483,7 +483,10 @@ way `_history_pinned_to_bottom` is) — a user who scrolled up to reread earlier
 back down by new content. A trailing status `Static` (`_mount_subagent_status_notice`) always
 occupies the last line: "Subagent is still working…" while `handle.state == "running"`, else
 "Subagent task complete." — or "Subagent interrupted." instead, if `handle.output` carries
-`klorb.agents.runtime.SUBAGENT_ABORTED_MARKER`.
+`klorb.agents.runtime.SUBAGENT_ABORTED_MARKER`. The "still working" notice is a
+`CrawlAnimatedStatic` (`klorb.tui.widgets.tool_call_widgets`), the same crawling highlight
+animation `RunningToolCallStatic`'s "Running..." uses, so it stays visibly distinct from a frozen
+UI.
 
 **Escape/Ctrl+C** abort the selected subagent's own `cancel_event` when one is selected, leaving
 the root session's `_cancel_event`/`_shell_cancel_event` untouched — the existing
