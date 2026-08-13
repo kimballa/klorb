@@ -575,11 +575,9 @@ class SessionTurnsMixin(SessionBase):
         On the first turn only, a one-shot `metadata` interjection carrying the session
         start time and workspace root name is also prepended (see `self._metadata_seeded`).
 
-        On the first turn only, for a subagent specifically (`self.parent is not None`), a
-        one-shot `AgentGroup` interjection carrying a markdown table of every agent in the same
-        session tree is also prepended (see `self._agent_group_seeded`/
-        `_build_agent_group_interjection`); `None` for a root session, which has no group to
-        report.
+        A standing `AgentGroup` interjection (registered in `_reset_state`) emits a markdown
+        table of every agent in the session tree whenever group composition or subagent activity
+        changes -- polled by every `send_turn()` call.
 
         Also on the first turn only (`self._session_naming_pending`), the session-naming
         classifier runs against `prompt` (before any interjection is prepended) via
@@ -686,11 +684,6 @@ class SessionTurnsMixin(SessionBase):
 
             metadata_body = "\n".join(metadata_strs)
             prompt = f"{wrap_system_interjection('Metadata', metadata_body)}\n{prompt}"
-        if not self._agent_group_seeded:
-            self._agent_group_seeded = True
-            agent_group_body = self._build_agent_group_interjection()
-            if agent_group_body is not None:
-                prompt = f"{wrap_system_interjection('AgentGroup', agent_group_body)}\n{prompt}"
         if self._session_naming_pending:
             self._session_naming_pending = False
             # The classifier call below can take several seconds; `_current_turn_handlers` is set

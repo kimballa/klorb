@@ -304,7 +304,6 @@ class SessionCoreMixin(SessionBase):
         self._skills_seeded = False
         self._context_files_seeded = False
         self._metadata_seeded = False
-        self._agent_group_seeded = False
         self._session_started_at = datetime.now()
         self._pending_permission_framework_interjection: str | None = None
         self._standing_interjection_providers: dict[str, Callable[[], str | None]] = {}
@@ -316,6 +315,7 @@ class SessionCoreMixin(SessionBase):
         self._chained_hook_turns = 0
         self._chain_continuation_pending = False
         self.subagent_tracker = self._create_subagent_tracker()
+        self._register_agent_group_standing_interjection()
         self.statistics = SessionStatistics()
         for subject, teardown in list(self._teardown_callbacks.items()):
             if subject in _INFRASTRUCTURE_TEARDOWN_SUBJECTS:
@@ -568,33 +568,18 @@ class SessionCoreMixin(SessionBase):
         tasks_state["client"] = client
         return client
 
-    def _build_agent_group_interjection(self) -> str | None:
-        """Build the one-shot `AgentGroup` `<SystemInterjection>` body for a subagent's first
-        turn: a markdown table of every agent in the same session tree the *creating* session can
-        currently see -- role, id, and title, plus a `Relationship` column marking this session's
-        own row `"(This is you)"` and its parent's row `"(Your parent)"`. `None` for a root
-        session (`self.parent is None`), which has no group to report. Deferred import: `klorb.
-        agents.runtime` itself imports `klorb.session.mixins.turns` at module level, so a
-        module-level import here (while `klorb.session`'s own `__init__.py` is still assembling
-        this mixin) would be circular."""
-        if self.parent is None:
-            return None
-        from klorb.agents.runtime import walk_session_tree
-        root = self.parent
-        while root.parent is not None:
-            root = root.parent
-        rows = ["| Role | Id | Title | Relationship |", "| --- | --- | --- | --- |"]
-        for node in walk_session_tree(root):
-            session = node.session
-            if session.id == self.id:
-                relationship = "(This is you)"
-            elif session.id == self.parent.id:
-                relationship = "(Your parent)"
-            else:
-                relationship = ""
-            title = session.name or ""
-            rows.append(f"| {session.config.role_name} | {session.id} | {title} | {relationship} |")
-        return "\n".join(rows)
+    def _register_agent_group_standing_interjection(self) -> None:
+        """Register the `AgentGroup` standing interjection provider, which emits a markdown
+        table of every agent in the session tree whenever group composition or subagent activity
+        changes. Deferred import: `klorb.agents.runtime` itself imports
+        `klorb.session.mixins.turns` at module level, so a module-level import here would be
+        circular."""
+        from klorb.agents.runtime import (
+            AGENT_GROUP_INTERJECTION_SUBJECT,
+            build_agent_group_interjection_provider,
+        )
+        provider = build_agent_group_interjection_provider(cast("Session", self))
+        self.register_standing_interjection(AGENT_GROUP_INTERJECTION_SUBJECT, provider)
 
     def _allocate_child_index(self) -> int:
         """Return the next `_child_index` for a subagent about to be constructed with
