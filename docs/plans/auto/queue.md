@@ -12,3 +12,8 @@ picked up, as a single whole-file task.
   much clash of info and a single run-on line but two very visually distinct fields per line.
 
 * Add a new model definition json for deepseek/deepseek-v4-pro-0813
+
+* The onProcessStart and onSessionStart hooks should receive a `config` field in their HookInput.
+  It contains the entire resolved ProcessConfig.
+  The Claude-compat session-start hook and skill should only recommend setting the claude compat
+  settings if they're not already set to true.
