@@ -63,6 +63,7 @@ from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
+from klorb.tui.widgets.skill_finder import SKILL_FINDER_ID, SkillFinderPanel, SkillMatch
 from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
 from klorb.tui.widgets.subagents_panel import SubagentsPanel
 from klorb.tui.widgets.task_sidebar import TaskSidebar
@@ -513,6 +514,7 @@ class ReplApp(
         yield VerticalScroll(id=SUBAGENT_HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield FileFinderPanel(id=FILE_FINDER_ID)
+        yield SkillFinderPanel(id=SKILL_FINDER_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
         yield Static(NEW_SESSION_LABEL, id=SESSION_NAME_ID)
@@ -548,6 +550,12 @@ class ReplApp(
         if `_file_index` was never started (no `trust_manager`, e.g. every existing test) — see
         `_start_file_finder_index`."""
         return self._file_index.files if self._file_index is not None else []
+
+    def discoverable_skill_matches(self) -> list[SkillMatch]:
+        """Return the session's discoverable skills as `SkillMatch` objects for the skill
+        fuzzy finder, or `[]` if no session is active."""
+        skills = self._session.discover_skills()
+        return [SkillMatch(name=s.name, namespace=s.namespace, description=s.description) for s in skills]
 
     def _start_file_finder_index(self, workspace: Workspace) -> None:
         """Start the `@`-mention file finder's background `WorkspaceFileIndex` for `workspace`,

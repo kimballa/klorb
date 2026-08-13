@@ -247,31 +247,33 @@ def _row_content(match: FinderMatch, available_width: int) -> Content:
     return Content.assemble((dir_display, "$text-muted"), file_display)
 
 
-class FileFinderOption(Option):
+class FinderOption(Option):
+    """Base class for `OptionList` rows used by `FinderPanel` subclasses. Carries the match
+    datum (a `FinderMatch`, `SkillMatch`, or any other typed object) so the panel can recover
+    it from a highlighted or clicked row."""
+
+    def __init__(self, content: Content, match: object) -> None:
+        super().__init__(content)
+        self.match = match
+
+
+class FileFinderOption(FinderOption):
     """An `OptionList` row that carries the `FinderMatch` it renders, so selecting it can
     recover the match to insert or drill into."""
 
     def __init__(self, match: FinderMatch, available_width: int) -> None:
-        super().__init__(_row_content(match, available_width))
-        self.match = match
+        super().__init__(_row_content(match, available_width), match)
 
 
-class FileFinderPanel(OptionList, can_focus=False):
-    """List of matching workspace files, shown directly above the prompt input while the
-    cursor sits inside an `@mention`.
+class FinderPanel(OptionList, can_focus=False):
+    """Base class for inline fuzzy-finder panels rendered above the prompt input.
 
-    Never focused (`can_focus=False`): the prompt input keeps focus the whole time, and
-    `PromptInput` drives this widget's highlight programmatically (`move_highlight`) in
-    response to up/down arrow keys, mirroring `klorb.tui.widgets.palette.PromptPalette`. A
-    mouse click still reaches this widget regardless of focus, though: `OptionList`'s own
-    `_on_click` moves `highlighted` to the clicked row and posts `OptionSelected`, which
-    `on_option_list_option_selected` below turns into an actual activation of that row --
-    mirroring the VS Code plugin's file finder, where clicking a row selects it outright rather
-    than only highlighting it.
+    Subclasses own the option type and the selection action; this base owns the shared
+    chrome: show/hide, highlight movement, and click dispatch (via `_select_match`).
     """
 
     DEFAULT_CSS = """
-    FileFinderPanel {
+    FinderPanel {
         display: none;
         width: 1fr;
         height: auto;
@@ -285,11 +287,11 @@ class FileFinderPanel(OptionList, can_focus=False):
     }
     """
 
-    def show_matches(self, matches: Sequence[FinderMatch]) -> None:
+    def show_matches(self, matches: Sequence[object]) -> None:
         """Replace the displayed rows with `matches` and highlight the first one."""
         self.clear_options()
         available_width = max(self.size.width - _ROW_WIDTH_PADDING, _MIN_ROW_WIDTH)
-        self.add_options([FileFinderOption(match, available_width) for match in matches])
+        self.add_options(self._build_options(matches, available_width))
         if matches:
             self.highlighted = 0
         self.display = True
@@ -300,12 +302,12 @@ class FileFinderPanel(OptionList, can_focus=False):
         self.clear_options()
 
     @property
-    def current_match(self) -> FinderMatch | None:
-        """The currently-highlighted row's `FinderMatch`, or `None` if the popup has no rows."""
+    def current_match(self) -> object | None:
+        """The currently-highlighted row's match datum, or `None` if the popup has no rows."""
         if self.highlighted is None:
             return None
         option = self.get_option_at_index(self.highlighted)
-        assert isinstance(option, FileFinderOption)
+        assert isinstance(option, FinderOption)
         return option.match
 
     def move_highlight(self, direction: int) -> None:
@@ -318,10 +320,30 @@ class FileFinderPanel(OptionList, can_focus=False):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """A mouse click (or other `OptionList` selection) on a row activates it exactly as
-        Enter/Tab would, via the sibling `PromptInput.select_finder_match`. `PromptInput`
-        imported inline to break the circular import it itself has on this module (mirrors
-        `PromptInput._workspace_files`'s own inline import of `ReplApp` for the same reason)."""
+        Enter/Tab would, via `_select_match`."""
+        event.stop()
+        self._select_match()
+
+    def _build_options(self, matches: Sequence[object], available_width: int) -> list[Option]:
+        """Build typed `FinderOption` objects from `matches`. Subclasses override to construct
+        their specific option type."""
+        raise NotImplementedError
+
+    def _select_match(self) -> None:
+        """Dispatch a click or Enter/Tab selection to the right `PromptInput` method."""
+        raise NotImplementedError
+
+
+class FileFinderPanel(FinderPanel):
+    """List of matching workspace files, shown directly above the prompt input while the
+    cursor sits inside an `@mention`."""
+
+    def _build_options(self, matches: Sequence[object], available_width: int) -> list[Option]:
+        return [FileFinderOption(m, available_width) for m in matches]  # type: ignore[arg-type]
+
+    def _select_match(self) -> None:
+        """Dispatch a click or Enter/Tab selection to `PromptInput.select_finder_match`.
+        Imported inline to break the circular import PromptInput itself has on this module."""
         from klorb.tui.widgets.prompt_input import PromptInput
 
-        event.stop()
         self.screen.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).select_finder_match()
