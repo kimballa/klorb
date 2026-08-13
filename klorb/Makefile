@@ -8,7 +8,7 @@
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test evals venv init all
+	install_deps install_dev_deps install test evals venv init all
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -128,10 +128,15 @@ install_dev_deps: venv install_chainlink
 	@echo ""
 	@echo "Installed runtime and development dependencies."
 
-# Bootstrap a klorb-config.json, a klorb executable symlink, and the bundled tiktoken cache
-# for this venv's own klorb (see docs/specs/klorb-init.md).
+# Bootstrap a klorb-config.json, a klorb executable symlink, the bundled tiktoken cache, and
+# the bundled resource data (hooks, scripts, ...) for this venv's own klorb (see
+# docs/specs/klorb-init.md).
 init: venv
 	$(LOAD_VENV); "$(KLORB_BIN)" init || true
+
+# Install runtime deps, then run `klorb init` so `${klorbDataDir}`-referencing config
+# (`klorb.config_macros`) has real files to find.
+install: install_deps init
 
 clean:
 	find src -name "*.pyo" -delete

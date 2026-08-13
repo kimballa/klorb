@@ -131,7 +131,9 @@ least-specific. In permission rules and grants a skill's identity is the `(names
 * **Internal** (namespace `internal`): `klorb.resources/skills/`, shipped as package data inside
   the installed `klorb` distribution and read via `importlib.resources.files("klorb.resources")`,
   the same mechanism `system_prompts.d`'s packaged tier uses. This is where klorb's own built-in
-  skills live, including `/create-edit-skill` (below). **Lowest precedence.**
+  skills live, including `/create-edit-skill` (below) and `/claude-compatibility` (suggested by
+  the built-in `claude-compat` onSessionStart hook — see docs/specs/hooks-and-events.md). **Lowest
+  precedence.**
 
 When the same `name` exists in more than one tier (or in both workspace source dirs), the
 most-specific tier wins outright — user, then workspace, then internal (and, within the workspace

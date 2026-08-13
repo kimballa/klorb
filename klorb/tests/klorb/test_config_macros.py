@@ -7,11 +7,13 @@ import pytest
 
 from klorb.config_macros import (
     HOME_MACRO_NAME,
+    KLORB_DATA_DIR_MACRO_NAME,
     WORKSPACE_ROOT_MACRO_NAME,
     MacroExpansionError,
     expand_macros,
     resolve_macro_values,
 )
+from klorb.paths import get_klorb_data_dir
 
 
 def test_expand_macros_with_no_references_returns_text_unchanged() -> None:
@@ -73,3 +75,8 @@ def test_resolve_macro_values_home_is_path_home() -> None:
 def test_resolve_macro_values_workspace_root_is_resolved(tmp_path: Path) -> None:
     macros = resolve_macro_values(tmp_path)
     assert macros[WORKSPACE_ROOT_MACRO_NAME] == str(tmp_path.resolve(strict=False))
+
+
+def test_resolve_macro_values_klorb_data_dir_is_get_klorb_data_dir() -> None:
+    macros = resolve_macro_values(Path("/some/workspace"))
+    assert macros[KLORB_DATA_DIR_MACRO_NAME] == str(get_klorb_data_dir())

@@ -345,6 +345,21 @@ registration on session replacement (`/clear`, `session/new`, `session/load`):
   `onProcessStart`/`onProcessEnd` fire before any `Session` exists, so `main()` prints their
   `HookOutput.log` directly instead.
 
+## Built-in `claude-compat` hook
+
+`klorb.resources/default-config.json`'s `hooks.onSessionStart` ships one built-in handler by
+default: `command: ["python3", "${klorbDataDir}/hooks/claude-compat/check.py"]` (the script lives
+at `klorb.resources/data/hooks/claude-compat/check.py`; `${klorbDataDir}` only resolves to a real
+file once `klorb.klorb_init.copy_resource_data()` has run — either via `klorb init` or via
+`klorb/Makefile`'s `install` target — see docs/specs/klorb-init.md). It reads
+`workspace_just_bootstrapped`/`workspace_trusted` off its own `HookInput` (there is no declarative
+`filter` for either, since `HOOK_FILTER_SUBJECT_FIELDS["onSessionStart"]` is `reason`) and, on a
+newly-bootstrapped trusted workspace that has a `CLAUDE.md` file or a `.claude/skills/` directory,
+sets `HookOutput.log` suggesting the `/claude-compatibility` skill (`klorb.resources/skills/
+claude-compatibility/`, pre-allowed in `default-config.json`'s `skillRules.allow`) to turn on the
+matching `compatibility.claudeMarkdown`/`compatibility.claudeSkills` flag. Every other firing
+prints `{}`, silently.
+
 ## Available hooks
 
 `Session._dispatch_hook` (`klorb/src/klorb/session/mixins/core.py`) is the shared building block
