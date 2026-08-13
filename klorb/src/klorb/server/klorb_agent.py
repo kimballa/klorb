@@ -89,9 +89,7 @@ class KlorbAcpAgent(acp.Agent):
     model_registry`.
 
     The ACP `sessionId` handed back to the client from `new_session()`/`load_session()` is
-    `self._session.id` -- fixed for the session's entire lifetime (see
-    `klorb.session.mixins.core.SessionCoreMixin.__init__`), so it's always safe to read directly
-    rather than snapshotting it into a separate field.
+    `self._session.id`.
     """
 
     def __init__(
@@ -299,11 +297,8 @@ class KlorbAcpAgent(acp.Agent):
         return self._client
 
     def _wire_session_notice_handler(self, session: Session) -> None:
-        """Register this agent's ACP client as `session`'s `HookOutput.log` notice sink (see
-        `Session.register_notice_handler`), sending a `_klorb/notice` extension notification.
-        The handler can fire from any thread (a background `FileSystemModified`/`Timer` watcher,
-        or this agent's own event loop thread during a turn), so it hops onto the loop via
-        `asyncio.run_coroutine_threadsafe` rather than awaiting directly."""
+        """Register this agent's ACP client as `session`'s `HookOutput.log` notice sink, sending
+        a `_klorb/notice` extension notification."""
         loop = asyncio.get_running_loop()
 
         def notify(text: str) -> None:
@@ -312,11 +307,9 @@ class KlorbAcpAgent(acp.Agent):
         session.register_notice_handler(notify)
 
     def _wire_session_wake_handler(self, session: Session) -> None:
-        """Register this agent as `session`'s wake handler (see `Session.register_wake_handler`):
-        a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event that queues a message while
-        no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`.
-        Hops onto the loop the same way `_wire_session_notice_handler` does, for the same
-        reason."""
+        """Register this agent as `session`'s wake handler: a
+        `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event that queues a message while
+        no turn is in flight wakes this agent to drain and resubmit it via `TurnBridge.run_turn`."""
         loop = asyncio.get_running_loop()
 
         def wake() -> None:
@@ -455,11 +448,10 @@ class KlorbAcpAgent(acp.Agent):
         return session_config_json(self._session, self._model_registry)
 
     def _ext_set_session_title(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Apply a user-driven session rename -- see `_klorb/setSessionTitle` in
-        docs/specs/klorb-server.md. `title` of `None` or an empty/whitespace-only string clears
-        the title back to unnamed. Also cancels the one-shot naming classifier (`Session.
-        session_naming_pending` and `cancel_session_naming()`) so a rename issued before -- or
-        while -- the classifier is still resolving isn't overwritten once it finishes."""
+        """Apply a user-driven session rename.
+
+        See docs/specs/klorb-server.md.
+        """
         self._require_session_id(params)
         assert self._session is not None
         title = params.get("title")
@@ -640,10 +632,7 @@ class KlorbAcpAgent(acp.Agent):
         self._wire_session_wake_handler(restored)
         restored.fire_session_start_hook("ResumeSession")
         self._session = restored
-        # `restored.id` is guaranteed to equal the requested `session_id`: `find_recent_session`
-        # only matches an entry's exact `session_id` (no alias lookup -- ids are never renamed),
-        # so a successful lookup+restore always returns a `Session` whose `id` is the same string
-        # the client passed in.
+        # `restored.id` is guaranteed to equal the requested `session_id`.
         self._turn_bridge = TurnBridge(
             restored, self._require_client(), restored.id, self._process_config,
             raise_tool_call_limit_capable=self._client_supports("raiseToolCallLimit"),

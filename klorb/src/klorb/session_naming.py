@@ -1,15 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """LLM-driven session naming: derive a short human title for a fresh klorb session from its
 first user prompt. See docs/specs/process-and-session-config.md's "Session naming" section for
-the full design and `klorb.permissions.risk_classifier`, which this module deliberately mirrors
-(structured JSON output, `e2e_timeout` wrapper, one parse retry, "never raises" contract) for a
-second, unrelated small-model classification task.
-
-`generate_session_name()` is pure with respect to `Session`: it never reads or writes any session
-state -- it only sends one request and returns a `SessionName | None`. `klorb.session.mixins.
-core.SessionCoreMixin._run_session_naming` owns deciding when to call it and what to do with the
-result (setting `Session.name`), same division of responsibility as `klorb.permissions.
-risk_classifier`'s `resolve_item_risk_assessment` vs. `classify_command_risk`.
+the full design.
 """
 
 import json
@@ -105,8 +97,7 @@ def _message(role: MessageRole, content: str) -> Message:
 def _try_parse_name(reply_text: str) -> tuple[SessionName | None, str | None]:
     """Return `(name, None)` on success, or `(None, error_message)` if `reply_text` doesn't
     parse as JSON or doesn't validate against `SessionName`. `TypeError` is caught alongside
-    `json.JSONDecodeError`, matching `risk_classifier._try_parse_report`'s handling of a test
-    double that hands back a non-`str` object."""
+    `json.JSONDecodeError`."""
     try:
         raw = json.loads(reply_text)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -126,12 +117,8 @@ def generate_session_name(
     e2e_timeout: float,
     reasoning: dict[str, Any] | None = None,
 ) -> SessionName | None:
-    """Derive a `SessionName` (a title) from `prompt_text` -- a session's first user prompt --
-    using `model` via `api_provider`. Returns `None` on any failure: a request error, a request
-    that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a reply that still fails
-    to parse/validate after one retry -- so the caller can fall back to no displayed title,
-    exactly as if this function had never run. Never raises, mirroring `klorb.permissions.
-    risk_classifier.classify_command_risk`'s own "never raises" contract.
+    """Derive a `SessionName` (a title) from `prompt_text` (a session's first user prompt)
+    using `model` via `api_provider`. Returns `None` on any failure.
 
     `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt`. `e2e_timeout`
     is a hard wall-clock ceiling on this whole call (the initial request and the one parse-retry

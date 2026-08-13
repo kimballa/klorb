@@ -20,6 +20,28 @@ everything past the first sentence unless removing it would leave a genuine open
 reader would otherwise hit — not "less complete," not "less helpful context," an actual
 question. Default to cutting.
 
+### Hard bans — delete on sight, no exceptions
+
+A module/file-level docstring is exactly one sentence. The only permitted second sentence is a
+bare `See docs/specs/<file>.md.` pointer to a spec file that actually exists — nothing else, and
+never a third sentence.
+
+A `--` (em dash or double hyphen) that introduces a trailing clause counts as starting a new
+sentence: delete it and everything after, don't just shorten it. This is a hard rule, not a
+style preference — apply it even when the deleted clause feels informative.
+
+The following constructs are banned outright in any docstring or comment. Don't shorten them —
+delete the whole clause or sentence they appear in:
+
+* "called by ..." / "used by ..." (documenting a caller instead of the thing itself)
+* "(see ...)" or bare "see ..." cross-references to other code
+* "shared by ..." (documenting other consumers instead of the thing itself)
+* "mirroring ..." / "matching ..." / "the same way ... does" (justifying by comparison to
+  another function instead of describing this one)
+* "(e.g. ...)" and "(unlike ...)" parenthetical asides
+* Any other parenthetical whose content isn't the definition itself (i.e. it's an example,
+  comparison, or cross-reference rather than integral to what's being described)
+
 ## Cloud / Remote Agent Behavior
 
 * The environment variable `CLAUDE_CODE_REMOTE` is set to the literal string `"true"` when

@@ -73,16 +73,7 @@ this cap while several sessions are simultaneously open. See `_prune_sessions_in
 
 class RecentSession(BaseModel):
     """One `sessions.json` entry: a saved session's id, which subdirectory of `sessions/` it
-    lives in, and its display title.
-
-    `session_id` is the session's `Session.id`, fixed for the session's lifetime. `subdir` is set
-    once, to that same id, when its directory is first created
-    (`SessionPersistenceMixin.claim_session_directory`) -- kept as an independent field only so a
-    session restored from a `session.json` written by an older klorb version (whose id had since
-    been renamed by the since-removed session-naming rename) still resolves to the correct
-    on-disk directory. `title` mirrors `Session.name`; `None` only in the narrow window before a
-    title has been assigned (shouldn't normally be observed on disk -- a session's directory
-    isn't created until after that decision is made, see `SessionPersistenceMixin`)."""
+    lives in, and its display title."""
 
     session_id: str
     subdir: str
@@ -261,11 +252,8 @@ def touch_recent_session(
     last_modified_timestamp: datetime | None = None,
 ) -> None:
     """Move (or insert) the `session_id`/`subdir`/`title` entry to the front of `workspace`'s
-    `sessions.json`, replacing any existing entry for the same `subdir` -- `subdir`, not
-    `session_id`, is an entry's stable identity (see `RecentSession.subdir`'s own docstring), so
-    re-keying by `subdir` rather than `session_id` is what lets a session restored under a
-    legacy, pre-rename `subdir` still update in place. Then prunes anything that falls past
-    `MAX_RECENT_SESSIONS` (see `_prune_sessions_index`).
+    `sessions.json`, replacing any existing entry for the same `subdir`. Then prunes anything
+    that falls past `MAX_RECENT_SESSIONS` (see `_prune_sessions_index`).
 
     Guarded by `workspace.lock` (`acquire_lockfile_with_backoff`) for the duration of this one
     read-modify-write; if the lock can't be acquired after retrying (another process is mid

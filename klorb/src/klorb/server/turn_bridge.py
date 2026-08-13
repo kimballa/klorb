@@ -276,12 +276,10 @@ class TurnBridge:
                         self._session_id, exc_info=True)
 
             def on_session_name_changed(session_name: SessionName | None) -> None:
-                # The session-naming classifier now runs on `Session`'s own background thread
-                # (see `SessionCoreMixin._start_session_naming`) and can resolve well after this
-                # iteration's `pump_task` has already stopped draining `queue` -- so, unlike
-                # every other handler here, this can't go through `enqueue()`. Scheduled directly
-                # onto `loop` instead, the same way the queued-message drain below already has to
-                # once its own iteration's pump has stopped.
+                # The session-naming classifier now runs on `Session`'s own background thread and
+                # can resolve well after this iteration's `pump_task` has already stopped draining
+                # `queue`, so this can't go through `enqueue()`. Scheduled directly onto `loop`
+                # instead.
                 asyncio.run_coroutine_threadsafe(_send_session_name_update(session_name), loop)
 
             def on_enqueue_message(queued_msg: QueuedMessage) -> None:
