@@ -1,10 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Library logic behind `klorb init`: copies the packaged, spartan `template-config.json` into
-place, points a `klorb` executable symlink at the running process's own launcher script, copies
-the packaged tiktoken cache tree into `$KLORB_DATA_DIR` (see `klorb.token_estimate`), and copies
-the packaged `klorb.resources/data/` resource tree (hook scripts, ...) into `$KLORB_DATA_DIR`.
-Shared by the CLI subcommand (`klorb.cli`) and the "Init local klorb config" command palette
-action (`klorb.tui.commands.init_commands`) — see docs/specs/klorb-init.md.
+"""Library logic behind `klorb init`. Shared by the CLI subcommand (`klorb.cli`) and the "Init
+local klorb config" command palette action (`klorb.tui.commands.init_commands`) — see
+docs/specs/klorb-init.md.
 
 `template-config.json` is distinct from `klorb.process_config`'s
 `DEFAULT_CONFIG_RESOURCE_NAME` (`default-config.json`): the latter is read directly as a

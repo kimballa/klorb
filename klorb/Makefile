@@ -128,19 +128,15 @@ install_dev_deps: venv install_chainlink
 	@echo ""
 	@echo "Installed runtime and development dependencies."
 
-# Bootstrap a klorb-config.json, a klorb executable symlink, and the bundled tiktoken cache
-# for this venv's own klorb (see docs/specs/klorb-init.md).
+# Bootstrap a klorb-config.json, a klorb executable symlink, the bundled tiktoken cache, and
+# the bundled resource data (hooks, scripts, ...) for this venv's own klorb (see
+# docs/specs/klorb-init.md).
 init: venv
 	$(LOAD_VENV); "$(KLORB_BIN)" init || true
 
-# Copy klorb's bundled resource data (hooks, scripts, ...) into the user's klorb data dir
-# (`klorb.klorb_init.copy_resource_data`, the same step `klorb init` runs), so
-# `${klorbDataDir}`-referencing config can rely on it.
-install: install_deps
-	@echo "Installing klorb resource data..."
-	$(LOAD_VENV); "$(VENV_PYTHON)" -c "from klorb.klorb_init import copy_resource_data; copy_resource_data()"
-	@echo ""
-	@echo "klorb resource data installed."
+# Install runtime deps, then run `klorb init` so `${klorbDataDir}`-referencing config
+# (`klorb.config_macros`) has real files to find.
+install: install_deps init
 
 clean:
 	find src -name "*.pyo" -delete
