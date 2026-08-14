@@ -40,8 +40,10 @@ Redirect the diff to a plain file in the workspace once (e.g. `git diff HEAD > r
 subagent below. Treat it as a throwaway artifact: delete it
 once the review is done, like any other scratch file.
 
-Use tools like `git diff --name-status` or `git show --name-status` to get the shape of the change (which files, roughly how large a patch) before
-delegating. You can't write a good subagent prompt about a changeset you haven't seen. Before reading the patch itself directly, consider its size and whether you want it all in your own context before launching subagents.
+Use tools like `git diff --name-status` or `git show --name-status` to get the shape of the change
+(which files, roughly how large a patch) before delegating. You can't write a good subagent prompt
+about a changeset you haven't seen. Before reading the patch itself directly, consider its size and
+whether you want it all in your own context before launching subagents.
 
 ## 3. Delegate the reading to Explorer subagents
 
@@ -65,9 +67,29 @@ own report:
   crossed without validation, secrets or credentials handled carelessly, and newly-introduced
   attack surface -- with the same file/line citation requirement.
 
-* **Plan or spec conformance**, only if one exists. If the change references a technical planning document, a written feature spec, or a set of tracked tasks, launch an
-  Explorer to compare what the plan called for against what actually landed, and report gaps in
-  either direction (unimplemented pieces or scope that crept in, exceeding the plan).
+* **Plan or spec conformance**, only if one exists. If the change references a technical planning
+  document, a written feature spec, or a set of tracked tasks, launch an Explorer to compare what
+  the plan called for against what actually landed, and report gaps in either direction
+  (unimplemented pieces or scope that crept in, exceeding the plan).
+
+* **Docstrings and comments.** Look at the diff, focusing on docstrings for modules, classes,
+  methods and fields, as well as multi-line comments within the method bodies. Produce a list
+  of narrow editorial revisions to perform.
+  * Flag narration that merely restates code, stale or misleading claims, excessive section
+    labels, and comments likely to drift.
+  * Flag run-on docstrings: if one sentence will do, do not use two.
+  * Flag improper encapsulation violation: enumerating use cases or callers of a method, claims
+    about how internals work or implementation details callers should not depend on.
+  * Flag unnecessary comparisons: similar-but-distinct methods or approaches, approaches *not*
+    taken, comparison to prior approaches since reworked that are not visible in the code itself,
+    or references to ephemeral documentation (e.g., any *planning* document that is not a
+    persistent, maintained spec document).
+  * Prefer clearer code over a comment when naming or structure can make the behavior obvious.
+  * Useful comments worth keeping highlight non-obvious intent, invariants, compatibility constraints,
+    workarounds, surprising side effects, or deliberate tradeoffs that future maintainers could not
+    infer from the code.
+  * Do not request comments for routine control flow or self-explanatory code.
+  * Look up surrounding context from files if necessary to understand elements of the diff.
 
 Give each subagent a precise, bounded question (see `/launch-explorer-subagent`'s "Composing the
 initial message") and a citation requirement -- a report that says "there might be an issue in
@@ -82,9 +104,10 @@ work yourself. That's wasteful. They will provide you with a report if you are p
 
 ## 4. Confirm suspected bugs yourself
 
-A subagent's report is a lead, not a verdict. Explorer subagents cannot run commands, so they cannot verify their own findings. Before including a finding in your report, get
-your own evidence for it. The same discipline as `/debug-with-evidence`: state the specific
-failure you think occurs, then check it rather than reasoning about it further.
+A subagent's report is a lead, not a verdict. Explorer subagents cannot run commands, so they cannot
+verify their own findings. Before including a finding in your report, get your own evidence for it.
+The same discipline as `/debug-with-evidence`: state the specific failure you think occurs, then
+check it rather than reasoning about it further.
 
 * Read the flagged code yourself.
 * If a bug is plausible but not obviously certain, reproduce it: a throwaway script, a temporary
