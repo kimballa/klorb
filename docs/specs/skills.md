@@ -480,6 +480,37 @@ already gets, so the model still has to call `ActivateSkill` and give the hook a
 `ActivateSkillTool.apply()` itself has no such fallback — a denial there raises `ToolCallError`
 (`category="permission"`), reported back to the model as this call's failure.
 
+## `metadata.klorb.bashCommands`: pre-authorizing bash commands
+
+A skill's `SKILL.md` frontmatter may carry `metadata.klorb.bashCommands`, a list of `commandRules`
+argv patterns (the same `list[str]` shape as `sessionDefaults.commandRules.allow`):
+
+```yaml
+---
+name: enable-software-factory
+description: ...
+metadata:
+  klorb:
+    bashCommands:
+      - ["git", "checkout", "**"]
+      - ["gh", "auth", "status"]
+---
+```
+
+Once `skillRules`/`onActivateSkill` have already let an activation through (both the leading-
+mention fast path and `ActivateSkillTool.apply()`), `Session.grant_skill_bash_commands` reads this
+key (`klorb.tools.skill.common.skill_bash_command_patterns`) and grants each pattern into
+`SessionConfig.command_rules.allow` at `scope="session"` — the same in-memory, never-persisted-to-
+disk mechanism a `"session"`-scope answer to an interactive `BashTool` ask applies. This lets a
+skill ship the exact commands its own instructions need without a workspace's
+`commandRules.allow` having to list them separately; a workspace that doesn't trust a skill's
+author can still deny the skill itself via `skillRules`, which prevents this grant from ever
+firing. Granting is idempotent — re-activating a skill re-grants the same patterns, which
+`RuleGrantWriter.apply_decision` dedupes against the existing `allow` list — and applies only to
+`allow`; a skill cannot widen `deny`/`ask` this way. A missing or malformed
+`metadata.klorb.bashCommands` (a non-list, or an entry that isn't a `list[str]`) contributes
+nothing, logged as a `logger.warning()`.
+
 ## Supporting files: `ReadSkillFile`
 
 `ReadSkillFile(namespace: str, name: str, path: str)` resolves the skill against
@@ -575,6 +606,11 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   restored one, or a `/clear` — is unaffected, since it rescans on its own first use). This is a
   deliberate performance/simplicity trade rather than an oversight; a future version could
   auto-invalidate on a filesystem-watch signal.
+* **`metadata.klorb.bashCommands` lets an activated skill widen `commandRules.allow` with no
+  interactive prompt.** This is bounded by `skillRules`: a skill must already be activatable
+  (`"allow"`, or an `"ask"` the user or hook has already cleared) before its bash-command grant
+  ever fires, so the exposure is the same trust decision as activating the skill at all — see
+  "`metadata.klorb.bashCommands`" above.
 * **A leading `/<name>` mention auto-promotes an `"ask"`-verdicted skill to `"allow"` with no
   interactive prompt.** This is intentional, not an oversight: typing a skill's name as the leading
   token of a message is treated as the user's own approval, the same weight an interactive "Allow

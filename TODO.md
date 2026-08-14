@@ -5,12 +5,6 @@
 
 ### Bugs
 
-* `git push` failed with a 403 from the CONNECT tunnel (network/proxy issue) ?
-  "The `blocked_domains` field confirms `github.com` is in the blocked list."
-  From the agent: "Still blocked — the harness reports github.com is in the blocked domains list, so outbound HTTPS to GitHub is denied regardless of sandbox tweaks. The domain-level block is on the harness side, not the OS/network side."
-  * The above happened even though I specifically had `"bashDomains": { "allow": [ "github.com" ] }`
-    in the klorb-config.json file.... why?
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
@@ -42,10 +36,6 @@
     rewrite the context history so the next time it is magically updated...
 
 * `BashTool` stderr/stdout should have the `SecretDetector` applied to it.
-
-* Allow a skill to grant permission to perform various commands that may not otherwise be available.
-  e.g. `/do-something-needing-a-push` could include a session-duration grant to `["git", "push", "**"]`
-  even if `git push` was not ordinarily part of the permission set for the repo.
 
 * If the agent reads a file with anything `ReadFileCore`- or `Grep`-oriented and the `SecretDetector`
   masks out a secret, put the file on a list of sensitive files. This file list should be fed to

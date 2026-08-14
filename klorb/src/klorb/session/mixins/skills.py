@@ -13,7 +13,11 @@ from klorb.permissions.skill_access import evaluate_skill
 from klorb.session.events import UserSkillActivation
 from klorb.session.mixins._base import SessionBase
 from klorb.tools.skill.catalog import SkillCatalogs
-from klorb.tools.skill.common import display_skill_description, skill_activation_payload
+from klorb.tools.skill.common import (
+    display_skill_description,
+    skill_activation_payload,
+    skill_bash_command_patterns,
+)
 from klorb.tools.skill.model import Skill
 
 logger = logging.getLogger(__name__)
@@ -243,6 +247,7 @@ class SessionSkillsMixin(SessionBase):
             # mention hadn't resolved to a skill at all -- the model still has to call
             # `ActivateSkill` and go through the normal flow, where the hook gets another say.
             return None
+        self.grant_skill_bash_commands(skill)
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
@@ -275,3 +280,27 @@ class SessionSkillsMixin(SessionBase):
                 f"Skill activation {skill_namespace}/{skill_name} blocked by onActivateSkill "
                 "hook policy.")
         return None
+
+    def grant_skill_bash_commands(self, skill: Skill) -> None:
+        """Pre-authorize `skill`'s `metadata.klorb.bashCommands` argv patterns (see
+        `klorb.tools.skill.common.skill_bash_command_patterns`) as session-`allow` `commandRules`
+        -- called by both activation paths once the `onActivateSkill` hook has cleared, so a
+        skill's own frontmatter can ship the bash commands its instructions need without a
+        workspace's `commandRules.allow` having to list them separately. Idempotent: granting the
+        same pattern again on a later activation is a no-op (`RuleGrantWriter.apply_decision`
+        dedupes against the existing `allow` list).
+        """
+        patterns = skill_bash_command_patterns(skill.raw)
+        if not patterns:
+            return
+        # Deferred import: `klorb.permissions.command_grant` pulls in `klorb.session`
+        # (`SessionConfig`), which would cycle back through this still-initializing module -- the
+        # same reason `apply_skill_permission_grant` is deferred above.
+        from klorb.permissions.command_grant import apply_command_permission_grant
+        for pattern in patterns:
+            apply_command_permission_grant(
+                action="allow", scope="session", session_config=self.config,
+                process_config=None, argv=pattern, patterns=[pattern])
+        logger.debug(
+            "Skill %s/%s granted %d session bashCommands pattern(s).",
+            skill.namespace, skill.name, len(patterns))

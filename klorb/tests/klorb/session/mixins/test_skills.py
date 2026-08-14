@@ -494,6 +494,80 @@ def test_activate_skill_ask_denied(tmp_path: Path) -> None:
     assert any("Permission denied" in m.content for m in tool_responses)
 
 
+# --- metadata.klorb.bashCommands session grant ---
+
+
+def _write_bash_commands_skill(base: Path, name: str, description: str, *, body: str = "steps") -> Path:
+    skill_dir = base / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        f"description: {description}\n"
+        "metadata:\n"
+        "  klorb:\n"
+        "    bashCommands:\n"
+        "      - [\"git\", \"checkout\", \"**\"]\n"
+        "      - [\"gh\", \"auth\", \"status\"]\n"
+        "---\n\n" + body + "\n")
+    return skill_dir
+
+
+def test_leading_mention_activation_grants_skill_bash_commands(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    _write_bash_commands_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    session.send_turn("/do-thing go")
+
+    assert ["git", "checkout", "**"] in session.config.command_rules.allow
+    assert ["gh", "auth", "status"] in session.config.command_rules.allow
+
+
+def test_activate_skill_tool_grants_skill_bash_commands(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.side_effect = [
+        _tool_call_reply("c1", "ActivateSkill", '{"namespace": "workspace", "name": "do-thing"}'),
+        _reply("done"),
+    ]
+    session = _session(
+        tmp_path, provider=provider, skill_rules=SkillRules(allow=[("workspace", "do-thing")]))
+    _write_bash_commands_skill(_workspace_skills(session), "do-thing", "does the thing")
+    session._tool_registry = ToolRegistry.discover_tools(ProcessConfig(), session.config)
+    session._tool_registry.session = session
+
+    session.send_turn("go")
+
+    assert ["git", "checkout", "**"] in session.config.command_rules.allow
+    assert ["gh", "auth", "status"] in session.config.command_rules.allow
+
+
+def test_skill_without_bash_commands_metadata_grants_nothing(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    _write_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    session.send_turn("/do-thing go")
+
+    assert session.config.command_rules.allow == []
+
+
+def test_repeated_activation_does_not_duplicate_the_grant(tmp_path: Path) -> None:
+    provider = MagicMock()
+    provider.send_prompt.return_value = _reply()
+    session = _session(
+        tmp_path, skill_rules=SkillRules(allow=[("workspace", "do-thing")]), provider=provider)
+    _write_bash_commands_skill(_workspace_skills(session), "do-thing", "does the thing")
+
+    session.send_turn("/do-thing go")
+    session.send_turn("/do-thing go again")
+
+    assert session.config.command_rules.allow.count(["git", "checkout", "**"]) == 1
+
+
 # --- onActivateSkill hook ---
 
 _ECHO_HOOK_INPUT = HookConfig(

@@ -22,6 +22,7 @@ from klorb.tools.skill.common import (
     raise_if_skill_not_allowed,
     resolve_all_skills,
     resolve_skill_file,
+    skill_bash_command_patterns,
     skill_file_manifest,
     validate_namespace,
     validate_skill_name,
@@ -199,6 +200,38 @@ def test_parse_frontmatter_missing_or_malformed_yields_empty_dict() -> None:
     assert parse_frontmatter("---\nnot closed\n") == {}
     assert parse_frontmatter("---\n: : bad yaml :\n---\n") == {}
     assert parse_frontmatter("---\n- a\n- b\n---\n") == {}
+
+
+# --- metadata.klorb.bashCommands ---
+
+
+def test_skill_bash_command_patterns_reads_nested_metadata_key() -> None:
+    raw = {"metadata": {"klorb": {"bashCommands": [["git", "checkout", "**"], ["gh", "auth", "status"]]}}}
+    assert skill_bash_command_patterns(raw) == [["git", "checkout", "**"], ["gh", "auth", "status"]]
+
+
+def test_skill_bash_command_patterns_absent_yields_empty_list() -> None:
+    assert skill_bash_command_patterns({}) == []
+    assert skill_bash_command_patterns({"metadata": {}}) == []
+    assert skill_bash_command_patterns({"metadata": {"klorb": {}}}) == []
+
+
+def test_skill_bash_command_patterns_malformed_shapes_yield_empty_list(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert skill_bash_command_patterns({"metadata": "not a dict"}) == []
+        assert skill_bash_command_patterns({"metadata": {"klorb": "not a dict"}}) == []
+        assert skill_bash_command_patterns({"metadata": {"klorb": {"bashCommands": "not a list"}}}) == []
+
+
+def test_skill_bash_command_patterns_skips_malformed_entries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = {"metadata": {"klorb": {"bashCommands": [["git", "status"], "not a list", [1, 2]]}}}
+    with caplog.at_level(logging.WARNING):
+        assert skill_bash_command_patterns(raw) == [["git", "status"]]
+    assert sum(1 for record in caplog.records if "entry skipped" in record.message) == 2
 
 
 # --- discovery / precedence ---

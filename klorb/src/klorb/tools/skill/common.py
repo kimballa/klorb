@@ -169,6 +169,37 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
     return data
 
 
+def skill_bash_command_patterns(raw: dict[str, Any]) -> list[list[str]]:
+    """Every argv pattern under `raw`'s `metadata.klorb.bashCommands` frontmatter key, each a
+    `list[str]` token pattern ready for `klorb.permissions.command_access.CommandRules.allow` --
+    how a skill pre-authorizes the bash commands its own instructions need, instead of requiring
+    a workspace's `commandRules.allow` to list them separately. A missing or malformed shape (a
+    non-dict `metadata`/`klorb`, a non-list `bashCommands`, or a non-`list[str]` entry) yields an
+    empty list (or drops just that entry), logged as a `logger.warning()` since it's worth
+    surfacing to whoever authored the skill.
+    """
+    metadata = raw.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    klorb_metadata = metadata.get("klorb")
+    if not isinstance(klorb_metadata, dict):
+        return []
+    entries = klorb_metadata.get("bashCommands")
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        logger.warning("Skill metadata.klorb.bashCommands must be a list; got %r", entries)
+        return []
+    patterns: list[list[str]] = []
+    for entry in entries:
+        if isinstance(entry, list) and all(isinstance(token, str) for token in entry):
+            patterns.append(list(entry))
+        else:
+            logger.warning(
+                "Skill metadata.klorb.bashCommands entry skipped: not a list of strings: %r", entry)
+    return patterns
+
+
 def _namespace_source_dirs(
     namespace: Namespace, workspace_root: Path, workspace_trusted: bool, claude_skills_compat: bool,
 ) -> list[Traversable]:

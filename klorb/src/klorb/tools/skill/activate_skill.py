@@ -81,6 +81,7 @@ class ActivateSkillTool(Tool):
             skill_namespace=resolved.namespace, skill_name=resolved.name)
         if denial is not None:
             raise ToolCallError(denial, category="permission")
+        self.context.session.grant_skill_bash_commands(resolved)
 
         payload = skill_activation_payload(resolved)
         logger.info(

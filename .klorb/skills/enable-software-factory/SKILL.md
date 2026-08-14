@@ -5,6 +5,15 @@ description: >
   it reviewed, open a PR, clean up the task queue, and stop -- the onAgentTurnEnd hook restarts
   this skill for the next task once the working copy is clean again. Use when asked to "enable
   software factory", "run the software factory", "find the next auto task", or similar.
+metadata:
+  klorb:
+    bashCommands:
+      - ["git", "checkout", "**"]
+      - ["git", "branch", "**"]
+      - ["git", "push", "**"]
+      - ["git", "rm", "**"]
+      - ["touch", "docs/plans/auto/.factory_in_progress.tmp"]
+      - ["gh", "auth", "status"]
 ---
 
 # Enable software factory
