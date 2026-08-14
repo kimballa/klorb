@@ -229,6 +229,7 @@ describe('parseHostMessage', () => {
         entries: [{ kind: 'response', text: 'found it', streaming: false }],
         state: 'finished',
         aborted: false,
+        queuedMessages: [],
       },
       { type: 'toggleSubagentsPanel' },
     ];
@@ -480,23 +481,47 @@ describe('parseSubagentTreeResult', () => {
 });
 
 describe('parseSubagentTranscriptResult', () => {
-  it('accepts a valid {entries, state, aborted} result', () => {
+  it('accepts a valid {entries, state, aborted, queuedMessages} result', () => {
     const value = {
       entries: [{ kind: 'response', text: 'found it', streaming: false }],
       state: 'finished',
       aborted: true,
+      queuedMessages: ['hang on, also check the tests'],
     };
     expect(parseSubagentTranscriptResult(value)).toEqual(value);
   });
 
   it('rejects malformed results', () => {
     expect(parseSubagentTranscriptResult(undefined)).toBeUndefined();
-    expect(parseSubagentTranscriptResult({ entries: [], state: 'running' })).toBeUndefined();
     expect(
-      parseSubagentTranscriptResult({ entries: [], state: 'paused', aborted: false })
+      parseSubagentTranscriptResult({ entries: [], state: 'running', queuedMessages: [] })
     ).toBeUndefined();
     expect(
-      parseSubagentTranscriptResult({ entries: 'nope', state: 'running', aborted: false })
+      parseSubagentTranscriptResult({
+        entries: [],
+        state: 'paused',
+        aborted: false,
+        queuedMessages: [],
+      })
+    ).toBeUndefined();
+    expect(
+      parseSubagentTranscriptResult({
+        entries: 'nope',
+        state: 'running',
+        aborted: false,
+        queuedMessages: [],
+      })
+    ).toBeUndefined();
+    expect(
+      parseSubagentTranscriptResult({ entries: [], state: 'running', aborted: false })
+    ).toBeUndefined();
+    expect(
+      parseSubagentTranscriptResult({
+        entries: [],
+        state: 'running',
+        aborted: false,
+        queuedMessages: [1],
+      })
     ).toBeUndefined();
   });
 });

@@ -140,6 +140,7 @@ describe('SubagentPoller', () => {
             entries: [{ kind: 'response', text: 'found it', streaming: false }],
             state: 'finished',
             aborted: false,
+            queuedMessages: [],
           });
         }
         return Promise.resolve({ nodes: [] });
@@ -157,6 +158,7 @@ describe('SubagentPoller', () => {
       entries: [{ kind: 'response', text: 'found it', streaming: false }],
       state: 'finished',
       aborted: false,
+      queuedMessages: [],
     });
   });
 

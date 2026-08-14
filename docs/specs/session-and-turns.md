@@ -273,6 +273,11 @@ config) has one place to live.
   attaches each message as a `UserInterjectionPayload` on the first envelope built in that
   round, mirroring how `system_interjections` are delivered. When the turn finishes, the
   TUI transitions the history widgets from italics to regular styling to confirm delivery.
+  A message delivered this way has no `role="user"` message of its own, so
+  `klorb.server.update_mapping.build_session_replay` reconstructs a `"prompt"`-kind entry for
+  it from the tool-response envelope's own `user_interjections` field, ahead of the toolCall
+  entry it rode in on — otherwise it would render fine live (via the TUI/ACP path above) but
+  vanish entirely from a session restore or a subagent transcript poll.
 
 ## Session naming
 

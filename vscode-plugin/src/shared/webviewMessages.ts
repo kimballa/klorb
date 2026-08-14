@@ -388,13 +388,18 @@ export interface SubagentTreeUpdateMessage {
  * `SessionReplayEntry[]` shape a `sessionReplay` carries, so the webview can render it through
  * the same `HistoryView`. `state`/`aborted` drive the trailing status line's four states (still
  * working / task complete / interrupted / sending interrupt…, the last being purely local UI
- * state around a `cancelSubagent` click -- see docs/specs/vscode-plugin.md). */
+ * state around a `cancelSubagent` click -- see docs/specs/vscode-plugin.md). `queuedMessages` is
+ * every message accepted (via `_klorb/subagentPrompt`) while this subagent's turn was already
+ * running but not yet folded into a turn of its own -- there is no push notification for a
+ * subagent's queued message the way `MessageQueuedMessage`/`QueuedMessageSentMessage` cover the
+ * root session, so the poll itself is what surfaces it. */
 export interface SubagentTranscriptUpdateMessage {
   type: 'subagentTranscriptUpdate';
   sessionId: string;
   entries: SessionReplayEntry[];
   state: 'running' | 'finished';
   aborted: boolean;
+  queuedMessages: string[];
 }
 
 /** The user ran **Klorb: Toggle Subagents Panel** (or clicked its own header pin control),
@@ -1141,7 +1146,9 @@ function parseSubagentTranscriptUpdate(
     !Array.isArray(record.entries) ||
     !record.entries.every(isSessionReplayEntry) ||
     (record.state !== 'running' && record.state !== 'finished') ||
-    typeof record.aborted !== 'boolean'
+    typeof record.aborted !== 'boolean' ||
+    !Array.isArray(record.queuedMessages) ||
+    !record.queuedMessages.every((text) => typeof text === 'string')
   ) {
     return undefined;
   }
@@ -1151,6 +1158,7 @@ function parseSubagentTranscriptUpdate(
     entries: record.entries,
     state: record.state,
     aborted: record.aborted,
+    queuedMessages: record.queuedMessages,
   };
 }
 
@@ -1166,12 +1174,18 @@ export function parseSubagentTreeResult(value: unknown): SubagentNodeInfo[] | un
   return Array.isArray(nodes) && nodes.every(isSubagentNodeInfo) ? nodes : undefined;
 }
 
-/** Validates a raw `_klorb/subagentTranscript` ext-method result (`{entries, state, aborted}`,
- * no message envelope, no `sessionId` -- the poller already knows which subagent it asked
- * about), or `undefined` if malformed -- see `parseSubagentTreeResult`'s own doc comment. */
-export function parseSubagentTranscriptResult(
-  value: unknown
-): { entries: SessionReplayEntry[]; state: 'running' | 'finished'; aborted: boolean } | undefined {
+/** Validates a raw `_klorb/subagentTranscript` ext-method result (`{entries, state, aborted,
+ * queuedMessages}`, no message envelope, no `sessionId` -- the poller already knows which
+ * subagent it asked about), or `undefined` if malformed -- see `parseSubagentTreeResult`'s own
+ * doc comment. */
+export function parseSubagentTranscriptResult(value: unknown):
+  | {
+      entries: SessionReplayEntry[];
+      state: 'running' | 'finished';
+      aborted: boolean;
+      queuedMessages: string[];
+    }
+  | undefined {
   if (typeof value !== 'object' || value === null) {
     return undefined;
   }
@@ -1180,11 +1194,18 @@ export function parseSubagentTranscriptResult(
     !Array.isArray(v.entries) ||
     !v.entries.every(isSessionReplayEntry) ||
     (v.state !== 'running' && v.state !== 'finished') ||
-    typeof v.aborted !== 'boolean'
+    typeof v.aborted !== 'boolean' ||
+    !Array.isArray(v.queuedMessages) ||
+    !v.queuedMessages.every((text) => typeof text === 'string')
   ) {
     return undefined;
   }
-  return { entries: v.entries, state: v.state, aborted: v.aborted };
+  return {
+    entries: v.entries,
+    state: v.state,
+    aborted: v.aborted,
+    queuedMessages: v.queuedMessages,
+  };
 }
 
 function parseSetSubagentsPanelVisible(

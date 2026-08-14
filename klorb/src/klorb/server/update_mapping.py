@@ -829,6 +829,30 @@ def _replay_tool_call_entry(
     return entry
 
 
+def _replay_user_interjection_entries(response: Message | None) -> list[dict[str, Any]]:
+    """Build one `"prompt"`-kind entry per `UserInterjectionPayload` carried on `response`'s
+    envelope -- a message queued mid-turn and delivered by riding along on a tool-response
+    envelope (`Session._run_tool_calls`) has no `role="user"` message of its own to replay from,
+    so without this it would never appear in `build_session_replay`'s output at all, unlike a
+    message redelivered as a fresh turn once the current one ends."""
+    if response is None:
+        return []
+    try:
+        parsed = json.loads(response.content)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    interjections = parsed.get("user_interjections")
+    if not isinstance(interjections, list):
+        return []
+    return [
+        {"kind": "prompt", "text": item["user_message"], "streaming": False}
+        for item in interjections
+        if isinstance(item, dict) and isinstance(item.get("user_message"), str)
+    ]
+
+
 def _replay_image_meta(message: Message) -> list[dict[str, Any]]:
     """Build the `AttachedImageMeta`-shaped dicts (`shared/webviewMessages.ts`) for `message`'s
     `image_url` fragments, if any -- metadata only, no bytes: a `_klorb/sessionReplay` restore
@@ -896,7 +920,9 @@ def build_session_replay(
     `role="thinking"` message's text is resolved via `_resolve_thinking_text` -- both mirror the
     same two gaps `klorb.tui.formatting.resolve_thinking_body_text` and the TUI's own
     `tool_use`-content handling close for the TUI's restored-history/subagent-transcript render
-    paths (see docs/specs/subagents.md's "Subagents panel (TUI)" section).
+    paths (see docs/specs/subagents.md's "Subagents panel (TUI)" section). A tool-response's own
+    `user_interjections` (see `_replay_user_interjection_entries`) are emitted as their own
+    `"prompt"`-kind entries ahead of the toolCall entry they rode in on.
     """
     entries: list[dict[str, Any]] = []
     responses_by_call_id = {
@@ -921,6 +947,7 @@ def build_session_replay(
             if message.content.strip():
                 entries.append({"kind": "response", "text": message.content, "streaming": False})
             for call in message.tool_calls or []:
-                entries.append(_replay_tool_call_entry(
-                    call, responses_by_call_id.get(call.id), tool_registry, workspace_root))
+                response = responses_by_call_id.get(call.id)
+                entries.extend(_replay_user_interjection_entries(response))
+                entries.append(_replay_tool_call_entry(call, response, tool_registry, workspace_root))
     return entries

@@ -17,6 +17,9 @@
   approval panel waiting for permission to run a bash cmd, but also there's a different bash command
   also just running right above it in the historyview.)
 
+* If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
+  (Do we need to kill the persistent bash session so the next command loads it fresh?)
+
 ### Feature backlog
 
 * Add freeform `MEMORY.md` of up to about 50 lines in each namespace *also* put into the system interjection.
@@ -113,6 +116,8 @@
     filter (ptrace/mount/reboot/keyring).
   * A wildcard `readFiles`/`writeFiles` rule (e.g. `*.pem`) is enforced by `FileAccessTable`
     against the agent's own file tools, but `bwrap` sandboxing currently skips wildcard rules.
+    (We currently use this as a hack to deny ReadFile access to .git-credentials while still
+    permitting `git` to see the file...)
   * TOCTOU: every permission check (klorb.permissions.workspace/directory_access) resolves a
     path string at check time; nothing holds an open OS-level directory handle across the gap
     between that check and the actual file I/O, so a rename/symlink swap in that window could
@@ -171,11 +176,11 @@
 ### Bugs
 
 * Does the plugin properly extract SystemInterjections that got worked into tool responses?
-
-* queueing a mid-turn message for a subagent doesn't seem to work. When you hit send, the msg
-  just disappears, doesn't look like an italicized queued msg, and the agent doesn't seem to
-  respond to it. If the turn is complete, you can send a new message / start a new turn and
-  that seems to work fine though.
+  * Note that we recently fixed an issue about UserInterjections in this fashion:
+    Fixed in klorb/src/klorb/server/update_mapping.py: build_session_replay now reconstructs a visible
+    "prompt" entry from a tool-response's user_interjections field, right before the tool call it rode
+    in on. Updated docs/specs/session-and-turns.md.
+  * ... which means I think the system interjection side is not yet handled in that way.
 
 * jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
   a faithful representation of the in-vscode plugin environment. Can we fix this?

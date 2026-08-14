@@ -635,6 +635,13 @@ class SessionCoreMixin(SessionBase):
                 and self._current_turn_handlers.on_enqueue_message is not None):
             self._current_turn_handlers.on_enqueue_message(queued_msg)
 
+    @property
+    def pending_queued_message_texts(self) -> list[str]:
+        """The text of every message currently queued (see `enqueue_queued_message`), without
+        draining it -- for a poller to report a subagent's queued-but-undelivered messages
+        without a live `on_enqueue_message` callback to observe."""
+        return [queued_msg.message_text for queued_msg in self._queued_messages]
+
     def drain_queued_messages(
         self, callbacks: TurnEventHandlers | None = None,
     ) -> list[QueuedMessage]:

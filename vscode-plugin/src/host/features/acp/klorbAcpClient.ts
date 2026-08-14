@@ -117,9 +117,12 @@ export interface SessionUpdateListener {
   /** A `session/load` just restored a previously saved session's conversation
    * (`_klorb/sessionReplay`) -- replace the history wholesale with `entries`. */
   onSessionReplay(entries: SessionReplayEntry[]): void;
-  /** `AcpConnection.start()` fell through to `newSession()` -- either no resume was requested,
-   * or a requested `session/load` failed -- so the webview's history (which may hold state
-   * vscode restored from before this connection existed) is now stale and must be cleared. */
+  /** `AcpConnection.start()` is about to replace whatever session the webview currently holds
+   * state for -- a fresh `newSession()` (no resume requested, or a requested `session/load`
+   * failed) or a successful `session/load` resume alike -- so state keyed to the *previous*
+   * session (which may hold state vscode restored from before this connection existed, or a
+   * subagent tree/selection from before the swap) is now stale and must be cleared. A resume's
+   * own conversation history is repopulated right after via `onSessionReplay`. */
   onSessionReset(): void;
 }
 

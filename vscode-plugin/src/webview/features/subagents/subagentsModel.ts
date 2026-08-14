@@ -51,6 +51,7 @@ export function applySubagentTranscriptUpdate(
         entries: message.entries,
         state: message.state,
         aborted: message.aborted,
+        queuedMessages: message.queuedMessages,
       };
     case 'sessionReset':
       return undefined;
@@ -67,7 +68,11 @@ export function applySubagentTranscriptUpdate(
  * always `false` (`klorb.server.update_mapping._replay_tool_call_entry` never persists it), so
  * without this override a user's own expand/collapse toggle would silently revert on the next
  * poll. `expandedCallIds` is tracked independently of the entries themselves for exactly this
- * reason. */
+ * reason. Appends one italic `'queuedMessage'` entry per `transcript.queuedMessages` -- the
+ * poll's own stand-in for the root session's `messageQueued`/`queuedMessageSent` notifications
+ * (see `SubagentTranscriptUpdateMessage`'s doc comment): it just re-renders every poll until the
+ * message is actually folded into a turn, at which point the server stops reporting it and the
+ * resulting turn shows up in `entries` instead. */
 export function subagentTranscriptEntries(
   transcript: SubagentTranscriptSnapshot | undefined,
   expandedCallIds: ReadonlySet<string>
@@ -75,9 +80,15 @@ export function subagentTranscriptEntries(
   if (transcript === undefined) {
     return [];
   }
-  return applySessionReplay(transcript.entries).map((entry) =>
+  const entries = applySessionReplay(transcript.entries).map((entry) =>
     entry.kind === 'toolCall' ? { ...entry, expanded: expandedCallIds.has(entry.callId) } : entry
   );
+  const queuedEntries: HistoryEntry[] = transcript.queuedMessages.map((text) => ({
+    kind: 'queuedMessage',
+    text,
+    streaming: false,
+  }));
+  return [...entries, ...queuedEntries];
 }
 
 /** The tree's own root entry (`parentId: null`) -- every other node's own `parentId` chain

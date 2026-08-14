@@ -149,13 +149,17 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   sessionReplay` uses for the root session's own saved-session restore). Params: `{sessionId:
   string, subagentId: string}` (`subagentId` names a non-root node from `_klorb/subagentTree`'s
   own `nodes`; an unknown id is a JSON-RPC `invalid params` error). Result: `{entries: [...],
-  state: "running" | "finished", aborted: boolean}` — `entries` is the same `HistoryEntry`-shaped
-  array `_klorb/sessionReplay` sends, `state`/`aborted` are that subagent's own `SubagentHandle`
-  fields (`aborted` is whether `klorb.agents.runtime.SUBAGENT_ABORTED_MARKER` appears in its
-  output). A subagent's turn never streams (see docs/specs/subagents.md's "Security model"
-  section — no `TurnEventHandlers` progress callbacks are wired for one), so a client polls this
-  ext method on an interval to catch up, rather than receiving live `session/update`s the way the
-  root session's own turn does.
+  state: "running" | "finished", aborted: boolean, queuedMessages: string[]}` — `entries` is the
+  same `HistoryEntry`-shaped array `_klorb/sessionReplay` sends, `state`/`aborted` are that
+  subagent's own `SubagentHandle` fields (`aborted` is whether `klorb.agents.runtime.
+  SUBAGENT_ABORTED_MARKER` appears in its output), and `queuedMessages` is `Session.
+  pending_queued_message_texts` — messages accepted via `_klorb/subagentPrompt` while this
+  subagent's turn was already running, not yet folded into a turn of its own. A subagent's turn
+  never streams (see docs/specs/subagents.md's "Security model" section — no `TurnEventHandlers`
+  progress callbacks are wired for one), so a client polls this ext method on an interval to
+  catch up, rather than receiving live `session/update`s the way the root session's own turn
+  does; `queuedMessages` is how that same poll surfaces a queued message too, since there is no
+  `_klorb/messageQueued`/`_klorb/queuedMessageSent` notification pair for a subagent.
 * **`_klorb/subagentCancel`** — signals a specific subagent's own `cancel_event` (mirrors the
   TUI's per-subagent Escape/Ctrl+C, `KeyActionsMixin._interrupt_running_activity`), independent
   of the root session's own `session/cancel`. Params: `{sessionId: string, subagentId: string}`

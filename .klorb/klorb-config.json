@@ -85,7 +85,8 @@
         "workspace:add-python-dependency",
         "workspace:add-cli-flag",
         "workspace:enable-software-factory",
-        "internal:code-review"
+        "internal:code-review",
+        "workspace:add-openrouter-model"
       ]
     },
     "webDomains": {
@@ -96,8 +97,11 @@
       ]
     },
     "bashDomains": {
+      "deny": [],
+      "ask": [],
       "allow": [
-        "github.com"
+        "github.com",
+        "openrouter.ai"
       ]
     }
   },

@@ -204,6 +204,12 @@ export class AcpConnection {
     this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
     this._subagentsCapable = klorbAgentCapability(initResult, 'subagents');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
+    // Fired once, up front, for either path below: a resume replaces the session just as
+    // surely as newSession() does, and state keyed to whatever session the webview held before
+    // this connection existed (in particular a subagent tree/selection) is stale either way --
+    // see SessionUpdateListener.onSessionReset's own doc comment. A resume's own conversation
+    // history is repopulated right after via onSessionReplay, so clearing it here first is safe.
+    this._listener.onSessionReset();
     if (resumeSessionId !== undefined) {
       this._log(`klorb: attempting session/load for resumeSessionId=${resumeSessionId}`);
       try {
@@ -218,7 +224,6 @@ export class AcpConnection {
     } else {
       this._log('klorb: no resumeSessionId given; starting a new session');
     }
-    this._listener.onSessionReset();
     await this.newSession(cwd);
   }
 

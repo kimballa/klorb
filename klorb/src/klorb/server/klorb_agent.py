@@ -543,6 +543,7 @@ class KlorbAcpAgent(acp.Agent):
             "entries": entries,
             "state": handle.state,
             "aborted": SUBAGENT_ABORTED_MARKER in (handle.output or ""),
+            "queuedMessages": subagent_session.pending_queued_message_texts,
         }
 
     def _ext_subagent_cancel(self, params: dict[str, Any]) -> dict[str, Any]:

@@ -66,12 +66,14 @@ describe('applySubagentTranscriptUpdate', () => {
       entries: [{ kind: 'response', text: 'found it', streaming: false }],
       state: 'finished',
       aborted: false,
+      queuedMessages: [],
     };
     expect(applySubagentTranscriptUpdate(undefined, message)).toEqual({
       sessionId: 'subagent-1',
       entries: [{ kind: 'response', text: 'found it', streaming: false }],
       state: 'finished',
       aborted: false,
+      queuedMessages: [],
     });
   });
 
@@ -81,6 +83,7 @@ describe('applySubagentTranscriptUpdate', () => {
       entries: [],
       state: 'running' as const,
       aborted: false,
+      queuedMessages: [],
     };
     expect(applySubagentTranscriptUpdate(existing, { type: 'sessionReset' })).toBeUndefined();
   });
@@ -91,6 +94,7 @@ describe('applySubagentTranscriptUpdate', () => {
       entries: [],
       state: 'running' as const,
       aborted: false,
+      queuedMessages: [],
     };
     expect(applySubagentTranscriptUpdate(existing, { type: 'turnStarted' })).toBe(existing);
   });
@@ -152,6 +156,7 @@ describe('subagentTranscriptEntries', () => {
       ],
       state: 'running' as const,
       aborted: false,
+      queuedMessages: [],
     };
     const entries = subagentTranscriptEntries(transcript, new Set());
     expect(entries).toEqual([
@@ -185,8 +190,24 @@ describe('subagentTranscriptEntries', () => {
       ],
       state: 'running' as const,
       aborted: false,
+      queuedMessages: [],
     };
     const entries = subagentTranscriptEntries(transcript, new Set(['call-1']));
     expect(entries[0]).toMatchObject({ callId: 'call-1', expanded: true });
+  });
+
+  it('appends an italic queuedMessage entry per pending queued message', () => {
+    const transcript = {
+      sessionId: 'subagent-1',
+      entries: [{ kind: 'response' as const, text: 'working on it', streaming: false as const }],
+      state: 'running' as const,
+      aborted: false,
+      queuedMessages: ['also check the tests'],
+    };
+    const entries = subagentTranscriptEntries(transcript, new Set());
+    expect(entries).toEqual([
+      { kind: 'response', text: 'working on it', streaming: false },
+      { kind: 'queuedMessage', text: 'also check the tests', streaming: false },
+    ]);
   });
 });

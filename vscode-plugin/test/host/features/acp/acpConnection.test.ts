@@ -95,6 +95,29 @@ describe('AcpConnection', () => {
     expect(events).toContain('sessionReset');
   });
 
+  it(
+    'fires onSessionReset before a successful resume, so stale subagent-panel state (from ' +
+      'before this connection existed) is cleared rather than surviving into the resumed session',
+    async () => {
+      const agent = new MockAgent();
+      agent.onLoadSession = async (params, connection) => {
+        await connection.extNotification('_klorb/sessionReplay', {
+          sessionId: params.sessionId,
+          entries: [{ kind: 'prompt', text: 'hi', streaming: false }],
+        });
+        return {};
+      };
+      const { connection, events } = makeHarness(agent);
+
+      await connection.start(OPTIONS, '/work', 'sess-2');
+
+      expect(connection.sessionId).toBe('sess-2');
+      expect(events).toContain('sessionReset');
+      expect(events).toContain('sessionReplay:1');
+      expect(events.indexOf('sessionReset')).toBeLessThan(events.indexOf('sessionReplay:1'));
+    }
+  );
+
   it('loadSession() delivers a sessionReplay notification sent before session/load responds', async () => {
     const agent = new MockAgent();
     agent.onLoadSession = async (params, connection) => {
