@@ -43,12 +43,12 @@
     },
     "readFiles": {
       "deny": [
-        "${home}/.git-credentials",
-        "${home}/.netrc",
-        "${home}/.npmrc",
-        "${home}/.pypirc",
-        "${home}/.pgpass",
-        "${home}/.my.cnf",
+        "*.git-credentials",
+        "*.netrc",
+        "*.npmrc",
+        "*.pypirc",
+        "*.pgpass",
+        "*.my.cnf",
         "*.pem",
         "*.key",
         "*.p12",
@@ -322,7 +322,10 @@
       {
         "type": "bash",
         "name": "claude-compat",
-        "command": ["python3", "${klorbDataDir}/hooks/claude-compat/check.py"]
+        "command": [
+          "python3",
+          "${klorbDataDir}/hooks/claude-compat/check.py"
+        ]
       }
     ]
   },
