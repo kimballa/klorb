@@ -647,15 +647,17 @@ class SessionCoreMixin(SessionBase):
     ) -> list[QueuedMessage]:
         """Return every queued message currently in the queue and clear it. The returned
         messages are folded into a single new user turn by `_finish_turn()` (see its
-        docstring for why one turn, not one per message) or delivered as individual
-        `UserInterjectionPayload`s on tool-response envelopes by `_run_tool_calls()`.
+        docstring for why one turn, not one per message) or delivered as a single
+        `role="user"` message by `deliver_queued_user_message()` from `_dispatch_turn`'s
+        tool-call loop.
 
         The `on_send_queued_message` hook, if present, is called with each drained message so
         the UI can remove its italics block from the history -- it does not, itself, submit
         anything; that's the caller's job with the returned list. Taken from `callbacks` when
         given; otherwise falls back to the current turn's
-        `_current_turn_handlers`, for `_run_tool_calls()`'s mid-turn call (drained while
-        `_dispatch_turn` is still on the stack, so `_current_turn_handlers` is still live). An
+        `_current_turn_handlers`, for `deliver_queued_user_message()`'s mid-turn call (drained
+        while `_dispatch_turn` is still on the stack, so `_current_turn_handlers` is still
+        live). An
         explicit `callbacks` is required for a drain that happens *after* the turn that owned it
         has already ended -- `_finish_turn()`'s own end-of-turn drain, since `_dispatch_turn`
         clears `_current_turn_handlers` before `send_turn()` returns to any such caller."""
@@ -691,6 +693,21 @@ class SessionCoreMixin(SessionBase):
             return None
         self.mark_next_turn_continuation(drained)
         return "\n\n".join(queued_msg.message_text for queued_msg in drained)
+
+    def deliver_queued_user_message(self, callbacks: TurnEventHandlers) -> None:
+        """Drain every queued message (see `drain_queued_messages`) and append them to this
+        session's history as a single `role="user"` message, complete on arrival -- so a
+        message the user typed while this turn's tool loop was running reaches the model as an
+        actual user turn in the very next request payload. Called from `_dispatch_turn` after
+        each tool-call round."""
+        drained = self.drain_queued_messages(callbacks)
+        if not drained:
+            return
+        content = "\n\n".join(queued_msg.message_text for queued_msg in drained)
+        self._messages.append(Message(
+            content=content, role="user", num_tokens=estimate_tokens(content),
+            processing_state="complete", timestamp=datetime.now(),
+        ))
 
     def _deliver_chained_hook_message(self, message: str) -> None:
         """Enqueue `message` (an `onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler's result)

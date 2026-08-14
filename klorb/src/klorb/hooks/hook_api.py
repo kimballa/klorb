@@ -31,7 +31,7 @@ class HookInput(BaseModel):
     tool_result: str | None = None
     """`onToolResult` only: the tool call's own substantive result content -- `response_body` if
     set, else `error_message`, JSON-serialized if not already a plain string. Never includes
-    `system_interjections`/`user_interjections`; a hook can't see or override those."""
+    `system_interjections`; a hook can't see or override those."""
     skill_name: str | None = None
     skill_namespace: str | None = None
     is_user_mentioned: bool | None = None

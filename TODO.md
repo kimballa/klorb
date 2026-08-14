@@ -175,13 +175,6 @@
 
 ### Bugs
 
-* Does the plugin properly extract SystemInterjections that got worked into tool responses?
-  * Note that we recently fixed an issue about UserInterjections in this fashion:
-    Fixed in klorb/src/klorb/server/update_mapping.py: build_session_replay now reconstructs a visible
-    "prompt" entry from a tool-response's user_interjections field, right before the tool call it rode
-    in on. Updated docs/specs/session-and-turns.md.
-  * ... which means I think the system interjection side is not yet handled in that way.
-
 * jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
   a faithful representation of the in-vscode plugin environment. Can we fix this?
 

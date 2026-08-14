@@ -40,11 +40,10 @@ def test_error_message_may_be_none_when_response_body_carries_the_detail() -> No
     assert envelope.response_body == {"failure_reason": "exit 1"}
 
 
-def test_to_wire_dict_omits_empty_interjection_lists() -> None:
+def test_to_wire_dict_omits_empty_system_interjections() -> None:
     envelope = ToolResponseEnvelope.success("ok")
     wire = envelope.to_wire_dict()
     assert "system_interjections" not in wire
-    assert "user_interjections" not in wire
     assert wire["response_body"] == "ok"
 
 

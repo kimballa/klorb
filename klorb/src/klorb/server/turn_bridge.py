@@ -152,8 +152,8 @@ class TurnBridge:
 
     `on_enqueue_message` enqueues `_klorb/messageQueued` onto the same ordered queue as every
     other update, and `on_send_queued_message`'s mid-turn firing (from `Session.
-    _run_tool_calls()`'s own drain, delivering a message into the running turn as a
-    `UserInterjectionPayload`) enqueues `_klorb/queuedMessageSent` the same way. Once a
+    deliver_queued_user_message()`'s own drain, delivering a message into the running turn as a
+    `role="user"` message) enqueues `_klorb/queuedMessageSent` the same way. Once a
     `Session.send_turn()` call returns (successfully, aborted, or raising), `run_turn()` drains
     any message still queued at that point (`Session.drain_queued_messages()`, called with no
     `callbacks` -- this iteration's own pump task has already stopped, so there is nothing left

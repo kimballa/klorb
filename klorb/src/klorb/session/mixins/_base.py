@@ -270,6 +270,8 @@ class SessionBase:
     def drain_next_turn_text(self, callbacks: TurnEventHandlers | None = None) -> str | None:
         raise NotImplementedError
 
+    def deliver_queued_user_message(self, callbacks: TurnEventHandlers) -> None: ...
+
     def _deliver_chained_hook_message(self, message: str) -> None: ...
 
     def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":

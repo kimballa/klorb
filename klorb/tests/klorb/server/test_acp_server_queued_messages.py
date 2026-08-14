@@ -86,13 +86,13 @@ async def test_enqueue_message_without_a_turn_in_flight_is_a_json_rpc_error(
             "klorb/enqueueMessage", {"sessionId": session_id, "text": "hello"})
 
 
-async def test_enqueue_message_mid_turn_reaches_the_tool_response_envelope(
+async def test_enqueue_message_mid_turn_is_delivered_as_a_user_message(
     make_harness: Callable[..., Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Enqueuing while a tool-call round is in flight delivers the message as a
-    `UserInterjectionPayload` on that round's own tool-response envelope (see
-    docs/specs/session-and-turns.md's `user_interjections` bullet), bracketed by
-    `_klorb/messageQueued`/`_klorb/queuedMessageSent` notifications in order."""
+    """Enqueuing while a tool-call round is in flight delivers the message as its own
+    `role="user"` message immediately after that round's tool_response (not folded into the
+    tool_response envelope), bracketed by `_klorb/messageQueued`/`_klorb/queuedMessageSent`
+    notifications in order."""
     (tmp_path / "workspace").mkdir()
     workspace = tmp_path / "workspace"
     (workspace / "foo.txt").write_text("hello\n")
@@ -134,12 +134,15 @@ async def test_enqueue_message_mid_turn_reaches_the_tool_response_envelope(
     response = await prompt_task
 
     assert response.stop_reason == "end_turn"
-    # Round 2 (the model's follow-up after the tool call) is what sees the tool_response
-    # envelope carrying the interjection -- captured_messages[1] is what was actually sent.
+    # Round 2 (the model's follow-up after the tool call) is what carries both the
+    # tool_response and the queued message -- captured_messages[1] is what was actually sent.
     assert len(captured_messages) == 2
-    tool_response = next(m for m in captured_messages[1] if m.role == "tool_response")
-    assert '"user_interjections"' in tool_response.content
-    assert "also check the other file" in tool_response.content
+    round_2 = captured_messages[1]
+    tool_response = next(m for m in round_2 if m.role == "tool_response")
+    # The queued message is delivered as its own role="user" message, after the tool_response.
+    queued = next(m for m in reversed(round_2) if m.role == "user")
+    assert queued.content == "also check the other file"
+    assert round_2.index(queued) > round_2.index(tool_response)
 
     ext_calls = [
         (method, params) for method, params in harness.harness_client.ext_notification_calls

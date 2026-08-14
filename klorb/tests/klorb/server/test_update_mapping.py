@@ -739,24 +739,22 @@ class TestBuildSessionReplay:
         assert entries[0]["status"] == "completed"
         assert entries[0]["contentText"] == "42"
 
-    def test_user_interjection_on_a_tool_response_becomes_a_prompt_entry(
+    def test_user_message_after_a_tool_round_replays_as_a_prompt_entry(
         self, tmp_path: Path,
     ) -> None:
         session = Session(SessionConfig(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
-        envelope = (
-            '{"is_error": false, "is_retryable": false, "response_body": "42", '
-            '"user_interjections": [{"user_message": "also check the tests"}]}')
-        tool_response = _msg("tool_response", content=envelope, tool_call_id="call-1")
-        session.load_messages([tool_use, tool_response])
+        tool_response = _msg("tool_response", content="42", tool_call_id="call-1")
+        queued_user = _msg("user", "also check the tests")
+        session.load_messages([tool_use, tool_response, queued_user])
 
         entries = build_session_replay(session, None, tmp_path)
 
-        assert entries[0] == {
+        assert entries[0]["kind"] == "toolCall"
+        assert entries[0]["callId"] == "call-1"
+        assert entries[1] == {
             "kind": "prompt", "text": "also check the tests", "streaming": False}
-        assert entries[1]["kind"] == "toolCall"
-        assert entries[1]["callId"] == "call-1"
 
     def test_error_envelope_response_marks_the_call_failed(self, tmp_path: Path) -> None:
         session = Session(SessionConfig(), provider=MagicMock())

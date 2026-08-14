@@ -234,10 +234,10 @@ config) has one place to live.
   failure discriminant), `is_retryable` (always `False` when `is_error` is `False`; otherwise
   derived from `error_category`), `error_category` (a `klorb.tools.exceptions.ErrorCategory`,
   `None` when unclassified), `error_message`, `response_body` (the tool's own result on success;
-  `None` on failure except for the one deviation below), and `system_interjections`/
-  `user_interjections` (below). `to_wire_dict()` omits `system_interjections`/`user_interjections`
-  entirely, not just as `[]`, when empty, and omits every other `None` field, so the common
-  (successful, no-interjection) case stays compact.
+  `None` on failure except for the one deviation below), and `system_interjections` (below).
+  `to_wire_dict()` omits `system_interjections` entirely, not just as `[]`, when empty, and
+  omits every other `None` field, so the common (successful, no-interjection) case stays
+  compact.
 * `error_category` assignment: `"syntax"` for a call whose `arguments` failed to parse as JSON
   before any tool ran; `"validation"` for an unknown tool name or a caught `ValueError`;
   `"permission"` for a caught `PermissionError` or a fail-closed/denied permission ask,
@@ -265,19 +265,18 @@ config) has one place to live.
   `TodoNextTool`'s current-task nudge) visible even deep inside a multi-round tool loop that
   never returns to a fresh user-turn prompt — the exact case where the XML-on-user-prompt
   delivery alone would go stale.
-* `user_interjections` carries user messages queued during an active agent turn. When the
-  user presses Enter while a turn is in flight, the TUI queues the message (via
-  `Session.enqueue_queued_message`) and mounts a `<Queued message>` header plus the
-  message text in italics in the history. The next time `_run_tool_calls()` runs (i.e. the
-  next tool-call round), it drains the queue (via `Session.drain_queued_messages`) and
-  attaches each message as a `UserInterjectionPayload` on the first envelope built in that
-  round, mirroring how `system_interjections` are delivered. When the turn finishes, the
-  TUI transitions the history widgets from italics to regular styling to confirm delivery.
-  A message delivered this way has no `role="user"` message of its own, so
-  `klorb.server.update_mapping.build_session_replay` reconstructs a `"prompt"`-kind entry for
-  it from the tool-response envelope's own `user_interjections` field, ahead of the toolCall
-  entry it rode in on — otherwise it would render fine live (via the TUI/ACP path above) but
-  vanish entirely from a session restore or a subagent transcript poll.
+* A user message queued during an active agent turn is delivered as a real `role="user"`
+  message. When the user presses Enter while a turn is in flight, the TUI queues the message
+  (via `Session.enqueue_queued_message`) and mounts a `<Queued message>` header plus the
+  message text in italics in the history. The next time `_dispatch_turn()` finishes a
+  tool-call round, it drains the queue (via `Session.deliver_queued_user_message`) and
+  appends the drained text as a `role="user"` `Message` immediately after that round's
+  `tool_response` messages, so the very next model request carries the tool results and the
+  user's message together and the model treats the latter as an ordinary user turn. When the
+  turn finishes, the TUI transitions the history widgets from italics to regular styling to
+  confirm delivery. Because the message is a real `role="user"` message,
+  `klorb.server.update_mapping.build_session_replay` renders it as a `"prompt"`-kind entry
+  with no special handling.
 
 ## Session naming
 

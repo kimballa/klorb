@@ -3,10 +3,9 @@
 `Message.content` is serialized from, in place of the bare result-or-`"Error: ..."` string
 `klorb.session.mixins.tool_execution._run_tool_calls` used to build. Gives the model a uniform
 set of fields to reason about a failed call with (`is_error`/`is_retryable`/`error_category`/
-`error_message`) instead of guessing from prose, and slots for harness advisories
-(`system_interjections`) and queued user messages (`user_interjections`) to ride along with a
-tool result instead of only a user-turn prompt. See docs/specs/session-and-turns.md and
-docs/plans/archive/015-structured-tool-responses.md.
+`error_message`) instead of guessing from prose, and a `system_interjections` slot for harness
+advisories to ride along with a tool result instead of only a user-turn prompt. See
+docs/specs/session-and-turns.md and docs/adrs/00150-wrap-tool-responses-in-a-structured-json-envelope.md.
 """
 
 from typing import Any
@@ -32,19 +31,6 @@ class SystemInterjectionPayload(BaseModel):
     body: str
 
 
-class UserInterjectionPayload(BaseModel):
-    """A queued user message delivered mid-tool-loop, attached to a
-    `ToolResponseEnvelope`'s `user_interjections` on the first envelope of each tool-call
-    round. Produced by `_run_tool_calls()` when the user has queued messages during an
-    active agent turn (see `Session.enqueue_queued_message` /
-    `Session.drain_queued_messages`). See docs/specs/session-and-turns.md for the full
-    delivery mechanism."""
-
-    model_config = ConfigDict(frozen=True)
-
-    user_message: str
-
-
 class ToolResponseEnvelope(BaseModel):
     """The JSON object every `tool_response` `Message.content` is serialized from (via
     `to_wire_dict()`). Construct via `success()`/`error()`, never directly, so `is_retryable`
@@ -58,7 +44,6 @@ class ToolResponseEnvelope(BaseModel):
     error_message: str | None = None
     response_body: Any = None
     system_interjections: list[SystemInterjectionPayload] = Field(default_factory=list)
-    user_interjections: list[UserInterjectionPayload] = Field(default_factory=list)
 
     @classmethod
     def success(
@@ -66,15 +51,13 @@ class ToolResponseEnvelope(BaseModel):
         response_body: Any,
         *,
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
-        user_interjections: "tuple[UserInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
         """Build a successful call's envelope. `is_retryable` is unconditionally `False` --
         a successful call (even one whose `response_body` is empty, e.g. a Grep with no
         matches) is never something to retry."""
         return cls(
             is_error=False, is_retryable=False, response_body=response_body,
-            system_interjections=list(system_interjections),
-            user_interjections=list(user_interjections))
+            system_interjections=list(system_interjections))
 
     @classmethod
     def error(
@@ -84,7 +67,6 @@ class ToolResponseEnvelope(BaseModel):
         category: ErrorCategory | None,
         response_body: Any = None,
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
-        user_interjections: "tuple[UserInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
         """Build a failed call's envelope. `is_retryable` is derived from `category` via
         `_RETRYABLE_CATEGORIES`, `False` when `category` is `None` (an unclassified failure
@@ -95,20 +77,17 @@ class ToolResponseEnvelope(BaseModel):
         return cls(
             is_error=True, is_retryable=category in _RETRYABLE_CATEGORIES,
             error_category=category, error_message=message, response_body=response_body,
-            system_interjections=list(system_interjections),
-            user_interjections=list(user_interjections))
+            system_interjections=list(system_interjections))
 
     def to_wire_dict(self) -> dict[str, Any]:
         """Serialize to the dict that becomes a `tool_response` `Message.content`'s JSON body:
-        `model_dump(exclude_none=True)`, additionally dropping `system_interjections`/
-        `user_interjections` entirely (not just as an empty `[]`) when empty -- every
-        `tool_response` pays this envelope's overhead now, so the dominant (no-interjection)
-        case shouldn't carry two empty-array keys on every single call."""
+        `model_dump(exclude_none=True)`, additionally dropping `system_interjections` entirely
+        (not just as an empty `[]`) when empty -- every `tool_response` pays this envelope's
+        overhead now, so the dominant (no-interjection) case shouldn't carry an empty-array key
+        on every single call."""
         wire = self.model_dump(exclude_none=True)
         if not self.system_interjections:
             wire.pop("system_interjections", None)
-        if not self.user_interjections:
-            wire.pop("user_interjections", None)
         return wire
 
 

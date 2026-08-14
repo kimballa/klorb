@@ -81,7 +81,7 @@ way, keyed by the event name.
 * **`HookInput`** — `hook`, `name`, `args` (the firing handler's own `shell`/`command`/`prompt`),
   `workspace_root`, `reason` (why `hook` fired — an event's own name is carried in `hook` itself,
   never here), `message`, `tool_name`, `tool_args`, `tool_result` (`onToolResult` only — the
-  call's own substantive result content, never `system_interjections`/`user_interjections`),
+  call's own substantive result content, never `system_interjections`),
   `skill_name`/`skill_namespace`/`is_user_mentioned`/`is_user_activated` (set only for
   `onActivateSkill`), `role`, `session_id`/`root_session_id` (the firing session's own id and the
   root session it descends from; `None` only for `onProcessStart`/`onProcessEnd`, before any
@@ -379,7 +379,7 @@ hooks are inert in that case rather than erroring.
 | `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
 | `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `_deliver_chained_hook_message`, unless `reset_session` is also set (see "Session reset" above) | root session |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
-| `onToolResult` | `_apply_tool_result_hook`, after a tool call's result envelope is built; `tool_result` in the result replaces `response_body`/`error_message` in the envelope, never `system_interjections`/`user_interjections` | whole tree |
+| `onToolResult` | `_apply_tool_result_hook`, after a tool call's result envelope is built; `tool_result` in the result replaces `response_body`/`error_message` in the envelope, never `system_interjections` | whole tree |
 | `onActivateSkill` | `Session.fire_activate_skill_hook` (`klorb/src/klorb/session/mixins/skills.py`), from `ActivateSkillTool.apply()` and from `_build_user_skill_activation_interjection`'s leading-mention fast path, once `skillRules` has already let the activation through; `success=False` or a `permission` of `"deny"`/`"ask"` vetoes it — `ActivateSkillTool.apply()` raises `ToolCallError`, the leading-mention path falls back to the ordinary `SkillReference` reminder | whole tree |
 | `onSubagentStart` | `Session.fire_subagent_start_hook`, called from `klorb.agents.policy` around a subagent's turn; a `None` return (aggregate `success=False`) skips the turn entirely | firing subagent |
 | `onSubagentTurnEnd` | `Session.fire_subagent_turn_end_hook`, after a subagent's turn | firing subagent |

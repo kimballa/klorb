@@ -27,12 +27,7 @@ from klorb.tool_call_log import log_tool_call
 from klorb.tools.ask.common import AskUserQuestionsRequired
 from klorb.tools.escalate_privileges.common import EscalatePrivilegesRequired
 from klorb.tools.exceptions import ErrorCategory, NoSuchToolException, ToolCallError
-from klorb.tools.response_envelope import (
-    SystemInterjectionPayload,
-    ToolResponseEnvelope,
-    UserInterjectionPayload,
-    classify_exception,
-)
+from klorb.tools.response_envelope import SystemInterjectionPayload, ToolResponseEnvelope, classify_exception
 from klorb.tools.tool import describe_tool_arg_json_error
 
 logger = logging.getLogger(__name__)
@@ -139,10 +134,6 @@ class SessionToolExecutionMixin(SessionBase):
             message = self._standing_interjection_providers[subject]()
             if message is not None:
                 system_interjections.append(SystemInterjectionPayload(subject=subject, body=message))
-        user_interjections: list[UserInterjectionPayload] = [
-            UserInterjectionPayload(user_message=queued_msg.message_text)
-            for queued_msg in self.drain_queued_messages()
-        ]
         for call in tool_use_message.tool_calls:
             if callbacks.cancel_event is not None and callbacks.cancel_event.is_set():
                 # Stop before running the next call (and before asking about any more of this
@@ -253,24 +244,19 @@ class SessionToolExecutionMixin(SessionBase):
             is_first_call = call is tool_use_message.tool_calls[0]
             first_call_interjections = (
                 tuple(system_interjections) if is_first_call else ())
-            first_call_user_interjections = (
-                tuple(user_interjections) if is_first_call else ())
             if error is None and tool_succeeded is False:
                 # A tool whose `apply()` never raises but signals failure via its own result
                 # shape (e.g. `BashTool` for a non-zero exit) -- see `Tool.is_success()`.
                 envelope = ToolResponseEnvelope.error(
                     None, category="business_logic", response_body=result,
-                    system_interjections=first_call_interjections,
-                    user_interjections=first_call_user_interjections)
+                    system_interjections=first_call_interjections)
             elif error is None:
                 envelope = ToolResponseEnvelope.success(
-                    result, system_interjections=first_call_interjections,
-                    user_interjections=first_call_user_interjections)
+                    result, system_interjections=first_call_interjections)
             else:
                 envelope = ToolResponseEnvelope.error(
                     error, category=category, response_body=response_body,
-                    system_interjections=first_call_interjections,
-                    user_interjections=first_call_user_interjections)
+                    system_interjections=first_call_interjections)
             envelope = self._apply_tool_result_hook(call.name, envelope)
             content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
             if self._log_tool_calls:
@@ -321,8 +307,8 @@ class SessionToolExecutionMixin(SessionBase):
     ) -> ToolResponseEnvelope:
         """Dispatch `onToolResult` after `call_name`'s `ToolResponseEnvelope` is built -- fires
         for every session in the tree, same as `onToolUse`. Only the envelope's own substantive
-        result (`_tool_result_text`) is exposed as `tool_result`; `system_interjections`/
-        `user_interjections` are never visible to, or overridable by, a hook. A `tool_result` in
+        result (`_tool_result_text`) is exposed as `tool_result`; `system_interjections` are
+        never visible to, or overridable by, a hook. A `tool_result` in
         the aggregate `HookOutput` replaces `response_body` (or `error_message`, when the
         envelope had no `response_body`) in the envelope returned here."""
         tool_result = _tool_result_text(envelope)

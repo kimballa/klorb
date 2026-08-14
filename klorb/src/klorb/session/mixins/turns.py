@@ -369,6 +369,7 @@ class SessionTurnsMixin(SessionBase):
                     logger.info(
                         "Turn tool-call round %d/%d for %s", rounds, MAX_TOOL_CALL_ROUNDS, model_name)
                     self._run_tool_calls(reply, callbacks)
+                    self.deliver_queued_user_message(callbacks)
                     reply, _ = self._send_and_receive(
                         list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
                         tools, callbacks)

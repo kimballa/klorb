@@ -1,5 +1,7 @@
 # Every `tool_response` message carries a structured JSON envelope, not a bare-result-or-`"Error: ..."` string
 
+> **Superseded in part** by `00191-deliver-queued-messages-as-role-user-not-on-the-tool-response-envelope.md`: the `user_interjections` field reserved below has since been removed, and queued user messages are now delivered as a `role="user"` message. The envelope and its `system_interjections` slot still stand.
+
 * Date: 2026-07-23 00:00
 * Question: `SessionToolExecutionMixin._run_tool_calls`'s `_format_tool_response_content(result,
   error)` turned every tool call's outcome into `f"Error: {error}"` on failure, or the bare

@@ -53,7 +53,8 @@ class PromptSubmissionMixin(ReplAppBase):
         When a subagent (not the root session) is selected, the prompt is sent directly to it
         instead — see `_submit_subagent_prompt`. Otherwise, when a turn is already in flight
         (`_turn_in_flight`), the prompt is queued rather than dispatched — see `_queue_prompt` —
-        and will be delivered as a `UserInterjectionPayload` on the next tool-response envelope.
+        and will be delivered as a `role="user"` message right after the next tool-call round's
+        tool responses.
         """
         prompt_text = event.value.strip()
         if not prompt_text:
@@ -375,7 +376,7 @@ class PromptSubmissionMixin(ReplAppBase):
         that was queued before the first one disabled the box, so this authoritative
         check-and-set is what actually keeps turns serial (see `_turn_in_flight`). The input
         is *not* disabled here — the user can keep typing and queue messages for delivery as
-        `UserInterjectionPayload`s on the next tool-response envelope (see `_queue_prompt`).
+        `role="user"` messages after the next tool-call round (see `_queue_prompt`).
 
         `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread as soon as it starts
         the turn.
@@ -557,10 +558,9 @@ class PromptSubmissionMixin(ReplAppBase):
             typed in quick succession); calling `_submit_prompt` here per message would start a
             second turn while the first was still `_turn_in_flight`, silently dropping every
             message after the first (see `_finish_turn`, which instead submits every drained
-            message from a batch as a single concatenated turn). `_run_tool_calls`'s mid-turn
-            drain doesn't call `_submit_prompt` at all; it attaches each message to the current
-            tool-response envelope as its own `UserInterjectionPayload` instead (see
-            `SessionToolExecutionMixin._run_tool_calls`).
+            message from a batch as a single concatenated turn). `deliver_queued_user_message`'s
+            mid-turn drain appends the drained message(s) to the conversation as a
+            `role="user"` message (see `SessionCoreMixin.deliver_queued_user_message`).
             """
             if queued_msg.history_data is not None:
                 header_widget, prompt_widget = queued_msg.history_data

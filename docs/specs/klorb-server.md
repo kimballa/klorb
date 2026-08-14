@@ -671,8 +671,8 @@ reachable via `_klorb/subagentTree`/`_klorb/subagentTranscript`/`_klorb/subagent
 ### Queued messages
 
 `_klorb/enqueueMessage` (see "Extension methods" above) is the ACP surface for klorb's
-`user_interjections` capability (see docs/specs/session-and-turns.md's `user_interjections`
-bullet): a message submitted while a turn is already in flight is queued into that turn instead
+queued-message capability (see docs/specs/session-and-turns.md's queued-message bullet):
+a message submitted while a turn is already in flight is queued into that turn instead
 of being rejected, mirroring the TUI's queue-while-a-turn-is-running behavior
 (`klorb.tui.mixins.prompt_submission._queue_prompt`).
 
@@ -685,12 +685,12 @@ of being rejected, mirroring the TUI's queue-while-a-turn-is-running behavior
   relative to whatever `session/update`s were already queued for that turn, like any other
   fire-and-forget callback.
 * **Mid-turn delivery.** If a tool-call round is still in flight when the message is queued,
-  `Session._run_tool_calls()`'s own per-round drain (see docs/specs/session-and-turns.md) picks
-  it up before that round's first tool-response envelope is built, attaching it as a
-  `UserInterjectionPayload` — the model sees it inline with that round's tool results, in the
-  same turn. `TurnBridge`'s `on_send_queued_message` hook fires here too (on `Session.
-  send_turn()`'s own worker thread, mid-turn), enqueuing `_klorb/queuedMessageSent` right after
-  the drain, ordered the same way.
+  `Session.deliver_queued_user_message()` (called from `_dispatch_turn()` after each round, see
+  docs/specs/session-and-turns.md) drains it and appends it as a `role="user"` message right
+  after that round's tool-response messages — the model sees it as an ordinary user turn in the
+  same request that carries the tool results. `TurnBridge`'s `on_send_queued_message` hook fires
+  here too (on `Session.send_turn()`'s own worker thread, mid-turn), enqueuing
+  `_klorb/queuedMessageSent` right after the drain, ordered the same way.
 * **Turn-end redelivery.** A message still queued when `Session.send_turn()` returns (no
   tool-call round ever drained it — e.g. it was queued during the final round's text streaming)
   is *not* silently dropped: `TurnBridge.run_turn()` drains it itself
