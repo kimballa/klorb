@@ -7,4 +7,3 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
-* Add a new model definition json for deepseek/deepseek-v4-pro-0813

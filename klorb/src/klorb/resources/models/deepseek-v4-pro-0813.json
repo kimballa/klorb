@@ -1,0 +1,24 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "deepseek/deepseek-v4-pro-0813",
+  "family": "deepseek-pro",
+  "model_version": "v4",
+  "knowledge_cutoff": null,
+  "release_date": "2026-08-12",
+  "settings": {
+    "temperature": 0.2
+  },
+  "capabilities": {
+    "vision": false,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1048576,
+    "max_output_tokens": 384000,
+    "function_calling": true,
+    "streaming": true
+  },
+  "cache_mgmt_style": "AUTOMATIC"
+}
