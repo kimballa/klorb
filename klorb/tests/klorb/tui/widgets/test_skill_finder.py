@@ -1,6 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.widgets.skill_finder."""
 
+from textual.app import App
+
 from klorb.tui.widgets.skill_finder import (
     SkillMatch,
     SkillQuery,
@@ -106,6 +108,22 @@ class TestSkillMatchContent:
         match = SkillMatch(name="code-review", namespace="internal", description="Review code")
         content = _skill_match_content(match, available_width=80)
         styles = {str(span.style) for span in content.spans}
-        assert "$text-muted" in styles
-        assert "$text-disabled" in styles
-        assert styles == {"$text-muted", "$text-disabled"}
+        assert styles == {"$foreground-muted", "$foreground-disabled"}
+
+    async def test_namespace_and_description_styles_are_genuinely_muted(self) -> None:
+        """The two trailing fields must resolve to sub-full-alpha colors, not just carry
+        distinct style labels that Textual fails to mute."""
+        match = SkillMatch(name="code-review", namespace="internal", description="Review code")
+        content = _skill_match_content(match, available_width=80)
+        styles = sorted(str(span.style) for span in content.spans)
+
+        app: App[None] = App()
+        async with app.run_test():
+            alphas: list[float] = []
+            for style in styles:
+                foreground = app.stylesheet.parse_style(style).foreground
+                assert foreground is not None
+                alphas.append(foreground.a)
+
+        assert alphas[0] < alphas[1], "the two muted levels must stay distinct"
+        assert alphas[1] < 1.0, "the description must be muted, not full-intensity"

@@ -244,7 +244,8 @@ def _row_content(match: FinderMatch, available_width: int) -> Content:
         file_display += "/"
     if not dir_display:
         return Content(file_display)
-    return Content.assemble((dir_display, "$text-muted"), file_display)
+    # `$foreground-muted`, not `$text-muted`: Textual drops `$text-*`'s alpha in an inline style.
+    return Content.assemble((dir_display, "$foreground-muted"), file_display)
 
 
 class FinderOption(Option):

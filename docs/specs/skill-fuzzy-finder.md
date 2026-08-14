@@ -33,6 +33,11 @@ Each match shows the skill name in the normal foreground, namespace in muted col
 a more severely muted color, so the three fields stay visually distinct on one line instead of
 blending into a single run-on string.
 
+The two trailing fields are styled as inline `Content` spans using the `$foreground-muted` and
+`$foreground-disabled` design tokens, not `$text-muted`/`$text-disabled`. Textual drops the alpha
+from a `$text-*` token's `auto NN%` value when it is substituted into an inline style, leaving
+both at full intensity; the `$foreground-*` tokens expand to an 8-digit hex and keep their alpha.
+
 ## Insertion
 
 Selecting a skill match replaces the `/query` span with `/<skill_name>` (the canonical name

@@ -72,10 +72,14 @@ def _skill_match_content(match: SkillMatch, available_width: int) -> Content:
             if len(desc) > desc_budget:
                 desc = desc[:desc_budget - 3] + "..."
             desc_part = f": {desc}"
+    # `$foreground-*`, not `$text-*`: Textual drops the alpha from a `$text-*` token's
+    # `auto NN%` value when it is substituted into an inline `Content` style, so those tokens
+    # render at full intensity. The `$foreground-*` tokens expand to an 8-digit hex and keep
+    # their alpha.
     return Content.assemble(
         name_part,
-        (ns_part, "$text-muted"),
-        (desc_part, "$text-disabled"),
+        (ns_part, "$foreground-muted"),
+        (desc_part, "$foreground-disabled"),
     )
 
 

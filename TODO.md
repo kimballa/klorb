@@ -5,6 +5,15 @@
 
 ### Bugs
 
+* Recording a workspace memory via CreateMemory hits a permission gate:
+
+  ```
+  Permission requires confirmation: create workspace memory textual-inline-style-design-token-alpha-bug.md
+  ```
+
+  ... This did not actually show a permission screen in the VSCode Plugin. The agent then gave up
+  trying to record a useful memory.
+
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
