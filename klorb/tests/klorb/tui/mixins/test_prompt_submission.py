@@ -1175,6 +1175,7 @@ async def test_clear_session_resets_naming_pending_and_status_line() -> None:
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             await _wait_until(pilot, lambda: _naming_pending(app) is False)
+            await _wait_until(pilot, lambda: _session_name_line(app) == "Session: Fix auth bug")
 
     assert mock_generate_session_name.call_count == 2
 

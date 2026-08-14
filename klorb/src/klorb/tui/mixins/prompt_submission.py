@@ -329,6 +329,8 @@ class PromptSubmissionMixin(ReplAppBase):
             tool_registry=grants.tool_registry,
             effective_subagent_roles=grants.effective_subagent_roles,
         )
+        self._selected_session = self._session
+        self._selected_handle = None
         self._wire_session_notice_handler(self._session)
         self._wire_session_wake_handler(self._session)
 

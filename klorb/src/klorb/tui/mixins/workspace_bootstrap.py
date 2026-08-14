@@ -82,6 +82,8 @@ class WorkspaceBootstrapMixin(ReplAppBase):
                 process_config=self._process_config,
                 tool_registry=grants.tool_registry,
                 effective_subagent_roles=grants.effective_subagent_roles)
+            self._selected_session = self._session
+            self._selected_handle = None
             self._wire_session_notice_handler(self._session)
             self._wire_session_wake_handler(self._session)
             self.show_notice(
@@ -218,6 +220,8 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         relative to their own confirmation/lookup flow.
         """
         self._session = restored
+        self._selected_session = restored
+        self._selected_handle = None
         self._wire_session_notice_handler(restored)
         self._wire_session_wake_handler(restored)
         self.sub_title = restored.config.model
