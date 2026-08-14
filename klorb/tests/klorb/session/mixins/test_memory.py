@@ -10,7 +10,6 @@ import pytest
 
 from klorb.api_provider import ProviderResponse
 from klorb.message import Message
-from klorb.permissions.table import Verdict
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.memory import common as memory_common_module
@@ -25,7 +24,6 @@ def _build(
     monkeypatch: pytest.MonkeyPatch,
     *,
     trusted: bool = True,
-    read_permission: Verdict = "allow",
     provider: MagicMock | None = None,
     with_tool_registry: bool = True,
 ) -> tuple[Session, ToolSetupContext]:
@@ -38,7 +36,7 @@ def _build(
     workspace_root.mkdir(exist_ok=True)
     config = SessionConfig(
         model="some/model", workspace=Workspace(path=workspace_root, trusted=trusted))
-    process_config = ProcessConfig(memory_read_permission=read_permission)
+    process_config = ProcessConfig()
     tool_registry = ToolRegistry.discover_tools(process_config, config) if with_tool_registry else None
     session = Session(
         config,
@@ -122,17 +120,18 @@ def test_workspace_section_omitted_when_untrusted(
     assert "workspace" not in body
 
 
-def test_read_permission_deny_returns_none(
+def test_list_memories_failure_returns_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session, _context = _build(tmp_path, monkeypatch, read_permission="deny")
-    assert session._build_memories_interjection() is None
+    """Any `ListMemories` failure -- not just a permission denial, which can no longer happen
+    here since a read is always allowed -- drops the interjection instead of raising."""
+    from klorb.tools.memory.list_memories import ListMemoriesTool
 
+    def _boom(self: ListMemoriesTool, args: dict) -> None:
+        raise RuntimeError("boom")
 
-def test_read_permission_ask_returns_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session, _context = _build(tmp_path, monkeypatch, read_permission="ask")
+    monkeypatch.setattr(ListMemoriesTool, "apply", _boom)
+    session, _context = _build(tmp_path, monkeypatch)
     assert session._build_memories_interjection() is None
 
 

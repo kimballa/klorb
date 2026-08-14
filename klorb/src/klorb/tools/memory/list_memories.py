@@ -5,7 +5,6 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import (
     Namespace,
     memory_namespace_dir,
@@ -23,9 +22,8 @@ class ListMemoriesTool(Tool):
     or `""` if the file is empty or that line is blank).
 
     The `workspace` namespace is reported as `[]` -- without touching disk -- whenever the
-    current workspace is untrusted; `global` is unaffected by workspace trust. Gated by
-    `tools.memory.readPermission` (`ProcessConfig.memory_read_permission`), the same flag that
-    governs `ReadMemory` and `SearchMemories`.
+    current workspace is untrusted; `global` is unaffected by workspace trust. Otherwise always
+    allowed, with no further permission check.
     """
 
     def name(self) -> str:
@@ -58,9 +56,6 @@ class ListMemoriesTool(Tool):
 
     def apply(self, args: dict[str, Any]) -> Any:
         logger.debug("ListMemories")
-        raise_if_not_allowed(
-            self.context.process_config.memory_read_permission, resource_description="list memories")
-
         result = {
             "global": self._list_namespace("global"),
             "workspace": (

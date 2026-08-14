@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from typing import Any, cast
 
-from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import Namespace, memory_namespace_dir, workspace_namespace_accessible
 from klorb.tools.tool import Tool
 from klorb.tools.util import (
@@ -43,9 +42,8 @@ class SearchMemoriesTool(Tool):
     filename-only entry.
 
     The `workspace` namespace is skipped entirely (not just filtered out of results) whenever
-    the current workspace is untrusted. Gated by `tools.memory.readPermission`
-    (`ProcessConfig.memory_read_permission`), the same flag that governs `ListMemories` and
-    `ReadMemory`.
+    the current workspace is untrusted. Otherwise always allowed, with no further permission
+    check.
     """
 
     def name(self) -> str:
@@ -111,10 +109,6 @@ class SearchMemoriesTool(Tool):
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
         output_style = validate_output_style(args.get("outputStyle"))
         logger.debug("SearchMemories %r (outputStyle=%s)", queries, output_style)
-
-        raise_if_not_allowed(
-            self.context.process_config.memory_read_permission,
-            resource_description="search memories")
 
         compiled = compile_queries(queries, case_insensitive=True)
 

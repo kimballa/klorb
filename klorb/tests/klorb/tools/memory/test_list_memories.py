@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from klorb.permissions.table import PermissionAskRequired, Verdict
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.memory import common as memory_common_module
@@ -16,14 +15,13 @@ from klorb.workspace import Workspace
 
 
 def _context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
-    trusted: bool = True, read_permission: Verdict = "allow",
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, trusted: bool = True,
 ) -> ToolSetupContext:
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
-        process_config=ProcessConfig(memory_read_permission=read_permission),
+        process_config=ProcessConfig(),
         session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
 
 
@@ -123,24 +121,6 @@ def test_untrusted_workspace_reports_workspace_as_empty_without_touching_disk(
 
     assert result["workspace"] == []
     assert result["global"] == [{"filename": "a.md", "topic": "Global topic"}]
-
-
-def test_read_permission_deny_raises_permission_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context = _context(tmp_path, monkeypatch, read_permission="deny")
-
-    with pytest.raises(PermissionError):
-        ListMemoriesTool(context).apply({})
-
-
-def test_read_permission_ask_raises_permission_ask_required(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context = _context(tmp_path, monkeypatch, read_permission="ask")
-
-    with pytest.raises(PermissionAskRequired):
-        ListMemoriesTool(context).apply({})
 
 
 def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

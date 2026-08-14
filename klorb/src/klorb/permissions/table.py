@@ -13,6 +13,7 @@ from typing import Generic, Literal, TypeVar
 from klorb.permissions.resource import (
     BashCommandContext,
     DomainResource,
+    MemoryResource,
     PathResource,
     PermissionResource,
     SkillResource,
@@ -34,33 +35,40 @@ class PermissionAskRequired(Exception):
     a one-shot/headless run) fails closed: `Session._run_tool_calls` treats an uncaught instance
     of this the same as denial, just distinguishably.
 
-    `path`/`is_write`, `skill`, and `url` carry the resolved candidate a caller with interactive
-    plumbing (see `Session.on_permission_ask`) can act on directly, without re-parsing
-    `resource_description` -- `path`/`is_write` for a directory-access ask, `skill` (a
+    `path`/`is_write`, `skill`, `url`, and `memory` carry the resolved candidate a caller with
+    interactive plumbing (see `Session.on_permission_ask`) can act on directly, without
+    re-parsing `resource_description` -- `path`/`is_write` for a directory-access ask, `skill` (a
     `(namespace, name)` pair) for a skill-activation ask (raised by
     `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md), `url` for a `WebFetch` domain
-    ask. At most one is ever given; all three are optional so a caller that only cares about the
-    message string can omit them. `resource`, computed from whichever one was given (or a
+    ask, `memory` (an `(access, filename)` pair) for a workspace-memory write/delete ask (raised
+    by `CreateMemory`/`EditMemory`/`ForgetMemory` -- see docs/specs/memories.md). At most one is
+    ever given; all four are optional so a caller that only cares about the message string can
+    omit them. `resource`, computed from whichever one was given (or a
     `klorb.permissions.resource.StructuralResource` built from `message` if none was), is the
     `klorb.permissions.resource.PermissionResource` a caller should actually use -- see that
-    module for the polymorphic methods it exposes in place of branching on `path`/`skill`/`url`.
+    module for the polymorphic methods it exposes in place of branching on
+    `path`/`skill`/`url`/`memory`.
     """
 
     def __init__(
         self, message: str, *, path: Path | None = None, is_write: bool = False,
         skill: tuple[str, str] | None = None, url: str | None = None,
+        memory: tuple[Literal["write", "delete"], str] | None = None,
     ) -> None:
         super().__init__(message)
         self.path = path
         self.is_write = is_write
         self.skill = skill
         self.url = url
+        self.memory = memory
         if path is not None:
             self.resource: PermissionResource = PathResource(path=path, is_write=is_write)
         elif skill is not None:
             self.resource = SkillResource(skill_id=skill)
         elif url is not None:
             self.resource = DomainResource(url=url)
+        elif memory is not None:
+            self.resource = MemoryResource(access=memory[0], filename=memory[1])
         else:
             self.resource = StructuralResource(reason=message)
 
@@ -167,15 +175,15 @@ def stricter_verdict(a: Verdict, b: Verdict) -> Verdict:
 def raise_if_not_allowed(
     verdict: Verdict, *, resource_description: str,
     path: Path | None = None, is_write: bool = False, skill: tuple[str, str] | None = None,
-    url: str | None = None,
+    url: str | None = None, memory: tuple[Literal["write", "delete"], str] | None = None,
 ) -> None:
     """Enforce `verdict`: raise `PermissionError` for `"deny"`, `PermissionAskRequired` for
     `"ask"` (failing closed — see `PermissionAskRequired`), or return normally for `"allow"`.
 
     This is the single seam where "ask fails closed as deny-but-distinctly-typed" is
     implemented, so swapping it for real interactive confirmation later is a one-function
-    change rather than a change at every tool call site. `path`/`is_write`/`skill`/`url` are
-    forwarded onto `PermissionAskRequired` so interactive callers (see
+    change rather than a change at every tool call site. `path`/`is_write`/`skill`/`url`/`memory`
+    are forwarded onto `PermissionAskRequired` so interactive callers (see
     `Session.on_permission_ask`) can act on the specific resource; all are optional, so callers
     that don't have them handy (or don't need them) can omit them.
     """
@@ -184,4 +192,4 @@ def raise_if_not_allowed(
     if verdict == "ask":
         raise PermissionAskRequired(
             f"Permission requires confirmation: {resource_description}",
-            path=path, is_write=is_write, skill=skill, url=url)
+            path=path, is_write=is_write, skill=skill, url=url, memory=memory)

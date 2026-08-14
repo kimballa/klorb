@@ -1,30 +1,30 @@
 # © Copyright 2026 Aaron Kimball
 """The kinds of resource a permission ask, grant, or once-scope override can be about:
 `PathResource` (directory access), `CommandResource` (a bash argv), `SkillResource`,
-`DomainResource`, and `StructuralResource` (a `BashTool` item the shell walker couldn't classify
-into a specific rule, so it has no persistable rule of its own). `klorb.permissions.table.
-PermissionAskItem`/`PermissionAskRequired` and `klorb.session.events.PermissionAskContext` each
-carry exactly one `PermissionResource` instance rather than a set of mutually-exclusive optional
-fields, so a caller acts on whichever concrete resource it has via these methods instead of
-branching on which field happens to be set. See docs/plans/archive/014-permission-resource-hierarchy.md
-for the design this module implements.
+`DomainResource`, `MemoryResource` (a workspace-memory write/delete), and `StructuralResource` (a
+`BashTool` item the shell walker couldn't classify into a specific rule, so it has no persistable
+rule of its own). `klorb.permissions.table.PermissionAskItem`/`PermissionAskRequired` and
+`klorb.session.events.PermissionAskContext` each carry exactly one `PermissionResource` instance
+rather than a set of mutually-exclusive optional fields, so a caller acts on whichever concrete
+resource it has via these methods instead of branching on which field happens to be set. See
+docs/plans/archive/014-permission-resource-hierarchy.md for the design this module implements.
 
 `PermissionOverride` (a one-shot "Allow (once)" bypass) lives here too, alongside the resource
-kinds its five fields mirror one-for-one.
+kinds its six fields mirror one-for-one.
 
 Every concrete subclass's `apply_grant`/`grant_preview` bodies import their kind's grant module
-(`klorb.permissions.grant`/`command_grant`/`skill_grant`/`domain_grant`) locally, inside the
-method, rather than at module scope: those modules import `SessionConfig` from `klorb.session`,
-which itself imports `klorb.permissions.table` (for `PermissionAskItem`) -- and `table.py` imports
-this module for `PermissionResource` -- so a module-level import here would be circular. The same
-applies to `klorb.permissions.domain_access.parse_domain`, imported locally inside
-`DomainResource`, since `domain_access.py` itself imports `klorb.permissions.table`.
+(`klorb.permissions.grant`/`command_grant`/`skill_grant`/`domain_grant`/`memory_grant`) locally,
+inside the method, rather than at module scope: those modules import `SessionConfig` from
+`klorb.session`, which itself imports `klorb.permissions.table` (for `PermissionAskItem`) -- and
+`table.py` imports this module for `PermissionResource` -- so a module-level import here would be
+circular. The same applies to `klorb.permissions.domain_access.parse_domain`, imported locally
+inside `DomainResource`, since `domain_access.py` itself imports `klorb.permissions.table`.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     # Type-checking-only: see this module's own docstring for why a real import would cycle.
@@ -60,8 +60,9 @@ class PermissionOverride:
     `klorb.permissions.shell_parse.parse_command` produces for the same command on every parse,
     since a structural item has no other stable identifier to bypass by), `skills` mirrors
     `SkillResource.skill_id` (checked via membership in
-    `klorb.tools.skill.common.raise_if_skill_not_allowed`), and `domains` mirrors
-    `DomainResource.domain` (checked via membership in `klorb.tools.web.fetch`).
+    `klorb.tools.skill.common.raise_if_skill_not_allowed`), `domains` mirrors
+    `DomainResource.domain` (checked via membership in `klorb.tools.web.fetch`), and `memories`
+    mirrors `MemoryResource`'s own `(access, filename)` pair.
     """
 
     def __init__(
@@ -71,12 +72,14 @@ class PermissionOverride:
         reasons: frozenset[str] = frozenset(),
         skills: frozenset[tuple[str, str]] = frozenset(),
         domains: frozenset[str] = frozenset(),
+        memories: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         self.paths = paths
         self.commands = commands
         self.reasons = reasons
         self.skills = skills
         self.domains = domains
+        self.memories = memories
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, PermissionOverride):
@@ -86,12 +89,14 @@ class PermissionOverride:
             and self.commands == other.commands
             and self.reasons == other.reasons
             and self.skills == other.skills
-            and self.domains == other.domains)
+            and self.domains == other.domains
+            and self.memories == other.memories)
 
     def __repr__(self) -> str:
         return (
             f"PermissionOverride(paths={self.paths!r}, commands={self.commands!r}, "
-            f"reasons={self.reasons!r}, skills={self.skills!r}, domains={self.domains!r})")
+            f"reasons={self.reasons!r}, skills={self.skills!r}, domains={self.domains!r}, "
+            f"memories={self.memories!r})")
 
 
 @dataclass(frozen=True)
@@ -201,7 +206,8 @@ class PathResource(PermissionResource):
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
         return PermissionOverride(
             paths=override.paths | {self.path}, commands=override.commands,
-            reasons=override.reasons, skills=override.skills, domains=override.domains)
+            reasons=override.reasons, skills=override.skills, domains=override.domains,
+            memories=override.memories)
 
 
 @dataclass(frozen=True)
@@ -234,7 +240,8 @@ class CommandResource(PermissionResource):
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
         return PermissionOverride(
             paths=override.paths, commands=override.commands | {self.argv},
-            reasons=override.reasons, skills=override.skills, domains=override.domains)
+            reasons=override.reasons, skills=override.skills, domains=override.domains,
+            memories=override.memories)
 
 
 @dataclass(frozen=True)
@@ -264,7 +271,8 @@ class SkillResource(PermissionResource):
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
         return PermissionOverride(
             paths=override.paths, commands=override.commands, reasons=override.reasons,
-            skills=override.skills | {self.skill_id}, domains=override.domains)
+            skills=override.skills | {self.skill_id}, domains=override.domains,
+            memories=override.memories)
 
 
 @dataclass(frozen=True)
@@ -312,7 +320,8 @@ class DomainResource(PermissionResource):
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
         return PermissionOverride(
             paths=override.paths, commands=override.commands, reasons=override.reasons,
-            skills=override.skills, domains=override.domains | {self.domain})
+            skills=override.skills, domains=override.domains | {self.domain},
+            memories=override.memories)
 
 
 @dataclass(frozen=True)
@@ -348,4 +357,39 @@ class StructuralResource(PermissionResource):
         return PermissionOverride(
             paths=override.paths, commands=override.commands,
             reasons=override.reasons | {self.reason}, skills=override.skills,
-            domains=override.domains)
+            domains=override.domains, memories=override.memories)
+
+
+@dataclass(frozen=True)
+class MemoryResource(PermissionResource):
+    """A workspace-memory write/delete ask: `access` is `"write"` (covers both `CreateMemory` and
+    `EditMemory`, sharing one config knob and one persistent grant) or `"delete"`
+    (`ForgetMemory`); `filename` is the target memory file. The `global` namespace and every
+    `read` operation never raise this ask at all -- see docs/specs/memories.md -- so there is no
+    `namespace` field; every instance is implicitly about the `workspace` namespace."""
+
+    access: Literal["write", "delete"]
+    filename: str
+
+    def header_kind(self) -> str:
+        return "Write memory" if self.access == "write" else "Delete memory"
+
+    def preview_text(self) -> str | None:
+        return f"workspace/{self.filename}"
+
+    def grant_preview(self, session_config: "SessionConfig") -> GrantPreview:
+        return GrantPreview(resource_text=self.preview_text() or "")
+
+    def apply_grant(
+        self, action: "GrantAction", scope: "GrantScope",
+        session_config: "SessionConfig", process_config: "ProcessConfig | None",
+        *, grant_patterns: list[list[str]] | None = None,
+    ) -> None:
+        from klorb.permissions.memory_grant import apply_memory_permission_grant
+        apply_memory_permission_grant(action, scope, session_config, process_config, self.access)
+
+    def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
+        return PermissionOverride(
+            paths=override.paths, commands=override.commands, reasons=override.reasons,
+            skills=override.skills, domains=override.domains,
+            memories=override.memories | {(self.access, self.filename)})

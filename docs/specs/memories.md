@@ -46,13 +46,17 @@ either namespace.
 * **Memory tools bypass `readDirs`/`writeDirs` entirely**, the same design as the Scratchpad
   tools (see docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md): `filename` is a bare name
   within a harness-resolved namespace directory, never a model-supplied path into the rest of
-  the filesystem, so there is nothing for those tables to protect against. Instead, each
-  operation kind (read, edit, create, delete) has its own flat `Verdict` (`"deny"`/`"ask"`/
-  `"allow"`) on `ProcessConfig`, checked via a single, path-less
-  `klorb.permissions.table.raise_if_not_allowed(verdict, resource_description=...)` call — a
-  structural ask/deny with no `path`/`command`, the same shape `BashTool` uses for a forced-ask
-  reason with no filesystem resource of its own (see docs/specs/permissions.md's "Multi-item
-  asks" section).
+  the filesystem, so there is nothing for those tables to protect against. Instead: a `read` is
+  always allowed, in both namespaces, with no permission check at all; a `global`-namespace
+  write or delete is likewise always allowed; a `workspace`-namespace write (`CreateMemory`/
+  `EditMemory`) or delete (`ForgetMemory`) consults its own flat `Verdict`
+  (`"deny"`/`"ask"`/`"allow"`) on `SessionConfig`, raised via
+  `klorb.permissions.table.raise_if_not_allowed(verdict, resource_description=..., memory=(access,
+  filename))` — building a real `klorb.permissions.resource.MemoryResource`, so a `"ask"` verdict
+  flows through the ordinary interactive ask panel, session/workspace/homedir grant, and
+  `permission_framework="auto"` handling every other persistable resource kind gets, rather than
+  the structural, non-persistable ask/deny `StructuralResource` represents (see
+  docs/specs/permissions.md's "Multi-item asks" section).
 * `ReadMemoryTool`/`EditMemoryTool` delegate their line-range mechanics to
   `klorb.tools.util.ReadFileCore`/`EditFileCore`, the same cores `ReadFile`/`EditFile`/
   `ReadScratchpad`/`EditScratchpad` use — see docs/adrs/00088-read-edit-file-scratchpad-share-core-via-composition.md.
@@ -106,7 +110,9 @@ either namespace.
   outright for a `workspace`-namespace call in an untrusted workspace — checked *before* the
   operation's own `tools.memory.*Permission` verdict, so an untrusted-workspace denial is never
   observable as a `PermissionAskRequired` (which would imply a user could approve their way past
-  it); `global` memories are never affected by workspace trust.
+  it); `global` memories are never affected by workspace trust. This means "workspace reads are
+  always allowed" is itself conditioned on trust: an untrusted workspace still fails every
+  `workspace`-namespace memory operation, including a read, closed up front.
 * The default system prompt (`klorb/src/klorb/resources/system_prompts.d/default_sys.md`) has a
   "Memories" section, alongside (not merged into) "Use your scratchpad", explaining the
   namespace distinction, the topic-first-line convention, and when to reach for a memory over
@@ -115,27 +121,29 @@ either namespace.
   calls `ListMemories` once, on the very first turn, and prepends its `filename`/`topic`
   catalog as a `<SystemInterjection subject="Memories">` — the `workspace` section is omitted
   entirely in an untrusted workspace, and an empty namespace gets a `CreateMemory` nudge instead
-  of an empty list. This saves the model an initial `ListMemories` round trip; a `"deny"`/`"ask"`
-  `tools.memory.readPermission` (or any other `ListMemories` failure) just drops the
-  interjection rather than surfacing an error.
+  of an empty list. This saves the model an initial `ListMemories` round trip; any
+  `ListMemories` failure just drops the interjection rather than surfacing an error.
 
 ## Configuration
 
-Four process-level `Verdict` (`"deny"`/`"ask"`/`"allow"`) flags, one per operation kind:
+Two session-level `Verdict` (`"deny"`/`"ask"`/`"allow"`) flags, each governing only the
+`workspace` namespace:
 
-* `tools.memory.readPermission` (default `"allow"`) — governs `ListMemories`, `SearchMemories`,
-  and `ReadMemory`.
-* `tools.memory.editPermission` (default `"allow"`) — governs `EditMemory`.
-* `tools.memory.createPermission` (default `"ask"`) — governs `CreateMemory`.
+* `tools.memory.writePermission` (default `"ask"`) — governs `CreateMemory` and `EditMemory`,
+  as one unified access level.
 * `tools.memory.deletePermission` (default `"ask"`) — governs `ForgetMemory`.
 
-Each sets the correspondingly-named `ProcessConfig` field (`memory_read_permission`,
-`memory_edit_permission`, `memory_create_permission`, `memory_delete_permission`) via
-`PROCESS_KEY_MAP` — see docs/specs/process-and-session-config.md. Read/edit default to
-`"allow"` since a memory is harness-managed, session-spanning state rather than a workspace
-file a model can redirect through (the same reasoning `readPermission`'s Scratchpad-tool
-counterpart never needed, since those tools skip permission tables outright); create/delete
-default to `"ask"` since those are the less-reversible operations.
+Each sets the correspondingly-named `SessionConfig` field (`memory_write_permission`,
+`memory_delete_permission`) via `SESSION_KEY_MAP` — see docs/specs/process-and-session-config.md.
+They live on `SessionConfig`, not `ProcessConfig`, like every other ask-able rule table
+(`skill_rules`, `command_rules`, ...), so a `"session"`-scope grant from the interactive ask panel
+only affects the live session rather than every session in the process.
+
+There is no configurable `readPermission`, and no `global`-namespace equivalent of either flag:
+a `read`, in either namespace, and any `global`-namespace write or delete, is unconditionally
+allowed and never consults a permission table at all — a `global` memory lives entirely under the
+user's own home directory, with no workspace-supplied content to distrust, and a read can't
+itself persist anything a hostile workspace planted.
 
 ## Out of scope
 

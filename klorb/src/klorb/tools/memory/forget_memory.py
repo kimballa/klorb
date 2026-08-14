@@ -22,10 +22,11 @@ class ForgetMemoryTool(Tool):
     raw traceback) if no memory with that `namespace`/`filename` exists.
 
     `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate and
-    `tools.memory.deletePermission` before any disk I/O -- in that order, so a denied delete
-    never touches the filesystem. There is no `writeDirs` check at all, the same bypass as
-    every other Memory tool -- see docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
+    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
+    I/O; a `workspace`-namespace delete is additionally gated by `tools.memory.deletePermission`
+    -- a `global`-namespace delete is always allowed. There is no `writeDirs` check at all, the
+    same bypass as every other Memory tool -- see
+    docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
     """
 
     def name(self) -> str:
@@ -76,9 +77,11 @@ class ForgetMemoryTool(Tool):
         if namespace not in ("global", "workspace"):
             raise ValueError(f"namespace must be 'global' or 'workspace', got {namespace!r}")
         require_workspace_namespace_accessible(self.context, namespace)
-        raise_if_not_allowed(
-            self.context.process_config.memory_delete_permission,
-            resource_description=f"delete {namespace} memory {filename}")
+        if namespace == "workspace":
+            raise_if_not_allowed(
+                self.context.session_config.memory_delete_permission,
+                resource_description=f"delete {namespace} memory {filename}",
+                memory=("delete", filename))
 
         namespace_dir = memory_namespace_dir(self.context, namespace)
         path = validate_memory_filename(filename, namespace_dir)

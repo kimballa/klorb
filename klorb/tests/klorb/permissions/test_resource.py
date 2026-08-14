@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.resource: the PermissionResource hierarchy (PathResource/
-CommandResource/SkillResource/DomainResource/StructuralResource) that replaces the flat
-path/command/skill/url optional-field bag on PermissionAskItem/PermissionAskContext. See
+CommandResource/SkillResource/DomainResource/MemoryResource/StructuralResource) that replaces
+the flat path/command/skill/url optional-field bag on PermissionAskItem/PermissionAskContext. See
 docs/plans/archive/014-permission-resource-hierarchy.md.
 """
 
@@ -12,6 +12,7 @@ from klorb.permissions.resource import (
     CommandResource,
     DomainResource,
     GrantPreview,
+    MemoryResource,
     PathResource,
     PermissionOverride,
     SkillResource,
@@ -67,6 +68,7 @@ def test_path_resource_added_to_override_adds_only_its_own_field() -> None:
     assert override.skills == frozenset()
     assert override.domains == frozenset()
     assert override.reasons == frozenset()
+    assert override.memories == frozenset()
 
 
 # --- CommandResource ---
@@ -207,6 +209,49 @@ def test_domain_resource_added_to_override_uses_the_domain_not_the_url() -> None
     assert override.domains == frozenset({"example.com"})
 
 
+# --- MemoryResource ---
+
+
+def test_memory_resource_header_kind_and_preview_text() -> None:
+    write_resource = MemoryResource(access="write", filename="notes.md")
+    delete_resource = MemoryResource(access="delete", filename="notes.md")
+
+    assert write_resource.header_kind() == "Write memory"
+    assert write_resource.preview_text() == "workspace/notes.md"
+    assert delete_resource.header_kind() == "Delete memory"
+
+
+def test_memory_resource_is_persistable() -> None:
+    assert MemoryResource(access="write", filename="notes.md").is_persistable is True
+
+
+def test_memory_resource_grant_preview_names_itself(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    resource = MemoryResource(access="write", filename="notes.md")
+
+    preview = resource.grant_preview(session_config)
+
+    assert preview == GrantPreview(resource_text="workspace/notes.md")
+
+
+def test_memory_resource_apply_grant_persists_to_session_config(tmp_path: Path) -> None:
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+
+    MemoryResource(access="write", filename="notes.md").apply_grant(
+        "allow", "session", session_config, None)
+
+    assert session_config.memory_write_permission == "allow"
+    assert session_config.memory_delete_permission == "ask"
+
+
+def test_memory_resource_added_to_override() -> None:
+    resource = MemoryResource(access="write", filename="notes.md")
+
+    override = resource.added_to_override(PermissionOverride())
+
+    assert override.memories == frozenset({("write", "notes.md")})
+
+
 # --- StructuralResource ---
 
 
@@ -270,3 +315,4 @@ def test_permission_override_defaults_to_all_empty_sets() -> None:
     assert override.reasons == frozenset()
     assert override.skills == frozenset()
     assert override.domains == frozenset()
+    assert override.memories == frozenset()

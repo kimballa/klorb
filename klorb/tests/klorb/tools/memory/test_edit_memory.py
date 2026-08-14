@@ -17,14 +17,16 @@ from klorb.workspace import Workspace
 
 def _context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
-    trusted: bool = True, edit_permission: Verdict = "allow",
+    trusted: bool = True, write_permission: Verdict = "allow",
 ) -> ToolSetupContext:
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
-        process_config=ProcessConfig(memory_edit_permission=edit_permission),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(
+            workspace=Workspace(path=workspace_root, trusted=trusted),
+            memory_write_permission=write_permission))
 
 
 def _write(context: ToolSetupContext, namespace: Namespace, filename: str, content: str) -> Path:
@@ -176,28 +178,42 @@ def test_workspace_memory_in_untrusted_workspace_is_denied(
     assert path.read_text() == "Topic\nbody\n"
 
 
-def test_edit_permission_deny_raises_permission_error(
+def test_global_namespace_is_always_allowed_regardless_of_write_permission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch, edit_permission="deny")
-    _write(context, "global", "notes.md", "Topic\n")
+    context = _context(tmp_path, monkeypatch, write_permission="deny")
+    path = _write(context, "global", "notes.md", "Topic\n")
+
+    EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "notes.md",
+        "old_text": "Topic", "new_text": "New topic",
+    })  # no raise, despite write_permission="deny"
+
+    assert path.read_text() == "New topic\n"
+
+
+def test_workspace_write_permission_deny_raises_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, write_permission="deny")
+    _write(context, "workspace", "notes.md", "Topic\n")
 
     with pytest.raises(PermissionError):
         EditMemoryTool(context).apply({
-            "namespace": "global", "filename": "notes.md",
+            "namespace": "workspace", "filename": "notes.md",
             "old_text": "Topic", "new_text": "New topic",
         })
 
 
-def test_edit_permission_ask_raises_permission_ask_required(
+def test_workspace_write_permission_defaults_to_ask(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch, edit_permission="ask")
-    _write(context, "global", "notes.md", "Topic\n")
+    context = _context(tmp_path, monkeypatch, write_permission="ask")
+    _write(context, "workspace", "notes.md", "Topic\n")
 
     with pytest.raises(PermissionAskRequired):
         EditMemoryTool(context).apply({
-            "namespace": "global", "filename": "notes.md",
+            "namespace": "workspace", "filename": "notes.md",
             "old_text": "Topic", "new_text": "New topic",
         })
 

@@ -11,10 +11,13 @@ from klorb.permissions.directory_access import DirRules
 from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.file_access import FileRules
 from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.table import Verdict
 from klorb.role import OPERATOR_ROLE_NAME
 from klorb.session.constants import (
     DEFAULT_MAX_CHAINED_HOOK_TURNS,
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    DEFAULT_MEMORY_DELETE_PERMISSION,
+    DEFAULT_MEMORY_WRITE_PERMISSION,
     PermissionFramework,
     ThinkingEffort,
 )
@@ -115,6 +118,15 @@ class SessionConfig(BaseModel):
     table's shipped defaults are broad (localhost, RFC1918 ranges); `bash_domain_rules` is the
     independent, conservative-by-default counterpart for sandboxed `Bash` network egress — see
     that field's own docstring for why the two are not shared."""
+    memory_write_permission: Verdict = DEFAULT_MEMORY_WRITE_PERMISSION
+    """Governs `CreateMemory`/`EditMemory` for the `workspace` namespace only -- see
+    docs/specs/memories.md. Lives on `SessionConfig`, not `ProcessConfig`, like `skill_rules`, so
+    the interactive ask flow can approve workspace memory writes for the rest of the session. The
+    `global` namespace is never gated by this: a `global`-namespace write is unconditionally
+    allowed."""
+    memory_delete_permission: Verdict = DEFAULT_MEMORY_DELETE_PERMISSION
+    """Governs `ForgetMemory` for the `workspace` namespace only -- same placement rationale and
+    `global`-namespace exemption as `memory_write_permission`."""
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
     (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult

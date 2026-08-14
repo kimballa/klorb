@@ -238,33 +238,30 @@ def test_log_tool_calls_defaults_to_none(tmp_path: Path) -> None:
 
 def test_memory_permission_fields_default_per_operation(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
-    assert process_config.memory_read_permission == "allow"
-    assert process_config.memory_edit_permission == "allow"
-    assert process_config.memory_create_permission == "ask"
-    assert process_config.memory_delete_permission == "ask"
+    assert process_config.session.memory_write_permission == "ask"
+    assert process_config.session.memory_delete_permission == "ask"
 
 
 def test_memory_permission_fields_are_overridable_via_config_file(tmp_path: Path) -> None:
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",
         {
-            "tools.memory.readPermission": "ask",
-            "tools.memory.editPermission": "deny",
-            "tools.memory.createPermission": "allow",
-            "tools.memory.deletePermission": "allow",
+            "sessionDefaults": {
+                "tools.memory.writePermission": "allow",
+                "tools.memory.deletePermission": "allow",
+            },
         },
     )
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
-    assert process_config.memory_read_permission == "ask"
-    assert process_config.memory_edit_permission == "deny"
-    assert process_config.memory_create_permission == "allow"
-    assert process_config.memory_delete_permission == "allow"
+    assert process_config.session.memory_write_permission == "allow"
+    assert process_config.session.memory_delete_permission == "allow"
 
 
 def test_memory_permission_field_rejects_an_invalid_verdict(tmp_path: Path) -> None:
     _write_config(
-        tmp_path / ".klorb" / "klorb-config.json", {"tools.memory.readPermission": "sometimes"})
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"tools.memory.writePermission": "sometimes"}})
 
     with pytest.raises(ValidationError):
         load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))

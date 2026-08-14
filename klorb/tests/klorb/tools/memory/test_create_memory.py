@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.resource import MemoryResource
 from klorb.permissions.table import PermissionAskRequired, Verdict
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
@@ -17,14 +18,16 @@ from klorb.workspace import Workspace
 
 def _context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
-    trusted: bool = True, create_permission: Verdict = "allow",
+    trusted: bool = True, write_permission: Verdict = "allow",
 ) -> ToolSetupContext:
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
-        process_config=ProcessConfig(memory_create_permission=create_permission),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(
+            workspace=Workspace(path=workspace_root, trusted=trusted),
+            memory_write_permission=write_permission))
 
 
 def test_creates_a_new_memory_auto_creating_the_namespace_dir(
@@ -105,31 +108,62 @@ def test_workspace_memory_in_untrusted_workspace_is_denied(
     assert not namespace_dir.exists()
 
 
-def test_create_permission_defaults_to_ask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    context = _context(tmp_path, monkeypatch, create_permission="ask")
-
-    with pytest.raises(PermissionAskRequired):
-        CreateMemoryTool(context).apply({
-            "namespace": "global", "filename": "notes.md", "content": "Topic\n",
-        })
-
-
-def test_create_permission_deny_raises_permission_error(
+def test_global_namespace_is_always_allowed_regardless_of_write_permission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch, create_permission="deny")
-
-    with pytest.raises(PermissionError):
-        CreateMemoryTool(context).apply({
-            "namespace": "global", "filename": "notes.md", "content": "Topic\n",
-        })
-
-
-def test_create_permission_allow_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    context = _context(tmp_path, monkeypatch, create_permission="allow")
+    context = _context(tmp_path, monkeypatch, write_permission="deny")
 
     CreateMemoryTool(context).apply({
         "namespace": "global", "filename": "notes.md", "content": "Topic\n",
+    })  # no raise, despite write_permission="deny"
+
+
+def test_workspace_write_permission_defaults_to_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, write_permission="ask")
+
+    with pytest.raises(PermissionAskRequired):
+        CreateMemoryTool(context).apply({
+            "namespace": "workspace", "filename": "notes.md", "content": "Topic\n",
+        })
+
+
+def test_workspace_write_permission_ask_raises_a_persistable_memory_resource(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, write_permission="ask")
+
+    with pytest.raises(PermissionAskRequired) as excinfo:
+        CreateMemoryTool(context).apply({
+            "namespace": "workspace", "filename": "notes.md", "content": "Topic\n",
+        })
+
+    resource = excinfo.value.resource
+    assert isinstance(resource, MemoryResource)
+    assert resource.is_persistable is True
+    assert resource.access == "write"
+    assert resource.filename == "notes.md"
+
+
+def test_workspace_write_permission_deny_raises_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, write_permission="deny")
+
+    with pytest.raises(PermissionError):
+        CreateMemoryTool(context).apply({
+            "namespace": "workspace", "filename": "notes.md", "content": "Topic\n",
+        })
+
+
+def test_workspace_write_permission_allow_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, write_permission="allow")
+
+    CreateMemoryTool(context).apply({
+        "namespace": "workspace", "filename": "notes.md", "content": "Topic\n",
     })  # no raise
 
 

@@ -7,6 +7,8 @@ from typing import Literal
 
 from coolname import generate_slug
 
+from klorb.permissions.table import Verdict
+
 MAX_TOOL_CALL_ROUNDS = 200
 """Safety cap on how many model-to-tool round trips one turn will run before giving up, in
 case a model gets stuck repeatedly requesting tool calls without ever returning a final
@@ -26,6 +28,13 @@ a real user-driven turn resets the count -- the same fail-safe shape as
 `DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a misconfigured handler that keeps the
 agent talking to itself indefinitely. `0` disables chaining entirely; a negative value means
 no cap."""
+
+DEFAULT_MEMORY_WRITE_PERMISSION: Verdict = "ask"
+DEFAULT_MEMORY_DELETE_PERMISSION: Verdict = "ask"
+"""Default `Verdict`s for `SessionConfig.memory_write_permission`/`memory_delete_permission` --
+see docs/specs/memories.md. Govern the `workspace` namespace only: a `global`-namespace memory
+operation, and any `read` in either namespace, is unconditionally allowed and never consults
+these."""
 
 
 class ToolCallLimitExceeded(Exception):

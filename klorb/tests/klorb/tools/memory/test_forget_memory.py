@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.resource import MemoryResource
 from klorb.permissions.table import PermissionAskRequired, Verdict
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
@@ -23,8 +24,10 @@ def _context(
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
-        process_config=ProcessConfig(memory_delete_permission=delete_permission),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(
+            workspace=Workspace(path=workspace_root, trusted=trusted),
+            memory_delete_permission=delete_permission))
 
 
 def _write(context: ToolSetupContext, namespace: Namespace, filename: str, content: str) -> Path:
@@ -85,24 +88,41 @@ def test_workspace_memory_in_untrusted_workspace_is_denied_before_touching_disk(
     assert path.exists()
 
 
-def test_delete_permission_defaults_to_ask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    context = _context(tmp_path, monkeypatch, delete_permission="ask")
-    path = _write(context, "global", "notes.md", "Topic\n")
-
-    with pytest.raises(PermissionAskRequired):
-        ForgetMemoryTool(context).apply({"namespace": "global", "filename": "notes.md"})
-
-    assert path.exists()
-
-
-def test_delete_permission_deny_raises_permission_error(
+def test_global_namespace_is_always_allowed_regardless_of_delete_permission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch, delete_permission="deny")
     path = _write(context, "global", "notes.md", "Topic\n")
 
+    ForgetMemoryTool(context).apply({"namespace": "global", "filename": "notes.md"})
+
+    assert not path.exists()
+
+
+def test_workspace_delete_permission_defaults_to_ask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, delete_permission="ask")
+    path = _write(context, "workspace", "notes.md", "Topic\n")
+
+    with pytest.raises(PermissionAskRequired) as excinfo:
+        ForgetMemoryTool(context).apply({"namespace": "workspace", "filename": "notes.md"})
+
+    assert path.exists()
+    resource = excinfo.value.resource
+    assert isinstance(resource, MemoryResource)
+    assert resource.access == "delete"
+    assert resource.filename == "notes.md"
+
+
+def test_workspace_delete_permission_deny_raises_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, delete_permission="deny")
+    path = _write(context, "workspace", "notes.md", "Topic\n")
+
     with pytest.raises(PermissionError):
-        ForgetMemoryTool(context).apply({"namespace": "global", "filename": "notes.md"})
+        ForgetMemoryTool(context).apply({"namespace": "workspace", "filename": "notes.md"})
 
     assert path.exists()
 

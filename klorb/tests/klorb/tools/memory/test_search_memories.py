@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from klorb.permissions.table import PermissionAskRequired, Verdict
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.memory import common as memory_common_module
@@ -16,14 +15,13 @@ from klorb.workspace import Workspace
 
 
 def _context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
-    trusted: bool = True, read_permission: Verdict = "allow",
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, trusted: bool = True,
 ) -> ToolSetupContext:
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
-        process_config=ProcessConfig(memory_read_permission=read_permission),
+        process_config=ProcessConfig(),
         session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
 
 
@@ -134,24 +132,6 @@ def test_non_string_query_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(ValueError, match="must be a string"):
         SearchMemoriesTool(context).apply({"queries": [1]})
-
-
-def test_read_permission_deny_raises_permission_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context = _context(tmp_path, monkeypatch, read_permission="deny")
-
-    with pytest.raises(PermissionError):
-        SearchMemoriesTool(context).apply({"queries": ["x"]})
-
-
-def test_read_permission_ask_raises_permission_ask_required(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context = _context(tmp_path, monkeypatch, read_permission="ask")
-
-    with pytest.raises(PermissionAskRequired):
-        SearchMemoriesTool(context).apply({"queries": ["x"]})
 
 
 def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

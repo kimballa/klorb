@@ -16,9 +16,8 @@ class SessionMemoryMixin(SessionBase):
     def _build_memories_interjection(self) -> str | None:
         """Return the body `send_turn()` wraps in a `<SystemInterjection subject="Memories">`
         tag and prepends onto the first turn's prompt, or `None` if this session has no
-        `ToolRegistry`/`ProcessConfig`. Also returns `None` if `ListMemories` itself raises
-        (e.g. a `"deny"`/`"ask"` `tools.memory.readPermission`), since this is a proactive
-        convenience with no user to ask.
+        `ToolRegistry`/`ProcessConfig`. Also returns `None` if `ListMemories` itself raises, since
+        this is a proactive convenience with no user to ask.
         """
         if self._tool_registry is None or self._process_config is None:
             return None

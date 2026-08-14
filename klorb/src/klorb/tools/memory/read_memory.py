@@ -5,7 +5,6 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import (
     NAMESPACE_SCHEMA_PROPERTY,
     Namespace,
@@ -32,10 +31,11 @@ class ReadMemoryTool(Tool):
     same one `ReadFileTool`/`ReadScratchpadTool` use.
 
     `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate and
-    `tools.memory.readPermission` before any disk I/O -- there is no `readDirs` check at all;
-    see docs/specs/memories.md for why memory tools bypass that table entirely, the same
-    reasoning as docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
+    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
+    I/O; a read is otherwise always allowed, in both namespaces, with no further permission check
+    -- there is no `readDirs` check at all either; see docs/specs/memories.md for why memory tools
+    bypass that table entirely, the same reasoning as
+    docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -97,9 +97,6 @@ class ReadMemoryTool(Tool):
         if namespace not in ("global", "workspace"):
             raise ValueError(f"namespace must be 'global' or 'workspace', got {namespace!r}")
         require_workspace_namespace_accessible(self.context, namespace)
-        raise_if_not_allowed(
-            self.context.process_config.memory_read_permission,
-            resource_description=f"read {namespace} memory {filename}")
 
         namespace_dir = memory_namespace_dir(self.context, namespace)
         path = validate_memory_filename(filename, namespace_dir)

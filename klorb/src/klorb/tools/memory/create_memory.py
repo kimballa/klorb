@@ -33,8 +33,9 @@ class CreateMemoryTool(Tool):
     to create a memory with no topic and fill it in later via `EditMemory`.
 
     `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate and
-    `tools.memory.createPermission` before any disk I/O.
+    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
+    I/O; a `workspace`-namespace create is additionally gated by `tools.memory.writePermission`
+    -- a `global`-namespace create is always allowed.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -99,9 +100,11 @@ class CreateMemoryTool(Tool):
         if namespace not in ("global", "workspace"):
             raise ValueError(f"namespace must be 'global' or 'workspace', got {namespace!r}")
         require_workspace_namespace_accessible(self.context, namespace)
-        raise_if_not_allowed(
-            self.context.process_config.memory_create_permission,
-            resource_description=f"create {namespace} memory {filename}")
+        if namespace == "workspace":
+            raise_if_not_allowed(
+                self.context.session_config.memory_write_permission,
+                resource_description=f"create {namespace} memory {filename}",
+                memory=("write", filename))
 
         subject = f"{namespace} memory {filename}"
         validate_first_line_not_blank(args["content"], subject=subject)

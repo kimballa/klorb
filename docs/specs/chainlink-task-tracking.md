@@ -256,8 +256,8 @@ to become the new current task, since `maybe_activate_task()`'s "must be open" c
 exclude it — so this branch calls `TodoNextTool` directly instead of going through
 `maybe_activate_task()`, which is why closing has no analogous "activate this issue" behavior.
 
-None of the four apply any `ProcessConfig`-driven permission gate (unlike, say,
-`tools.memory.readPermission`) — chainlink's SQLite file lives under the workspace's own
+None of the four apply any config-driven permission gate (unlike, say,
+`tools.memory.writePermission`) — chainlink's SQLite file lives under the workspace's own
 `.chainlink/` and is never read/written outside it, so there's no filesystem-boundary decision
 to make the way there is for `ReadFile`/memory tools.
 
