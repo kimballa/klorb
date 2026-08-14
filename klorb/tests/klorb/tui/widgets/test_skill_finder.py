@@ -102,6 +102,14 @@ class TestFilterSkills:
         result = filter_skills(skills, "review")
         assert result[0].name == "review"
 
+    def test_non_contiguous_query_does_not_match_description(self) -> None:
+        """Description matching is literal-substring only, not fuzzy subsequence, so a
+        typed-out query never runs `textual.fuzzy.Matcher`'s recursive backtracking search
+        against the long prose text of a description."""
+        skills = [SkillMatch(name="alpha", namespace="internal", description="review code")]
+        result = filter_skills(skills, "rvw cd")
+        assert result == []
+
 
 class TestSkillMatchContent:
     def test_namespace_and_description_use_different_muted_styles(self) -> None:

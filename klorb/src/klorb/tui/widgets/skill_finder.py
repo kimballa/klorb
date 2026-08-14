@@ -124,17 +124,22 @@ def filter_skills(
 ) -> list[SkillMatch]:
     """Return up to `limit` skills from `skills` that match `query`.
 
-    An empty query returns all skills (up to `limit`); a non-empty query ranks by
-    the higher of `textual.fuzzy.Matcher` scores against `name` and `description`.
+    An empty query returns all skills (up to `limit`); a non-empty query ranks by the
+    `textual.fuzzy.Matcher` score against `name`, or a flat score if `query` merely
+    appears as a substring of `description`. Descriptions use substring containment
+    rather than `Matcher` because `Matcher`'s recursive backtracking search is
+    combinatorial in the candidate's length once the query isn't a literal substring,
+    and skill descriptions are long enough prose for that to make typing unusable.
     """
     if not query:
         return list(skills[:limit])
 
     matcher = Matcher(query)
+    folded_query = query.casefold()
 
     def score_of(skill: SkillMatch) -> float:
         name_score = matcher.match(skill.name)
-        desc_score = matcher.match(skill.description) if skill.description else 0.0
+        desc_score = 1.0 if skill.description and folded_query in skill.description.casefold() else 0.0
         return max(name_score, desc_score)
 
     scored = [(score_of(skill), skill) for skill in skills]
