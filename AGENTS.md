@@ -20,6 +20,8 @@ you're touching.
 Code comments or docstrings must *never* reference any file in `docs/plans/`. Capture important
 durable explanations in `docs/specs/` or an ADR.
 
+### Architecture decision records (ADRs)
+
 Key decisions are captured in architecture decision records (ADRs). ADRs
 are short documents that record a decision, with the format:
 
@@ -34,8 +36,14 @@ ADR filenames are sequentially numbered by creation date: `NNNNN-slug-name.md` (
 `00042-edit-file-auto-creates-via-empty-subject-insert-shape.md`). When creating a new ADR, find
 the highest existing number and use the next one. Use `ls docs/adrs/ | tail -1` to find it.
 
-ADR filenames should have a reasonable slug and include the answer (`do-foo-by-using-bar.md`) for
-quick filename access, not wasteful filler words (`how-should-we-do-foo.md`).
+ADR filenames should have a reasonable slug and include the answer (`00123-do-foo-by-using-bar.md`) for
+quick filename access, not wasteful filler words (`00123-how-should-we-do-foo.md`).
+
+ADRs are not specs that are kept up-to-date as the code changes; they represent a decision made
+at a point in time. If some part of the decision is superseded then (1) create a new,
+higher-numbered ADR, recording the new decision, and (2) add a **short** note at the top of the
+older ADR explaining that it (or parts of it) are superseded by the new one, with a reference to the
+new ADR file.
 
 ### TODO.md
 
