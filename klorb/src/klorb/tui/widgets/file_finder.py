@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from textual.content import Content
+from textual.events import Resize
 from textual.fuzzy import Matcher
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
@@ -288,19 +289,37 @@ class FinderPanel(OptionList, can_focus=False):
     }
     """
 
+    def on_mount(self) -> None:
+        super().on_mount()
+        self._last_matches: list[object] = []
+
     def show_matches(self, matches: Sequence[object]) -> None:
         """Replace the displayed rows with `matches` and highlight the first one."""
-        self.clear_options()
-        available_width = max(self.size.width - _ROW_WIDTH_PADDING, _MIN_ROW_WIDTH)
-        self.add_options(self._build_options(matches, available_width))
-        if matches:
-            self.highlighted = 0
+        self._last_matches = list(matches)
+        self._render_matches()
         self.display = True
 
     def hide(self) -> None:
         """Hide the popup and drop its current rows."""
         self.display = False
+        self._last_matches = []
         self.clear_options()
+
+    def on_resize(self, event: Resize) -> None:
+        """Re-render visible rows once the panel's real width is known: the first
+        `show_matches` runs while the panel is still `display: none` (width 0), which drops
+        trailing fields like a skill's description."""
+        if not self.display or not self._last_matches:
+            return
+        self._render_matches(preserve_highlight=True)
+
+    def _render_matches(self, *, preserve_highlight: bool = False) -> None:
+        highlighted = self.highlighted if preserve_highlight else 0
+        self.clear_options()
+        available_width = max(self.size.width - _ROW_WIDTH_PADDING, _MIN_ROW_WIDTH)
+        self.add_options(self._build_options(self._last_matches, available_width))
+        if self._last_matches:
+            self.highlighted = highlighted if highlighted is not None else 0
 
     @property
     def current_match(self) -> object | None:

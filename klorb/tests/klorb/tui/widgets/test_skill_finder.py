@@ -1,9 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.widgets.skill_finder."""
 
-from textual.app import App
+from textual.app import App, ComposeResult
+from textual.content import Content
+from textual.widgets import Static
+from tui.conftest import _wait_until
 
 from klorb.tui.widgets.skill_finder import (
+    SKILL_FINDER_ID,
+    SkillFinderPanel,
     SkillMatch,
     SkillQuery,
     _skill_match_content,
@@ -135,3 +140,30 @@ class TestSkillMatchContent:
 
         assert alphas[0] < alphas[1], "the two muted levels must stay distinct"
         assert alphas[1] < 1.0, "the description must be muted, not full-intensity"
+
+
+class _SkillFinderTestApp(App[None]):
+    """Minimal app mounting a `SkillFinderPanel` above a placeholder prompt, for rendering tests."""
+
+    def compose(self) -> ComposeResult:
+        yield SkillFinderPanel(id=SKILL_FINDER_ID)
+        yield Static("prompt")
+
+
+class TestSkillFinderPanelRendering:
+    async def test_description_renders_on_first_show(self) -> None:
+        """The description must appear next to the name/namespace on the very first show
+        (empty query), not only after a later keystroke re-renders at the real panel width."""
+        app = _SkillFinderTestApp()
+        async with app.run_test() as pilot:
+            panel = app.query_one(f"#{SKILL_FINDER_ID}", SkillFinderPanel)
+            panel.show_matches([
+                SkillMatch(name="code-review", namespace="internal", description="Review code changes")
+            ])
+
+            def shows_description() -> bool:
+                prompt = panel.get_option_at_index(0).prompt
+                assert isinstance(prompt, Content)
+                return "Review code changes" in prompt.plain
+
+            await _wait_until(pilot, shows_description)
