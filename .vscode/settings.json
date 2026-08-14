@@ -54,8 +54,16 @@
   "[json]": {
     "editor.defaultFormatter": "vscode.json-language-features"
   },
+  "[markdown]": {
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.markdownlint": "explicit"
+    }
+  },
   "makefile.makefilePath": "klorb/Makefile",
   "prettier.configPath": "vscode-plugin/.prettierrc.json",
+  "prettier.ignorePath": "vscode-plugin/.prettierignore",
   "prettier.documentSelectors": [
     "**/*.{ts,js,tsx,jsx,cjs,mjs,css}"
   ],
@@ -64,5 +72,6 @@
     "*.vsix": true,
     "vscode-plugin/out/**": true
   },
-  "prettier.printWidth": 100
+  "prettier.printWidth": 100,
+  "markdownlint.configFile": ".markdownlint-cli2.jsonc",
 }
