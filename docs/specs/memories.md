@@ -111,6 +111,13 @@ either namespace.
   "Memories" section, alongside (not merged into) "Use your scratchpad", explaining the
   namespace distinction, the topic-first-line convention, and when to reach for a memory over
   the scratchpad.
+* `Session._build_memories_interjection()` (`klorb.session.mixins.memory.SessionMemoryMixin`)
+  calls `ListMemories` once, on the very first turn, and prepends its `filename`/`topic`
+  catalog as a `<SystemInterjection subject="Memories">` — the `workspace` section is omitted
+  entirely in an untrusted workspace, and an empty namespace gets a `CreateMemory` nudge instead
+  of an empty list. This saves the model an initial `ListMemories` round trip; a `"deny"`/`"ask"`
+  `tools.memory.readPermission` (or any other `ListMemories` failure) just drops the
+  interjection rather than surfacing an error.
 
 ## Configuration
 

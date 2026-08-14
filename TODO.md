@@ -11,10 +11,6 @@
   * The above happened even though I specifically had `"bashDomains": { "allow": [ "github.com" ] }`
     in the klorb-config.json file.... why?
 
-* the agent's memory topics should be injected into the first user prompt
-
-* the system prompt should explain the memory system and encourage the agent more forcefully to capture memories, any time it is corrected by the user or learns something important about the project.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
@@ -28,6 +24,12 @@
   also just running right above it in the historyview.)
 
 ### Feature backlog
+
+* Add freeform `MEMORY.md` of up to about 50 lines in each namespace *also* put into the system interjection.
+  First 50 lines go into the system interjection. If it gets up to 45+ lines, the create/write tools
+  put a warning msg in the tool_response giving the line count, the 50 line auto-read limit, and
+  urging the agent to compact it down or move things to named files. The system prompt should say
+  that this is intended to be used as a table of contents over more specifically-named memory files.
 
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.

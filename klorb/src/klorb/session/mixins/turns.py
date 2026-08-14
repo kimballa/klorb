@@ -572,6 +572,10 @@ class SessionTurnsMixin(SessionBase):
         matching every other one-shot interjection's "fires once" contract — see
         docs/specs/workspace-context-files.md.
 
+        On the first turn only, a one-shot `Memories` interjection cataloging every recorded
+        memory's filename and topic (via `ListMemories` -- see `_build_memories_interjection`)
+        is also prepended (see `self._memories_seeded`).
+
         On the first turn only, a one-shot `metadata` interjection carrying the session
         start time and workspace root name is also prepended (see `self._metadata_seeded`).
 
@@ -646,6 +650,11 @@ class SessionTurnsMixin(SessionBase):
             project_guidance = self._build_context_files_interjection()
             if project_guidance is not None:
                 prompt = f"{wrap_system_interjection('ProjectGuidance', project_guidance)}\n{prompt}"
+        if not self._memories_seeded:
+            self._memories_seeded = True
+            memories_body = self._build_memories_interjection()
+            if memories_body is not None:
+                prompt = f"{wrap_system_interjection('Memories', memories_body)}\n{prompt}"
         if not self._metadata_seeded:
             self._metadata_seeded = True
             started_at = self._session_started_at.strftime("%Y-%m-%d %H:%M:%S %Z").strip()

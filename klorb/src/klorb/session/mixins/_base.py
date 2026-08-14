@@ -114,6 +114,7 @@ class SessionBase:
     _messages: list[Message]
     _skills_seeded: bool
     _context_files_seeded: bool
+    _memories_seeded: bool
     _metadata_seeded: bool
     _session_naming_pending: bool
     _session_naming_token: object | None
@@ -191,6 +192,9 @@ class SessionBase:
         raise NotImplementedError
 
     def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:
+        raise NotImplementedError
+
+    def _build_memories_interjection(self) -> str | None:
         raise NotImplementedError
 
     def _build_skill_reference_interjection(

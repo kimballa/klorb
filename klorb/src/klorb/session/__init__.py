@@ -5,11 +5,11 @@ caller exchanges with it.
 
 `Session` itself is assembled from the mixins in `klorb.session.mixins` -- construction and
 simple accessors (`core`), system-prompt/message-bookkeeping setup (`prompt_setup`),
-skill/context-file interjection building (`skills`), ask-exception resolution (`permissions`),
-the tool-call dispatch loop (`tool_execution`), and the turn-dispatch loop itself (`turns`) --
-the same shape `klorb.tui.app.ReplApp` uses to split up its own mixins. See
-`klorb.session.mixins._base.SessionBase` for why every mixin declares itself against a shared
-base class instead of subclassing `Session` piecewise.
+skill/context-file interjection building (`skills`), the `Memories` interjection (`memory`),
+ask-exception resolution (`permissions`), the tool-call dispatch loop (`tool_execution`), and
+the turn-dispatch loop itself (`turns`) -- the same shape `klorb.tui.app.ReplApp` uses to split
+up its own mixins. See `klorb.session.mixins._base.SessionBase` for why every mixin declares
+itself against a shared base class instead of subclassing `Session` piecewise.
 """
 
 from klorb.session.config import SessionConfig
@@ -39,6 +39,7 @@ from klorb.session.events import (
 )
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.core import SessionCoreMixin
+from klorb.session.mixins.memory import SessionMemoryMixin
 from klorb.session.mixins.permissions import SessionPermissionsMixin
 from klorb.session.mixins.persistence import SessionPersistenceMixin
 from klorb.session.mixins.prompt_setup import SessionPromptSetupMixin
@@ -52,6 +53,7 @@ class Session(
     SessionPersistenceMixin,
     SessionPromptSetupMixin,
     SessionSkillsMixin,
+    SessionMemoryMixin,
     SessionPermissionsMixin,
     SessionToolExecutionMixin,
     SessionTurnsMixin,
