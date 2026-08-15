@@ -172,16 +172,19 @@ def test_require_workspace_namespace_accessible_ignores_global_namespace(tmp_pat
 
 
 def test_memory_toc_overflow_warning_ignores_other_filenames() -> None:
-    assert memory_toc_overflow_warning("notes.md", 1000) is None
+    assert memory_toc_overflow_warning("global", "notes.md", 1000) is None
 
 
 def test_memory_toc_overflow_warning_none_below_threshold() -> None:
-    assert memory_toc_overflow_warning(MEMORY_TOC_FILENAME, 44) is None
+    assert memory_toc_overflow_warning("global", MEMORY_TOC_FILENAME, 44) is None
 
 
 def test_memory_toc_overflow_warning_present_at_threshold() -> None:
-    warning = memory_toc_overflow_warning(MEMORY_TOC_FILENAME, 45)
+    warning = memory_toc_overflow_warning("workspace", MEMORY_TOC_FILENAME, 45)
 
     assert warning is not None
     assert "45" in warning
     assert "50" in warning
+    assert 'EditMemory(namespace="workspace", filename="MEMORY.md")' in warning
+    assert 'EditMemory(namespace="workspace", filename="...")' in warning
+    assert 'CreateMemory(namespace="workspace", filename="...")' in warning

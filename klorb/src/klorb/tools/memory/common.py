@@ -107,7 +107,7 @@ def validate_first_line_not_blank(content: str, *, subject: str) -> None:
             f"{subject}'s first line is its topic and must not be blank")
 
 
-def memory_toc_overflow_warning(filename: str, total_lines: int) -> str | None:
+def memory_toc_overflow_warning(namespace: Namespace, filename: str, total_lines: int) -> str | None:
     """Return a warning for `CreateMemory`/`EditMemory` to attach to their result when `filename`
     is `MEMORY_TOC_FILENAME` and it now has `total_lines` lines, or `None` if a warning doesn't
     apply — either because `filename` isn't `MEMORY_TOC_FILENAME`, or `total_lines` is still
@@ -118,8 +118,10 @@ def memory_toc_overflow_warning(filename: str, total_lines: int) -> str | None:
     return (
         f"{MEMORY_TOC_FILENAME} is now {total_lines} lines long. Only its first "
         f"{MEMORY_TOC_AUTO_READ_LINES} lines are read automatically into your Memories "
-        "interjection each session — compact it down, or move detail out into a "
-        "separately-named memory file that MEMORY.md points to."
+        f'interjection each session. Use EditMemory(namespace="{namespace}", '
+        f'filename="{MEMORY_TOC_FILENAME}") to compact it down, moving detail into an existing '
+        f'memory with EditMemory(namespace="{namespace}", filename="...") or a new one with '
+        f'CreateMemory(namespace="{namespace}", filename="...").'
     )
 
 

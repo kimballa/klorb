@@ -48,8 +48,9 @@ class SessionMemoryMixin(SessionBase):
 
     def _read_memory_toc(self, namespace: Namespace) -> str | None:
         """Return this namespace's `MEMORY_TOC_FILENAME` section for the Memories interjection --
-        its leading `MEMORY_TOC_AUTO_READ_LINES` lines, or `None` if it doesn't exist or
-        `ReadMemory` fails."""
+        its leading `MEMORY_TOC_AUTO_READ_LINES` lines wrapped in a `<MemoryTableOfContents>` tag,
+        plus a truncation note if it's longer -- or `None` if it doesn't exist or `ReadMemory`
+        fails."""
         assert self._tool_registry is not None
         try:
             tool = self._tool_registry.instantiate_tool("ReadMemory")
@@ -64,10 +65,20 @@ class SessionMemoryMixin(SessionBase):
                 "ReadMemory for the Memories interjection's %s %s failed.",
                 namespace, MEMORY_TOC_FILENAME, exc_info=True)
             return None
-        return (
+        body = (
             f"Your {namespace} {MEMORY_TOC_FILENAME} (a table of contents over your other "
-            f"{namespace} memory files):\n\n{result['content']}"
+            f'{namespace} memory files):\n\n<MemoryTableOfContents namespace="{namespace}">\n'
+            f"{result['content']}\n</MemoryTableOfContents>"
         )
+        if result.get("truncated"):
+            body += (
+                f"\n\nThis was truncated at {MEMORY_TOC_AUTO_READ_LINES} lines. Use "
+                f'`ReadMemory(namespace="{namespace}", filename="{MEMORY_TOC_FILENAME}", '
+                f'start_line={MEMORY_TOC_AUTO_READ_LINES + 1})` to see the rest, and consider '
+                "using `EditMemory`/`CreateMemory` to move some of it into subject-specific "
+                "memory files so the table of contents stays short."
+            )
+        return body
 
     @staticmethod
     def _format_memory_topics(*, scope: str, namespace: str, entries: list[dict[str, Any]]) -> str:

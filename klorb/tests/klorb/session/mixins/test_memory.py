@@ -130,7 +130,10 @@ def test_memory_toc_content_is_folded_into_the_interjection(
 
     assert body is not None
     assert "table of contents" in body
+    assert '<MemoryTableOfContents namespace="global">' in body
+    assert "</MemoryTableOfContents>" in body
     assert "See user.md for preferences" in body
+    assert "This was truncated" not in body
 
 
 def test_memory_toc_absent_when_no_memory_md_exists(
@@ -157,6 +160,20 @@ def test_memory_toc_is_capped_at_the_auto_read_line_limit(
     assert body is not None
     assert "L49" in body
     assert "L50" not in body
+
+
+def test_memory_toc_truncation_names_the_resuming_read_memory_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _build(tmp_path, monkeypatch)
+    content = "TOC\n" + "\n".join(f"L{i}" for i in range(1, 60))
+    _write_memory(context, "global", "MEMORY.md", content)
+
+    body = session._build_memories_interjection()
+
+    assert body is not None
+    assert "This was truncated at 50 lines" in body
+    assert 'ReadMemory(namespace="global", filename="MEMORY.md", start_line=51)' in body
 
 
 def test_memory_toc_omitted_for_untrusted_workspace(

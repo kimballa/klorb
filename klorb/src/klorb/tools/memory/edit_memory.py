@@ -139,7 +139,7 @@ class EditMemoryTool(Tool):
 
         result["namespace"] = namespace
         result["filename"] = filename
-        warning = memory_toc_overflow_warning(filename, result["new_total_lines"])
+        warning = memory_toc_overflow_warning(namespace, filename, result["new_total_lines"])
         if warning is not None:
             result["warning"] = warning
         logger.debug(

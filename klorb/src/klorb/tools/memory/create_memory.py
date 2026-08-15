@@ -121,7 +121,7 @@ class CreateMemoryTool(Tool):
             redactor=self._secret_redactor, session=self.context.session)
         result["namespace"] = namespace
         result["filename"] = filename
-        warning = memory_toc_overflow_warning(filename, result["total_lines"])
+        warning = memory_toc_overflow_warning(namespace, filename, result["total_lines"])
         if warning is not None:
             result["warning"] = warning
 
