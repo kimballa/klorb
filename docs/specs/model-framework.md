@@ -178,7 +178,7 @@ OpenRouter's public models listing.
   OpenRouter's actual rate limit ever changes) requests per second, so a caller listing pricing
   for a long model list doesn't burst-hit OpenRouter.
 * `klorb models` [`--json`] [`--brief`] [`--costs`] (`run_models_cli()` in
-  `klorb/src/klorb/cli.py`, dispatched from `main()` the same way `klorb init` and
+  `klorb/src/klorb/cli/models.py`, dispatched from `main()` the same way `klorb init` and
   `klorb system-prompt` are — see `docs/user/usage.md`) prints every model `ModelRegistry`
   discovers, sorted by name: a column-aligned table by default (no vertical borders between
   columns, one horizontal rule under the header row and nowhere else), a JSON array of each

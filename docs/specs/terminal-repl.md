@@ -383,7 +383,7 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   Typing `>` in the prompt input reaches the same providers without leaving the prompt box —
   see [[command-palette-from-prompt]]. `Ctrl+O` globally toggles every rendered tool call
   between its one-line summary and its fuller detail view (see above).
-* `klorb.cli.build_parser()` (`klorb/src/klorb/cli.py`) makes the `-m`/`--message` flag
+* `klorb.cli.build_parser()` (`klorb/src/klorb/cli/main.py`) makes the `-m`/`--message` flag
   optional (default `None`) and adds an `--interactive`/`--no-interactive` flag (see
   [[session-and-turns]] for its defaulting rules). `klorb.cli.main()` builds a `Session`
   and calls `run_repl(session, initial_message=args.prompt)` when the session is

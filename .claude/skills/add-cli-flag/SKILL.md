@@ -1,20 +1,20 @@
 ---
 name: add-cli-flag
-description: Add a new command-line flag to the klorb CLI (klorb/src/klorb/cli.py). Use when the user wants to add, wire up, or document a new --flag for klorb, especially one that should be threaded through SessionConfig/Session so library code (TUI, future VSCode plugin) can see it. Also covers updating docs/user/usage.md to document the new flag.
+description: Add a new command-line flag to the klorb CLI (klorb/src/klorb/cli/main.py). Use when the user wants to add, wire up, or document a new --flag for klorb, especially one that should be threaded through SessionConfig/Session so library code (TUI, future VSCode plugin) can see it. Also covers updating docs/user/usage.md to document the new flag.
 ---
 
 # Adding a CLI flag to klorb
 
-klorb's CLI/library firewall (see `CLAUDE.md`) means `klorb/src/klorb/cli.py` may only
+klorb's CLI/library firewall (see `CLAUDE.md`) means `klorb/src/klorb/cli/` may only
 parse arguments and translate them into library calls — it must not carry agentic state of
 its own. In practice that means: a flag that affects session *behavior* (not just how the
-CLI parses argv) belongs on `SessionConfig` (`klorb/src/klorb/session.py`), and `cli.py`'s
-job is to resolve the parsed flag to a value and hand it to `SessionConfig(...)`. Follow
-these steps in order.
+CLI parses argv) belongs on `SessionConfig` (`klorb/src/klorb/session.py`), and
+`klorb/src/klorb/cli/main.py`'s job is to resolve the parsed flag to a value and hand it to
+`SessionConfig(...)`. Follow these steps in order.
 
 ## 1. Add the argparse argument
 
-In `build_parser()` in `klorb/src/klorb/cli.py`:
+In `build_parser()` in `klorb/src/klorb/cli/main.py`:
 
 * Use a kebab-case flag name (`--my-flag`) with a snake_case `dest=`.
 * For booleans, use `action=argparse.BooleanOptionalAction` so both `--my-flag` and
@@ -28,23 +28,24 @@ In `build_parser()` in `klorb/src/klorb/cli.py`:
 
 ## 2. Decide: does this flag belong on SessionConfig?
 
-Ask: does any code outside `cli.py` need this value (the REPL, `Session`, a future VSCode
-plugin)? If yes, it belongs on `SessionConfig`. Almost every flag that isn't purely about
-*how argv gets parsed* qualifies — `model`, `interactive`, and `log_filename` are the
-existing examples. If the flag is genuinely CLI-only (e.g. it only affects how output is
-formatted on stdout and nothing downstream ever reads it), it can stay local to `main()`.
+Ask: does any code outside `klorb/src/klorb/cli/` need this value (the REPL, `Session`, a
+future VSCode plugin)? If yes, it belongs on `SessionConfig`. Almost every flag that isn't
+purely about *how argv gets parsed* qualifies — `model`, `interactive`, and `log_filename`
+are the existing examples. If the flag is genuinely CLI-only (e.g. it only affects how
+output is formatted on stdout and nothing downstream ever reads it), it can stay local to
+`main()`.
 
 When it does belong on `SessionConfig`:
 
 * Add the field in `klorb/src/klorb/session.py` with an explicit type annotation and a
   sensible default (pydantic `BaseModel` fields, per `CLAUDE.md`'s typing rule — every
   field needs a declared type).
-* In `cli.main()`, resolve any defaulting logic that depends on *other* flags (like
+* In `main()`, resolve any defaulting logic that depends on *other* flags (like
   `--interactive`'s dependence on whether `--message` was given) into a plain local
   variable first, then pass that into `SessionConfig(...)`.
-* Nothing outside `cli.py` should ever read `args.<flag>` or touch `argparse.Namespace` —
-  every other module (`klorb.session`, `klorb.tui.repl`, etc.) depends on `SessionConfig`/
-  `Session` only.
+* Nothing outside `klorb/src/klorb/cli/` should ever read `args.<flag>` or touch
+  `argparse.Namespace` — every other module (`klorb.session`, `klorb.tui.repl`, etc.)
+  depends on `SessionConfig`/`Session` only.
 * If `Session` needs to *act* on the new field (not just store it), add or update a method
   on `Session` that reads `self.config.<field>` — see `Session.active_model_name()` for the
   pattern of resolving a config value into behavior.
@@ -70,10 +71,10 @@ behavior). A flag whose default required a real design decision (e.g. why `--int
 defaults to following `--message`'s presence) may warrant a short ADR under `docs/adrs/`
 recording the question/answer/reasoning.
 
-## 5. Add/update tests in `klorb/tests/test_cli.py`
+## 5. Add/update tests in `klorb/tests/klorb/cli/test_main.py`
 
-* Patch `klorb.cli.Session` (and `klorb.cli.run_repl` when the flag can route to the REPL)
-  so tests never make real network or Textual-UI calls.
+* Patch `klorb.cli.main.Session` (and `klorb.cli.main.run_repl` when the flag can route to
+  the REPL) so tests never make real network or Textual-UI calls.
 * Assert on the `SessionConfig` actually passed to `Session(...)`, via
   `mock_session_cls.call_args.args[0]`, rather than re-parsing `sys.argv` yourself.
 * Cover at minimum: the flag's default, its explicit positive setting, its explicit
@@ -95,7 +96,7 @@ worked example of every step above:
 * `main()` resolves it (`args.prompt is None if args.interactive is None else
   args.interactive`) before constructing `SessionConfig`, and calls `parser.error(...)` for
   the invalid `--no-interactive` + no `--message` combination.
-* `SessionConfig.interactive: bool` carries the resolved value into `Session`; `cli.main()`
+* `SessionConfig.interactive: bool` carries the resolved value into `Session`; `main()`
   branches on it to choose `session.run_one_shot(prompt)` vs. `run_repl(session,
   initial_message=prompt)`.
 * `docs/user/usage.md` documents it in the synopsis, an `## OPTIONS` entry, and a new example.
@@ -103,5 +104,5 @@ worked example of every step above:
   `docs/adrs/00008-route-one-shot-and-repl-prompts-through-a-shared-session.md` records why a
   shared `Session` was needed once this flag made "one-shot" and "REPL" no longer mutually
   exclusive at the CLI's call site.
-* `klorb/tests/test_cli.py` has dedicated tests for the default-with-message,
+* `klorb/tests/klorb/cli/test_main.py` has dedicated tests for the default-with-message,
   explicit-true-with-message, and explicit-false-without-message cases.
