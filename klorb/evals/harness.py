@@ -16,6 +16,7 @@ from pathlib import Path
 import tiktoken
 
 import klorb.tools as tools_package
+import klorb.tools.memory.common as memory_common_module
 from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider
 from klorb.permissions.directory_access import DirRules
@@ -67,6 +68,10 @@ class EvalCase:
     """Tool names that should be advertised to the model for this case even though their
     `Tool.default_visible()` returns `False` -- e.g. `ReplaceAll`. Wired to
     `ToolRegistry.extra_visible_tools` in `run_case()`."""
+    global_memory_files: dict[str, str] = field(default_factory=dict)
+    """Bare filename to initial content, written into the `global` memory namespace before
+    `prompt` is sent. `run_case()` always points the `global` namespace at a case-private temp
+    directory, never the real `KLORB_DATA_DIR`."""
 
 
 @dataclass(frozen=True)
@@ -189,71 +194,94 @@ def run_case(
     incremental progress — including each tool call's raw request/response, via
     `CaseResult.tool_call_log` — across a run of many cases, without waiting for every case to
     finish first.
+
+    The `global` memory namespace is repointed at a case-private temp directory for the
+    duration of the case, seeded beforehand from `case.global_memory_files`, so a memory-tool
+    case can exercise `global`-namespace reads and writes without touching a real
+    `KLORB_DATA_DIR`.
     """
     if on_start is not None:
         on_start(case.name)
-    with tempfile.TemporaryDirectory(prefix="klorb-eval-") as workspace_dir:
+    with (
+        tempfile.TemporaryDirectory(prefix="klorb-eval-") as workspace_dir,
+        tempfile.TemporaryDirectory(prefix="klorb-eval-data-") as data_dir,
+    ):
         workspace_root = Path(workspace_dir)
         for relative_path, content in case.setup_files.items():
             file_path = workspace_root / relative_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
 
-        session_config = SessionConfig(
-            model=model, interactive=False, thinking_enabled=False,
-            workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
-            read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]),
-            skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
-        process_config = ProcessConfig()
-        grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
-        if case.extra_tool_names:
-            grants.tool_registry.extra_visible_tools = case.extra_tool_names
-        session_config.skill_rules = grants.skill_rules
-        session = Session(
-            session_config, provider=provider, process_config=process_config,
-            tool_registry=grants.tool_registry, effective_subagent_roles=grants.effective_subagent_roles)
+        isolated_data_dir = Path(data_dir)
+        if case.global_memory_files:
+            global_memories_dir = isolated_data_dir / "memories"
+            global_memories_dir.mkdir(parents=True, exist_ok=True)
+            for filename, content in case.global_memory_files.items():
+                (global_memories_dir / filename).write_text(content, encoding="utf-8")
 
-        start = time.monotonic()
-        final_response = ""
-        error: str | None = None
+        original_get_klorb_data_dir = memory_common_module.get_klorb_data_dir
+        memory_common_module.get_klorb_data_dir = lambda: isolated_data_dir
         try:
-            final_response = session.send_turn(case.prompt)
-        except Exception as exc:
-            logger.warning("Eval case %r raised while running: %s", case.name, exc)
-            error = f"{type(exc).__name__}: {exc}"
-        duration_s = time.monotonic() - start
+            session_config = SessionConfig(
+                model=model, interactive=False, thinking_enabled=False,
+                workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
+                read_dirs=DirRules(allow=[workspace_root]),
+                write_dirs=DirRules(allow=[workspace_root]),
+                skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
+            process_config = ProcessConfig()
+            grants = compute_root_session_grants(
+                process_config, session_config, session_config.role_name)
+            if case.extra_tool_names:
+                grants.tool_registry.extra_visible_tools = case.extra_tool_names
+            session_config.skill_rules = grants.skill_rules
+            session = Session(
+                session_config, provider=provider, process_config=process_config,
+                tool_registry=grants.tool_registry,
+                effective_subagent_roles=grants.effective_subagent_roles)
 
-        tool_call_log = _tool_call_log(session)
-        tool_call_counts: dict[str, int] = {}
-        for entry in tool_call_log:
-            tool_call_counts[entry.name] = tool_call_counts.get(entry.name, 0) + 1
+            start = time.monotonic()
+            final_response = ""
+            error: str | None = None
+            try:
+                final_response = session.send_turn(case.prompt)
+            except Exception as exc:
+                logger.warning("Eval case %r raised while running: %s", case.name, exc)
+                error = f"{type(exc).__name__}: {exc}"
+            duration_s = time.monotonic() - start
 
-        failure_reason: str | None = None
-        soft_failure_reason: str | None = None
-        if error is None:
-            failure_reason = case.check(workspace_root, session)
-            if failure_reason is None and case.soft_check is not None:
-                soft_failure_reason = case.soft_check(workspace_root, session)
+            tool_call_log = _tool_call_log(session)
+            tool_call_counts: dict[str, int] = {}
+            for entry in tool_call_log:
+                tool_call_counts[entry.name] = tool_call_counts.get(entry.name, 0) + 1
 
-        encoding = _encoding_for_model(model)
-        generated_tokens = len(encoding.encode(final_response))
-        for entry in tool_call_log:
-            generated_tokens += len(encoding.encode(entry.arguments))
+            failure_reason: str | None = None
+            soft_failure_reason: str | None = None
+            if error is None:
+                failure_reason = case.check(workspace_root, session)
+                if failure_reason is None and case.soft_check is not None:
+                    soft_failure_reason = case.soft_check(workspace_root, session)
 
-        result = CaseResult(
-            name=case.name,
-            passed=error is None and failure_reason is None,
-            duration_s=duration_s,
-            num_tool_calls=len(tool_call_log),
-            tool_call_counts=tool_call_counts,
-            tool_call_log=tool_call_log,
-            final_response=final_response,
-            failure_reason=failure_reason,
-            error=error,
-            expected_tool_calls=case.expected_tool_calls,
-            soft_failure_reason=soft_failure_reason,
-            generated_tokens=generated_tokens,
-        )
+            encoding = _encoding_for_model(model)
+            generated_tokens = len(encoding.encode(final_response))
+            for entry in tool_call_log:
+                generated_tokens += len(encoding.encode(entry.arguments))
+
+            result = CaseResult(
+                name=case.name,
+                passed=error is None and failure_reason is None,
+                duration_s=duration_s,
+                num_tool_calls=len(tool_call_log),
+                tool_call_counts=tool_call_counts,
+                tool_call_log=tool_call_log,
+                final_response=final_response,
+                failure_reason=failure_reason,
+                error=error,
+                expected_tool_calls=case.expected_tool_calls,
+                soft_failure_reason=soft_failure_reason,
+                generated_tokens=generated_tokens,
+            )
+        finally:
+            memory_common_module.get_klorb_data_dir = original_get_klorb_data_dir
         if on_complete is not None:
             on_complete(result)
         return result

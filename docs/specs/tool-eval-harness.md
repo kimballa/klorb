@@ -116,6 +116,12 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
   `ALL_SUITES: list[EvalSuite]` — the registry `run_evals.py`'s `--suite`/`--list-suites` flags
   read from. A new suite for a different scenario group is added the same way: a new
   `EvalSuite(name=..., cases=[...])` constant, appended to `ALL_SUITES`.
+* `klorb/evals/memory_cases.py` holds the `"memory"` `EvalSuite` covering `ReadMemory`/
+  `EditMemory`/`CreateMemory` and the `MEMORY.md` table of contents (see docs/specs/memories.md).
+  Its cases seed the `global` namespace via `EvalCase.global_memory_files`, which `run_case()`
+  writes into a case-private temp directory it also repoints `klorb.tools.memory.common.
+  get_klorb_data_dir()` at for the case's duration — the `workspace` namespace instead uses the
+  ordinary `setup_files` (a bare `.klorb/memories/<filename>` path) with `workspace_trusted=True`.
 * `klorb/evals/report.py` renders a `list[CaseResult]` (plus an optional `tool_token_counts`) as
   a markdown report: `render_summary()`'s block (pass count, conditional-pass count, total
   duration, total/average tool calls), an optional "Tool definitions" section (each tool's name
@@ -226,6 +232,10 @@ outright.
   on both the resulting workspace file and `session.messages` (via `klorb.evals.harness.
   tool_call_args`), since filesystem state alone can't tell a genuine CreateSubagent/
   WaitForSubagent round trip apart from the operator simply doing the work itself.
+* `ReadMemory`/`EditMemory`/`CreateMemory` and the `MEMORY.md` table of contents (docs/specs/
+  memories.md) have their own `"memory"` `EvalSuite` in `klorb/evals/memory_cases.py`, covering
+  whether a model uses the auto-injected TOC content instead of re-reading it, pages past its
+  50-line truncation, and reacts to the 45-line overflow warning by compacting it.
 * The bash risk classifier (`klorb.permissions.risk_classifier`) has its own eval suite
   (`risk-classifier`) in `klorb/evals/risk_classifier_cases.py`, exercised via
   `RiskClassifierCase`/`run_risk_classifier_evaluation` rather than `EvalCase`/`run_evaluation`.
