@@ -51,6 +51,37 @@ def test_replaces_a_multiline_block(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result["filename"] == "notes.md"
 
 
+def test_editing_memory_md_at_the_warn_threshold_attaches_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "MEMORY.md", "Topic\n")
+    new_text = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 45))
+
+    result = EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "MEMORY.md",
+        "old_text": "Topic", "new_text": new_text,
+    })
+
+    assert result["new_total_lines"] == 45
+    assert "warning" in result
+    assert "45" in result["warning"]
+
+
+def test_editing_memory_md_under_the_warn_threshold_has_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "MEMORY.md", "Topic\nbody\n")
+
+    result = EditMemoryTool(context).apply({
+        "namespace": "global", "filename": "MEMORY.md",
+        "old_text": "body", "new_text": "new body",
+    })
+
+    assert "warning" not in result
+
+
 def test_old_text_not_found_names_read_memory_reread_hint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

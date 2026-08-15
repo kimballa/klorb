@@ -9,7 +9,9 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import (
+    MEMORY_TOC_FILENAME,
     memory_namespace_dir,
+    memory_toc_overflow_warning,
     read_memory_topic,
     require_workspace_namespace_accessible,
     validate_first_line_not_blank,
@@ -167,3 +169,22 @@ def test_require_workspace_namespace_accessible_allows_when_trusted(tmp_path: Pa
 
 def test_require_workspace_namespace_accessible_ignores_global_namespace(tmp_path: Path) -> None:
     require_workspace_namespace_accessible(_context(tmp_path, trusted=False), "global")  # no raise
+
+
+def test_memory_toc_overflow_warning_ignores_other_filenames() -> None:
+    assert memory_toc_overflow_warning("global", "notes.md", 1000) is None
+
+
+def test_memory_toc_overflow_warning_none_below_threshold() -> None:
+    assert memory_toc_overflow_warning("global", MEMORY_TOC_FILENAME, 44) is None
+
+
+def test_memory_toc_overflow_warning_present_at_threshold() -> None:
+    warning = memory_toc_overflow_warning("workspace", MEMORY_TOC_FILENAME, 45)
+
+    assert warning is not None
+    assert "45" in warning
+    assert "50" in warning
+    assert 'EditMemory(namespace="workspace", filename="MEMORY.md")' in warning
+    assert 'EditMemory(namespace="workspace", filename="...")' in warning
+    assert 'CreateMemory(namespace="workspace", filename="...")' in warning

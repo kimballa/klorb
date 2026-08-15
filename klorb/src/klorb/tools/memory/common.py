@@ -18,6 +18,18 @@ MEMORIES_DIRNAME = "memories"
 """Directory name holding memory files within either namespace's parent (`get_klorb_data_dir()`
 for `global`, `${workspace_root}/.klorb` for `workspace`) — see `memory_namespace_dir()`."""
 
+MEMORY_TOC_FILENAME = "MEMORY.md"
+"""Reserved filename, in each namespace, treated as a table of contents over that namespace's
+other memory files. See `MEMORY_TOC_AUTO_READ_LINES` and `memory_toc_overflow_warning()`."""
+
+MEMORY_TOC_AUTO_READ_LINES = 50
+"""How many of `MEMORY_TOC_FILENAME`'s leading lines `SessionMemoryMixin` reads automatically
+into the Memories interjection at the start of a session, without a `ReadMemory` call."""
+
+MEMORY_TOC_WARN_LINES = 45
+"""Line count at or above which `CreateMemory`/`EditMemory` attach a compact-it-down warning to
+their result for `MEMORY_TOC_FILENAME` — see `memory_toc_overflow_warning()`."""
+
 Namespace = Literal["global", "workspace"]
 
 NAMESPACE_SCHEMA_PROPERTY = {
@@ -93,6 +105,24 @@ def validate_first_line_not_blank(content: str, *, subject: str) -> None:
     if not first_line.strip():
         raise ValueError(
             f"{subject}'s first line is its topic and must not be blank")
+
+
+def memory_toc_overflow_warning(namespace: Namespace, filename: str, total_lines: int) -> str | None:
+    """Return a warning for `CreateMemory`/`EditMemory` to attach to their result when `filename`
+    is `MEMORY_TOC_FILENAME` and it now has `total_lines` lines, or `None` if a warning doesn't
+    apply — either because `filename` isn't `MEMORY_TOC_FILENAME`, or `total_lines` is still
+    comfortably under `MEMORY_TOC_WARN_LINES`.
+    """
+    if filename != MEMORY_TOC_FILENAME or total_lines < MEMORY_TOC_WARN_LINES:
+        return None
+    return (
+        f"{MEMORY_TOC_FILENAME} is now {total_lines} lines long. Only its first "
+        f"{MEMORY_TOC_AUTO_READ_LINES} lines are read automatically into your Memories "
+        f'interjection each session. Use EditMemory(namespace="{namespace}", '
+        f'filename="{MEMORY_TOC_FILENAME}") to compact it down, moving detail into an existing '
+        f'memory with EditMemory(namespace="{namespace}", filename="...") or a new one with '
+        f'CreateMemory(namespace="{namespace}", filename="...").'
+    )
 
 
 def read_memory_topic(path: Path) -> str:

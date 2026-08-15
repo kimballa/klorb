@@ -20,6 +20,10 @@ Both namespaces are flat: a memory tool's `filename` argument is a bare name (e.
 `user-preferences.md`), never a path, and no memory tool reads or writes a subdirectory of
 either namespace.
 
+`MEMORY.md` is a reserved filename, in each namespace, meant as a freeform table of contents
+over that namespace's other memory files rather than a place to record full detail — see
+"The MEMORY.md table of contents" below.
+
 ## How it works
 
 * `klorb/src/klorb/tools/memory/` is a dedicated subpackage, mirroring
@@ -123,6 +127,29 @@ either namespace.
   entirely in an untrusted workspace, and an empty namespace gets a `CreateMemory` nudge instead
   of an empty list. This saves the model an initial `ListMemories` round trip; any
   `ListMemories` failure just drops the interjection rather than surfacing an error.
+
+### The MEMORY.md table of contents
+
+`klorb.tools.memory.common.MEMORY_TOC_FILENAME` (`MEMORY.md`) is a reserved filename, in each
+namespace, with no special validation of its own beyond the ordinary `filename` rules — a model
+creates and edits it with `CreateMemory`/`EditMemory` exactly like any other memory. Two
+mechanics treat it specially:
+
+* `SessionMemoryMixin._read_memory_toc()` reads its leading `MEMORY_TOC_AUTO_READ_LINES` (50)
+  lines, per namespace, via `ReadMemory`, and folds that content, wrapped in a
+  `<MemoryTableOfContents namespace="...">` tag, directly into the `Memories` interjection
+  alongside the `filename`/`topic` catalog — so a model sees its table of contents without
+  spending a tool call on it. A missing `MEMORY.md` contributes nothing to the interjection; a
+  `ReadMemory` failure is logged and dropped, the same as a `ListMemories` failure. When
+  `ReadMemory` reports `truncated`, a trailing note names the exact `ReadMemory` call (with
+  `start_line=MEMORY_TOC_AUTO_READ_LINES + 1`) to read the rest, and nudges the model to move
+  content out via `EditMemory`/`CreateMemory` instead.
+* `klorb.tools.memory.common.memory_toc_overflow_warning()` returns a warning string once
+  `MEMORY.md` reaches `MEMORY_TOC_WARN_LINES` (45) lines — `CreateMemoryTool`/`EditMemoryTool`
+  attach it to their result's `warning` field, since content past line 50 stops being picked up
+  by the interjection automatically. It names the exact `EditMemory`/`CreateMemory` calls
+  (including the current `namespace`) to compact `MEMORY.md` itself or move detail into another
+  memory file.
 
 ## Configuration
 
