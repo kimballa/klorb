@@ -9,6 +9,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import (
     NAMESPACE_SCHEMA_PROPERTY,
     memory_namespace_dir,
+    memory_toc_overflow_warning,
     require_workspace_namespace_accessible,
     validate_first_line_not_blank,
     validate_memory_filename,
@@ -36,6 +37,9 @@ class CreateMemoryTool(Tool):
     validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
     I/O; a `workspace`-namespace create is additionally gated by `tools.memory.writePermission`
     -- a `global`-namespace create is always allowed.
+
+    Creating `MEMORY.md` at 45+ lines attaches a `warning` to the result urging the model to
+    compact it down (see `klorb.tools.memory.common.memory_toc_overflow_warning`).
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -117,6 +121,9 @@ class CreateMemoryTool(Tool):
             redactor=self._secret_redactor, session=self.context.session)
         result["namespace"] = namespace
         result["filename"] = filename
+        warning = memory_toc_overflow_warning(filename, result["total_lines"])
+        if warning is not None:
+            result["warning"] = warning
 
         logger.debug("CreateMemory %s/%s created (%d lines)", namespace, filename, result["total_lines"])
         return result

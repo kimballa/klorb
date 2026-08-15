@@ -9,6 +9,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.tools.memory.common import (
     NAMESPACE_SCHEMA_PROPERTY,
     memory_namespace_dir,
+    memory_toc_overflow_warning,
     require_workspace_namespace_accessible,
     validate_memory_filename,
 )
@@ -44,6 +45,9 @@ class EditMemoryTool(Tool):
     validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
     I/O; a `workspace`-namespace edit is additionally gated by `tools.memory.writePermission` --
     a `global`-namespace edit is always allowed.
+
+    Editing `MEMORY.md` to 45+ lines attaches a `warning` to the result urging the model to
+    compact it down (see `klorb.tools.memory.common.memory_toc_overflow_warning`).
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -135,6 +139,9 @@ class EditMemoryTool(Tool):
 
         result["namespace"] = namespace
         result["filename"] = filename
+        warning = memory_toc_overflow_warning(filename, result["new_total_lines"])
+        if warning is not None:
+            result["warning"] = warning
         logger.debug(
             "EditMemory %s/%s replaced %d line(s) at line %d of what is now a %d-line memory",
             namespace, filename, result["replaced_lines"], result["start_line"],

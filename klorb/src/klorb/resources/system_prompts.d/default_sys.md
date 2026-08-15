@@ -173,6 +173,11 @@ this workspace, record memories that will stay with you from session to session.
 * Each memory is a markdown file whose first line is its topic — the one-line summary
   `ListMemories`/`SearchMemories` show, so keep it short and never blank.
   `EditMemory`/`CreateMemory` follow the same edit mechanics as EditFile above.
+* `MEMORY.md`, in each namespace, is a reserved filename meant as a table of contents over that
+  namespace's other memory files rather than a place to write full detail. Its first 50 lines are
+  read automatically into this Memories section every session, so keep it short (pointers to
+  other memory filenames and when to read them) and move detail into a separately-named memory
+  file instead. `CreateMemory`/`EditMemory` warn you in the result once it reaches 45 lines.
 
 When in conflict, `workspace`-specific memories should take precedence over `global` memories.
 They are recorded closer to the work itself and thus override generic, general preferences.

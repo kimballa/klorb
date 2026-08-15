@@ -22,12 +22,6 @@
 
 ### Feature backlog
 
-* Add freeform `MEMORY.md` of up to about 50 lines in each namespace *also* put into the system interjection.
-  First 50 lines go into the system interjection. If it gets up to 45+ lines, the create/write tools
-  put a warning msg in the tool_response giving the line count, the 50 line auto-read limit, and
-  urging the agent to compact it down or move things to named files. The system prompt should say
-  that this is intended to be used as a table of contents over more specifically-named memory files.
-
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point.

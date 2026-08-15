@@ -48,6 +48,47 @@ def test_creates_a_new_memory_auto_creating_the_namespace_dir(
     assert result["created"] is True
 
 
+def test_creating_memory_md_under_the_warn_threshold_has_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 10))
+
+    result = CreateMemoryTool(context).apply({
+        "namespace": "global", "filename": "MEMORY.md", "content": content,
+    })
+
+    assert "warning" not in result
+
+
+def test_creating_memory_md_at_the_warn_threshold_attaches_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 45))
+
+    result = CreateMemoryTool(context).apply({
+        "namespace": "global", "filename": "MEMORY.md", "content": content,
+    })
+
+    assert result["total_lines"] == 45
+    assert "warning" in result
+    assert "45" in result["warning"]
+
+
+def test_creating_a_regular_memory_past_45_lines_has_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 100))
+
+    result = CreateMemoryTool(context).apply({
+        "namespace": "global", "filename": "notes.md", "content": content,
+    })
+
+    assert "warning" not in result
+
+
 def test_raises_if_memory_already_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     context = _context(tmp_path, monkeypatch)
     namespace_dir = memory_namespace_dir(context, "global")
