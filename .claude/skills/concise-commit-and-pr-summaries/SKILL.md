@@ -10,6 +10,15 @@ explaining the reasoning behind each one, and a paragraph-per-bug account of eve
 fixed along the way. The diff already shows all of that in full, reviewable detail. The message's
 job is to orient a reader in a few seconds, not re-derive the diff in prose.
 
+## PR Summary: a 1-2 sentence synthesis, not a bullet list
+
+The PR Summary section is prose, not an itemized list: 1-2 sentences that say what the change does
+and why, the same bar as a commit message. Default to zero bullets. When Claude drafts a bulleted
+list anyway, the first bullet is usually the only one that reads like an actual summary, and the
+rest get manually deleted before merge — a sign the bullet list was never a more-detailed version
+of the summary, just a draft that hadn't been cut yet. Skip straight to the sentence the first
+bullet was already reaching for.
+
 ## Draft short the first time — don't write long then trim
 
 Writing everything that happened and then editing it down is itself the failure mode, not a fix
@@ -79,12 +88,21 @@ What the repo owner actually kept after editing it down before merging:
       meaning
 ```
 
-Note what disappeared entirely, not just shortened: the per-rule rationale sub-bullets (that
-reasoning already lives as comments in `.markdownlint-cli2.jsonc` — restating it in the PR body
-is a second copy that will drift), the bug-by-bug narrative (collapsed to one line — the diff is
-the actual record), and the two smallest accompanying changes (the vscode extension recommendation
-and the `TODO.md` bullet removal) — small enough to be self-evident from skimming the diff, not
-worth their own bullet.
+That's still a hand-edit away from the bar this skill now enforces. Under the 1-2 sentence rule,
+the same change is:
+
+```text
+## Summary
+
+Wires `markdownlint-cli2` into `make lint` (repo root and `klorb/`), tuned to this repo's existing
+Markdown conventions, and fixes the pre-existing lint violations it surfaced.
+```
+
+Note what disappears entirely, not just shortens: the per-rule rationale sub-bullets (that
+reasoning already lives as comments in `.markdownlint-cli2.jsonc` — restating it in the PR body is
+a second copy that will drift), the bug-by-bug narrative, the per-target breakdown, and the two
+smallest accompanying changes (the vscode extension recommendation and the `TODO.md` bullet
+removal) — all collapse into the one sentence above.
 
 ## Commit messages: 1-2 sentences, not a changelog
 
@@ -101,8 +119,8 @@ These are hard caps to draft against, not targets to aim near and drift past:
 
 * Commit body: 1-2 sentences. Not "1-2 sentences, plus a few more for this particular case" —
   every case feels particular while you're writing it.
-* PR Summary: 3-5 bullets. If a change genuinely has more than 5 load-bearing facts, that's rare
-  enough to be worth double-checking rather than the normal case.
+* PR Summary: 1-2 sentences, prose, no bullets. Not "a short bullet list" — a list is still a list
+  at one item or five.
 * Test plan: one line per distinct check actually run, no parenthetical explaining what the check
   covers.
 
@@ -111,19 +129,20 @@ every change feels that way while its author is still holding the whole diff in 
 evidence the draft is still narrating rather than summarizing. Go back and cut; don't write a
 sentence justifying why this instance deserved to be longer.
 
-## What earns a line, and what doesn't
+## What earns a mention, and what doesn't
 
-* One bullet per **user-visible change or target** (a new Makefile target, a new config file, a
-  new dependency). Not one bullet per *decision inside* that change — rule-by-rule rationale,
-  per-file rewording choices, and similar reasoning belong in code/config comments, where they
-  stay next to the thing they explain instead of drifting out of sync with a static PR body.
+* The Summary sentence(s) name the change and its purpose — not each file, target, or dependency
+  it touched to get there. Rule-by-rule rationale, per-file rewording choices, and similar
+  reasoning belong in code/config comments, where they stay next to the thing they explain instead
+  of drifting out of sync with a static PR body.
 * Enumerate individual bugs found and fixed only when a reviewer needs bug-by-bug detail to judge
-  risk (e.g., a security fix where each instance matters). Otherwise, one summary line ("fixed
-  existing lint violations throughout") plus the diff itself is enough — don't re-narrate what
-  `git diff` already shows.
-* Skip a bullet entirely for changes small and self-evident enough that a reviewer skimming the
-  diff wouldn't need it flagged. Reserve bullets for things a reviewer would otherwise have to
-  hunt for.
+  risk (e.g., a security fix where each instance matters) — and even then, prefer folding it into
+  the sentence ("...and fixes the lint violations it surfaced") over a bullet. The diff is the
+  record; don't re-narrate what `git diff` already shows.
+* A bullet list is the escape hatch for the rare case in "What still earns a line" below, not the
+  default shape of the section. When that escape hatch is used, it stays short: the 1-2 sentence
+  synthesis first, then only the genuinely risky items as their own lines — never a bullet per
+  file or per target.
 * Test plan: one short line per check. No parenthetical elaboration of what each check covers —
   the check's own name should already say that.
 
@@ -150,17 +169,21 @@ from a first read.
 Brevity is not a license to bury risk. Anything that changed *behavior* beyond the stated
 feature — hand-fixed content where an automated tool would have corrupted it, a decision to leave
 a safety-relevant rule enabled rather than disabling it, a destructive or hard-to-reverse
-operation — still gets called out explicitly, even in an otherwise terse summary. The goal is
-*signal density*, not minimum length: cut the restated rationale and the bug-by-bug travelogue,
-never the one sentence a reviewer actually needs to evaluate risk.
+operation — still gets its own explicit line below the synthesis sentence, even in an otherwise
+one-sentence summary. The goal is *signal density*, not minimum length: cut the restated rationale
+and the bug-by-bug travelogue, never the one sentence a reviewer actually needs to evaluate risk.
+This is the only case where the Summary grows past 1-2 sentences, and it still isn't a bullet per
+file or per target — one line per genuinely risky fact, nothing else.
 
 ## Checklist before sending a commit message or PR body
 
-* [ ] Did I write the one-breath summary sentence *first*, before drafting any bullets?
-* [ ] Is each Summary bullet one line naming a change, not a change plus its internal rationale?
-* [ ] Did I enumerate individual bugs/files where one summary line (trusting the diff) would do?
-* [ ] Did I drop bullets for small, self-evident accompanying changes?
+* [ ] Did I write the one-breath summary sentence *first*, before drafting anything else?
+* [ ] Is the PR Summary 1-2 sentences of prose, with no bullet list unless "What still earns a
+      line" applies?
+* [ ] Did I enumerate individual bugs/files where one summary sentence (trusting the diff) would
+      do?
+* [ ] Did I drop mentions of small, self-evident accompanying changes?
 * [ ] Is the commit message itself 1-2 sentences, focused on *why*?
-* [ ] Does the draft fit the budget above (commit: 1-2 sentences; PR Summary: 3-5 bullets)? If not,
-      cut — don't rationalize the overage.
+* [ ] Does the draft fit the budget above (commit: 1-2 sentences; PR Summary: 1-2 sentences, no
+      bullets)? If not, cut — don't rationalize the overage.
 * [ ] Does anything genuinely risky or non-obvious still get its own explicit line?
