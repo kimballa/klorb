@@ -194,7 +194,7 @@ config) has one place to live.
   * `run_one_shot(prompt: str, on_chunk: ... = None, on_thinking_chunk: ... = None) -> str`
     is a thin wrapper around `send_turn()`, named for the non-interactive entry point so
     callers don't need to know it's "just" a single turn.
-* `klorb.cli.main()` (`klorb/src/klorb/cli.py`) builds a `SessionConfig` from parsed CLI
+* `klorb.cli.main()` (`klorb/src/klorb/cli/main.py`) builds a `SessionConfig` from parsed CLI
   arguments (`--model`, the resolved `--interactive` value, `--max-tool-calls-per-turn`
   (overriding the configured default when given), the
   resolved `permission_framework` (see below), and the log path returned by

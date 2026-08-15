@@ -41,7 +41,7 @@
   ]
 
 [project.scripts]
-  klorb = "klorb.cli:main"
+  klorb = "klorb.cli.main:main"
 
 [project.optional-dependencies]
   # Development environment-specific dependencies.

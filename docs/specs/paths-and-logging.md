@@ -133,7 +133,7 @@ paths or calling `logging.basicConfig` itself.
     crash log path (or a message saying the file couldn't be written, if `CrashLogTee.
     opened_log_path()` is `None`) — see [the crash logging ADR](
     ../adrs/tee-textual-crash-output-to-a-tmp-file.md).
-* `klorb.cli.main()` (`klorb/src/klorb/cli.py`) calls `load_dotenv()` first, so a `.env`
+* `klorb.cli.main()` (`klorb/src/klorb/cli/main.py`) calls `load_dotenv()` first, so a `.env`
   file can supply `KLORB_STATE_DIR` (or the other `KLORB_*` directory env vars) before
   logging is set up, then immediately calls `configure_minimal_logging()` as a stopgap before
   argument parsing or subcommand dispatch (`init`/`system-prompt`/`models`/`show-config`/

@@ -102,7 +102,7 @@ mechanism the rest of the harness will build on to talk to models.
     reshaped into the SDK's `{"id", "type": "function", "function": {"name", "arguments"}}`
     shape); `role="tool_response"` becomes `{"role": "tool", "tool_call_id": ...,
     "content": ...}`.
-* `klorb.cli` (`klorb/src/klorb/cli.py`) is the CLI entry point, registered as the `klorb`
+* `klorb.cli` (`klorb/src/klorb/cli/`) is the CLI entry point, registered as the `klorb`
   console script in `pyproject.toml`. It loads `.env` via `python-dotenv`, parses a
   `-m`/`--message` flag holding the prompt and an optional `--model` flag, constructs an
   `OpenRouterApiProvider` and a [[tool-framework]] `ToolRegistry` (from the loaded
