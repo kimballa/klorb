@@ -13,9 +13,11 @@ job is to orient a reader in a few seconds, not re-derive the diff in prose.
 ## PR Summary: a 1-2 sentence synthesis, not a bullet list
 
 The PR Summary section is prose, not an itemized list: 1-2 sentences that say what the change does
-and why, the same bar as a commit message. Default to zero bullets. The repo owner's actual
-workflow is deleting everything after the first bullet before merging — so a bulleted list isn't a
-more-detailed version of the summary, it's discarded work. Don't draft one.
+and why, the same bar as a commit message. Default to zero bullets. When Claude drafts a bulleted
+list anyway, the first bullet is usually the only one that reads like an actual summary, and the
+rest get manually deleted before merge — a sign the bullet list was never a more-detailed version
+of the summary, just a draft that hadn't been cut yet. Skip straight to the sentence the first
+bullet was already reaching for.
 
 ## Draft short the first time — don't write long then trim
 
@@ -68,14 +70,16 @@ have been wrong, required hand-fixing) a handful of pre-existing Markdown bugs:
       meaning (and hand-fixed the cases above where it didn't).
 ```
 
-What the repo owner actually kept after editing it down before merging — a single bullet, because
-that's all that survived, then cut down further still:
+What the repo owner actually kept after editing it down before merging:
 
 ```text
 ## Summary
 
-Wires `markdownlint-cli2` into `make lint` (repo root and `klorb/`), tuned to this repo's existing
-Markdown conventions, and fixes the pre-existing lint violations it surfaced.
+* Installs `markdownlint-cli2` via npm in `make cloud_setup`.
+* Adds `.markdownlint-cli2.jsonc`
+* Adds a top-level `make lint` target
+* Adds a markdownlint step to `klorb/Makefile`'s `lint` target
+* Fix existing md lint bugs throughout.
 
 ## Test plan
 
@@ -84,11 +88,21 @@ Markdown conventions, and fixes the pre-existing lint violations it surfaced.
       meaning
 ```
 
-Note what disappeared entirely: every bullet, not just the sub-bullets. The per-rule rationale
-already lives as comments in `.markdownlint-cli2.jsonc` — restating it in the PR body is a second
-copy that will drift. The bug-by-bug narrative, the per-target breakdown, the accompanying
-vscode-extension and `TODO.md` changes — all of it collapses into the one sentence above. The diff
-is the record; the Summary is an orientation, not a table of contents for it.
+That's still a hand-edit away from the bar this skill now enforces. Under the 1-2 sentence rule,
+the same change is:
+
+```text
+## Summary
+
+Wires `markdownlint-cli2` into `make lint` (repo root and `klorb/`), tuned to this repo's existing
+Markdown conventions, and fixes the pre-existing lint violations it surfaced.
+```
+
+Note what disappears entirely, not just shortens: the per-rule rationale sub-bullets (that
+reasoning already lives as comments in `.markdownlint-cli2.jsonc` — restating it in the PR body is
+a second copy that will drift), the bug-by-bug narrative, the per-target breakdown, and the two
+smallest accompanying changes (the vscode extension recommendation and the `TODO.md` bullet
+removal) — all collapse into the one sentence above.
 
 ## Commit messages: 1-2 sentences, not a changelog
 
