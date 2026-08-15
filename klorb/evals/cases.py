@@ -34,6 +34,7 @@ from klorb.process_config import DEFAULT_READ_FILE_MAX_LINES
 from klorb.session import Session
 
 from .harness import EvalCase, EvalSuite, tool_call_args
+from .memory_cases import MEMORY
 from .subagent_cases import SUBAGENTS
 
 
@@ -806,8 +807,9 @@ FILE_TOOLS_CASES: list[EvalCase] = [
 
 FILE_TOOLS = EvalSuite(name="file-tools", cases=FILE_TOOLS_CASES)
 
-ALL_SUITES: list[EvalSuite] = [FILE_TOOLS, SUBAGENTS]
+ALL_SUITES: list[EvalSuite] = [FILE_TOOLS, SUBAGENTS, MEMORY]
 """Every known `EvalSuite`, keyed by `EvalSuite.name` for `run_evals.py`'s `--suite`/
 `--list-suites` flags -- append a new suite here as one more `EvalSuite` entry when a
 scenario group doesn't belong under `file-tools` (e.g. `subagent_cases.SUBAGENTS`, covering
-CreateSubagent/WaitForSubagent)."""
+CreateSubagent/WaitForSubagent, or `memory_cases.MEMORY`, covering the Memory tools and the
+MEMORY.md table of contents)."""
