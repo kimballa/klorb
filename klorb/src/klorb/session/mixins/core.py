@@ -75,14 +75,19 @@ if TYPE_CHECKING:
     # needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.config import EventConfig, FileSystemModifiedEventConfig, TimerEventConfig
     from klorb.hooks.hook_api import EventInput, HookOutput
+    # `klorb.search_index.indexer` imports `klorb.tools.util.gitignore`, and `klorb.session`
+    # doesn't otherwise import anything from `klorb.tools.util`
+    from klorb.search_index.indexer import WorkspaceIndexer
     # isort: on
 
 logger = logging.getLogger(__name__)
 
 _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT = "FileSystemWatcher"
 _TIMER_SCHEDULER_TEARDOWN_SUBJECT = "TimerScheduler"
+_WORKSPACE_INDEXER_TEARDOWN_SUBJECT = "WorkspaceIndexer"
 _INFRASTRUCTURE_TEARDOWN_SUBJECTS = frozenset({
-    _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT, _TIMER_SCHEDULER_TEARDOWN_SUBJECT})
+    _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT, _TIMER_SCHEDULER_TEARDOWN_SUBJECT,
+    _WORKSPACE_INDEXER_TEARDOWN_SUBJECT})
 """Teardown subjects `_reset_state()` must never touch: workspace/process-level resources
 registered once at root-session start (`_start_workspace_event_watchers`) and torn down only by
 a real `close()`, never recreated mid-session -- unlike `Scratchpad`/`Bash`'s persistent shell,
@@ -269,6 +274,16 @@ class SessionCoreMixin(SessionBase):
         self._session_claimed = False
         """Whether this session currently owns a `sessions/<subdir>/` directory (holds its
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
+        self._workspace_indexer = (
+            parent.workspace_indexer if parent is not None
+            else self._create_workspace_indexer(config)
+        )
+        """The local search index backing semantic search, or `None` if this is an untrusted
+        workspace or construction failed. Built once per root session and shared with subagents. Not
+        touched by `reset_session()`/`_reset_state()` -- a `/clear` keeps the same workspace, so
+        there's nothing to rebuild."""
+        if self._workspace_indexer is not None and parent is None:
+            self.register_teardown(_WORKSPACE_INDEXER_TEARDOWN_SUBJECT, self._workspace_indexer.close)
 
     def _reset_state(self, *, scratchpad_path: str | None = None) -> None:
         """Reset every conversation-scoped field to a freshly constructed `Session`'s own value.
@@ -322,6 +337,29 @@ class SessionCoreMixin(SessionBase):
             del self._teardown_callbacks[subject]
         self.scratchpad = Scratchpad(scratchpad_path)
         self.register_teardown("Scratchpad", self.scratchpad.cleanup)
+
+    @staticmethod
+    def _create_workspace_indexer(config: SessionConfig) -> "WorkspaceIndexer | None":
+        """Construct and `start()` a `WorkspaceIndexer` for `config.workspace.path`, or return
+        `None` if `search_workspace_index_enabled` is off, the workspace is untrusted, the bundled
+        embedding model isn't installed (`klorb init` never ran), or construction itself fails."""
+        if not config.search_workspace_index_enabled or not config.workspace.trusted:
+            return None
+        from klorb.search_index.embedding import embedding_model_available
+        if not embedding_model_available():
+            # Checked before constructing anything, not just before the background scan: a
+            # `WorkspaceIndexer`/`SearchIndexStore` unconditionally creates `.klorb/index/` and
+            # opens a real SQLite file the moment it's constructed, so an environment that never
+            # ran `klorb init` must never reach that constructor at all.
+            return None
+        from klorb.search_index.indexer import WorkspaceIndexer
+        try:
+            indexer = WorkspaceIndexer(config.workspace.path)
+        except OSError:
+            logger.warning("Could not construct workspace search index.", exc_info=True)
+            return None
+        indexer.start()
+        return indexer
 
     @staticmethod
     def _create_read_file_core(max_lines: int, max_line_length: int) -> "ReadFileCore":
@@ -423,6 +461,11 @@ class SessionCoreMixin(SessionBase):
     def skill_catalog_registry(self) -> SkillCatalogRegistry:
         """Return this session's own `SkillCatalogRegistry` -- see `klorb.tools.skill.catalog`."""
         return self._skill_catalog_registry
+
+    @property
+    def workspace_indexer(self) -> "WorkspaceIndexer | None":
+        """Return this session's `WorkspaceIndexer` or None."""
+        return self._workspace_indexer
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:

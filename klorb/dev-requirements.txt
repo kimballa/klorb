@@ -33,12 +33,13 @@ certifi==2026.7.22
     #   httpcore
     #   httpx
     #   requests
-charset-normalizer==3.4.9
+charset-normalizer==3.5.0
     # via
     #   markitdown
     #   requests
 click==8.4.2
     # via
+    #   huggingface-hub
     #   magika
     #   textual-dev
 coolname==5.0.0
@@ -51,6 +52,10 @@ detect-secrets==1.5.0
     # via klorb (pyproject.toml)
 distro==1.9.0
     # via openai
+fastembed==0.8.0
+    # via klorb (pyproject.toml)
+filelock==3.32.3
+    # via huggingface-hub
 filetype==1.2.0
     # via klorb (pyproject.toml)
 flake8==7.3.0
@@ -75,14 +80,23 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
+fsspec==2026.7.0
+    # via huggingface-hub
 h11==0.16.0
     # via httpcore
+hf-xet==1.6.0
+    # via huggingface-hub
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via
     #   klorb (pyproject.toml)
+    #   huggingface-hub
     #   openai
+huggingface-hub==1.27.0
+    # via
+    #   fastembed
+    #   tokenizers
 idna==3.18
     # via
     #   anyio
@@ -105,6 +119,8 @@ librt==0.15.0
     # via mypy
 linkify-it-py==2.1.0
     # via markdown-it-py
+loguru==0.7.3
+    # via fastembed
 magika==0.6.3
     # via markitdown
 markdown-it-py==4.2.0
@@ -124,27 +140,34 @@ mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
+mmh3==5.2.1
+    # via fastembed
 msgpack==1.2.1
     # via textual-dev
 multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-mypy==2.3.0
+mypy==2.3.1
     # via klorb (pyproject.toml)
 mypy-extensions==1.1.0
     # via mypy
-numpy==2.5.1
+numpy==2.5.2
     # via
+    #   klorb (pyproject.toml)
+    #   fastembed
     #   magika
     #   onnxruntime
 onnxruntime==1.28.0
-    # via magika
-openai==2.53.0
+    # via
+    #   fastembed
+    #   magika
+openai==2.54.0
     # via klorb (pyproject.toml)
 packaging==26.3
     # via
     #   klorb (pyproject.toml)
+    #   huggingface-hub
     #   onnxruntime
     #   pytest
 pathspec==1.1.1
@@ -154,10 +177,12 @@ pathspec==1.1.1
 pep8-naming==0.15.1
     # via klorb (pyproject.toml)
 pillow==11.3.0
-    # via klorb (pyproject.toml)
+    # via
+    #   klorb (pyproject.toml)
+    #   fastembed
 pip==26.2.1
     # via klorb (pyproject.toml)
-platformdirs==4.11.1
+platformdirs==4.11.3
     # via textual
 pluggy==1.6.0
     # via pytest
@@ -167,6 +192,8 @@ propcache==0.5.2
     #   yarl
 protobuf==7.35.1
     # via onnxruntime
+py-rust-stemmers==0.1.8
+    # via fastembed
 pycodestyle==2.14.0
     # via
     #   klorb (pyproject.toml)
@@ -187,6 +214,8 @@ pygments==2.20.0
     #   pytest
     #   rich
     #   textual
+pysqlite3-binary==0.5.4.post2
+    # via klorb (pyproject.toml)
 pytest==9.1.1
     # via
     #   klorb (pyproject.toml)
@@ -206,11 +235,13 @@ pyyaml==6.0.3
     # via
     #   klorb (pyproject.toml)
     #   detect-secrets
+    #   huggingface-hub
 regex==2026.7.19
     # via tiktoken
 requests==2.34.2
     # via
     #   detect-secrets
+    #   fastembed
     #   markitdown
     #   tiktoken
 rich==15.0.0
@@ -227,6 +258,8 @@ sniffio==1.3.1
     # via openai
 soupsieve==2.9.2
     # via beautifulsoup4
+sqlite-vec==0.1.9
+    # via klorb (pyproject.toml)
 textual==8.2.8
     # via
     #   klorb (pyproject.toml)
@@ -238,11 +271,22 @@ textual-serve==1.1.3
     # via textual-dev
 tiktoken==0.13.0
     # via klorb (pyproject.toml)
+tokenizers==0.23.1
+    # via fastembed
 tqdm==4.70.0
-    # via openai
+    # via
+    #   fastembed
+    #   huggingface-hub
+    #   openai
+tree-sitter==0.25.0
+    # via klorb (pyproject.toml)
+tree-sitter-python==0.25.0
+    # via klorb (pyproject.toml)
+tree-sitter-typescript==0.23.2
+    # via klorb (pyproject.toml)
 types-croniter==6.2.4.20260711
     # via klorb (pyproject.toml)
-types-pyyaml==6.0.12.20260724
+types-pyyaml==6.0.12.20260815
     # via klorb (pyproject.toml)
 typing-extensions==4.16.0
     # via
@@ -251,6 +295,7 @@ typing-extensions==4.16.0
     #   anyio
     #   beautifulsoup4
     #   flake8-noqa
+    #   huggingface-hub
     #   mypy
     #   openai
     #   pydantic
@@ -259,13 +304,13 @@ typing-extensions==4.16.0
     #   textual
     #   textual-dev
     #   typing-inspection
-typing-inspection==0.4.2
+typing-inspection==0.4.4
     # via pydantic
 uc-micro-py==2.0.0
     # via linkify-it-py
 urllib3==2.7.0
     # via requests
-uv==0.12.3
+uv==0.12.5
     # via klorb (pyproject.toml)
 watchdog==6.0.0
     # via klorb (pyproject.toml)

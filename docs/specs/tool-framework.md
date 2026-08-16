@@ -263,9 +263,15 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `detail_view()` override, same reasoning as `ReplaceAll`.
 * `klorb.tools.grep.GrepTool` (`klorb/src/klorb/tools/grep.py`), name `Grep`. Recursively
   searches the directory tree rooted at `dirname` (`""` means the whole project root) for lines
-  matching any of `queries` — each matched as a literal substring by default, or as a distinct
-  Python regular expression when `is_regex` is true (an invalid regex raises `ValueError`); a
-  line matching any one query counts as a hit, equivalent to `grep -e query1 -e query2 ...`.
+  matching any of `queries` — each matched as a literal substring under `search_mode` `"literal"`
+  (the default) or `"semantic"`, or as a distinct Python regular expression when `search_mode` is
+  `"regex"` (an invalid regex raises `ValueError`); a line matching any one query counts as a hit,
+  equivalent to `grep -e query1 -e query2 ...`. `search_mode="semantic"` additionally merges in up
+  to `top_k` (default 10) chunk-level hits from the workspace's local hybrid search index (see
+  docs/specs/local-search-index.md), scoped by the same `dirname`/`file_glob` — a file a semantic
+  hit contributed to carries `match_kind` (`"literal"`/`"semantic"`/`"literal+semantic"`) and
+  `score`; raises `ToolCallError` if the index isn't available. See
+  docs/adrs/00193-grep-search-mode-adds-semantic-hits-via-workspace-index.md.
   `case_insensitive` and the optional `file_glob` (matched against each file's bare name, e.g.
   `"*.py"`) narrow the search further. Walks via `klorb.tools.util.walk_readable_tree()`
   (see "Recursive tree walks" below) rather than a single `resolve_and_evaluate_read()` call,
@@ -277,7 +283,7 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   reported as separately-overlapping results. At most
   `context.process_config.grep_max_results` matching lines (default
   `process_config.DEFAULT_GREP_MAX_RESULTS`, 500) are returned per call. The result is a dict:
-  `root` (the resolved search root), `queries`, `is_regex`, `case_insensitive`, `file_glob`,
+  `root` (the resolved search root), `queries`, `search_mode`, `case_insensitive`, `file_glob`,
   `context_lines`, `files` (a list of `{filename, lines}`, one entry per matching file), `match_count`,
   and `truncated`. Each `lines` entry is a compact dense-format string — `"*42|matched text"` or
   `" 41|context text"`, a leading `*`/space match marker, the 1-based line number, a `|`, and the

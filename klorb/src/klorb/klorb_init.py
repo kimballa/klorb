@@ -24,6 +24,7 @@ from typing import Literal
 
 from klorb.paths import get_klorb_data_dir
 from klorb.process_config import etc_config_path, user_config_path
+from klorb.search_index.embedding import install_embedding_model
 from klorb.token_estimate import install_tiktoken_cache
 
 RESOURCE_DATA_RESOURCE_NAME = "data"
@@ -180,6 +181,19 @@ def copy_tiktoken_cache() -> StepResult:
     return StepResult(messages)
 
 
+def copy_embedding_model() -> StepResult:
+    """Copy the packaged local-search-index embedding model into `klorb.search_index.embedding.
+    embedding_model_target_dir()` (`$KLORB_DATA_DIR/embedding-model`), the same
+    always-copy/no-`force`-gate treatment `copy_tiktoken_cache()` gets and for the same reason —
+    see docs/specs/local-search-index.md. Raises `InitError` if the target can't be created or
+    written."""
+    try:
+        messages = install_embedding_model()
+    except OSError as exc:
+        raise InitError(f"Failed to copy embedding model: {exc}") from exc
+    return StepResult(messages)
+
+
 def copy_resource_data() -> StepResult:
     """Recursively copies the packaged `klorb.resources/data/` resource tree into
     `get_klorb_data_dir()` itself, creating it as needed. No `force` gate, unlike
@@ -200,10 +214,10 @@ def copy_resource_data() -> StepResult:
 
 def run_init(scope: InitScope, *, force: bool) -> list[str]:
     """Run every `klorb init` step for `scope` — write the starter config file, create the
-    executable symlink, copy the packaged tiktoken cache tree, then copy the packaged resource
-    data tree — stopping at the first one that raises `InitError` rather than attempting the
-    next. Refuses a `"system"` scope outright, before any step, unless running as root
-    (effective uid 0).
+    executable symlink, copy the packaged tiktoken cache tree, copy the packaged embedding model,
+    then copy the packaged resource data tree — stopping at the first one that raises `InitError`
+    rather than attempting the next. Refuses a `"system"` scope outright, before any step, unless
+    running as root (effective uid 0).
 
     Returns the combined, ordered progress messages from every step that ran. Neither
     scoped step's own "already exists; not overwriting" outcome is an error: each is
@@ -211,10 +225,12 @@ def run_init(scope: InitScope, *, force: bool) -> list[str]:
     init` and see the other steps still complete.
     """
     if scope == "system" and os.geteuid() != 0:
-        raise InitError(f"klorb init --system must be run as root (target: {config_target_path(scope)}).")
+        raise InitError(
+            f"klorb init --system must be run as root (target: {config_target_path(scope)}).")
 
     messages = list(write_config_file(scope, force=force).messages)
     messages.extend(create_symlink(scope, force=force).messages)
     messages.extend(copy_tiktoken_cache().messages)
+    messages.extend(copy_embedding_model().messages)
     messages.extend(copy_resource_data().messages)
     return messages

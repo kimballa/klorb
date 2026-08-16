@@ -127,6 +127,9 @@ class SessionConfig(BaseModel):
     memory_delete_permission: Verdict = DEFAULT_MEMORY_DELETE_PERMISSION
     """Governs `ForgetMemory` for the `workspace` namespace only -- same placement rationale and
     `global`-namespace exemption as `memory_write_permission`."""
+    search_workspace_index_enabled: bool = True
+    """Whether `Session` builds a local hybrid (BM25 + vector KNN) search index for the workspace.
+    """
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
     (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult

@@ -13,6 +13,7 @@ from klorb.klorb_init import (
     InitError,
     StepResult,
     config_target_path,
+    copy_embedding_model,
     copy_resource_data,
     copy_tiktoken_cache,
     create_symlink,
@@ -205,6 +206,10 @@ def test_run_init_runs_config_then_symlink_then_tiktoken_cache_then_resource_dat
         call_order.append("tiktoken-cache")
         return StepResult(["tiktoken-cache-msg"])
 
+    def _fake_copy_embedding_model() -> StepResult:
+        call_order.append("embedding-model")
+        return StepResult(["embedding-model-msg"])
+
     def _fake_copy_resource_data() -> StepResult:
         call_order.append("resource-data")
         return StepResult(["resource-data-msg"])
@@ -212,12 +217,15 @@ def test_run_init_runs_config_then_symlink_then_tiktoken_cache_then_resource_dat
     monkeypatch.setattr(klorb_init, "write_config_file", _fake_write_config_file)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
     monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
+    monkeypatch.setattr(klorb_init, "copy_embedding_model", _fake_copy_embedding_model)
     monkeypatch.setattr(klorb_init, "copy_resource_data", _fake_copy_resource_data)
 
     messages = run_init("user", force=False)
 
-    assert call_order == ["config", "symlink", "tiktoken-cache", "resource-data"]
-    assert messages == ["config-msg", "symlink-msg", "tiktoken-cache-msg", "resource-data-msg"]
+    assert call_order == ["config", "symlink", "tiktoken-cache", "embedding-model", "resource-data"]
+    assert messages == [
+        "config-msg", "symlink-msg", "tiktoken-cache-msg", "embedding-model-msg", "resource-data-msg",
+    ]
 
 
 def test_run_init_stops_at_first_error_without_attempting_later_steps(
@@ -236,6 +244,10 @@ def test_run_init_stops_at_first_error_without_attempting_later_steps(
         later_steps_called.append("tiktoken-cache")
         return StepResult([])
 
+    def _fake_copy_embedding_model() -> StepResult:
+        later_steps_called.append("embedding-model")
+        return StepResult([])
+
     def _fake_copy_resource_data() -> StepResult:
         later_steps_called.append("resource-data")
         return StepResult([])
@@ -243,6 +255,7 @@ def test_run_init_stops_at_first_error_without_attempting_later_steps(
     monkeypatch.setattr(klorb_init, "write_config_file", _fail)
     monkeypatch.setattr(klorb_init, "create_symlink", _fake_create_symlink)
     monkeypatch.setattr(klorb_init, "copy_tiktoken_cache", _fake_copy_tiktoken_cache)
+    monkeypatch.setattr(klorb_init, "copy_embedding_model", _fake_copy_embedding_model)
     monkeypatch.setattr(klorb_init, "copy_resource_data", _fake_copy_resource_data)
 
     with pytest.raises(InitError, match="boom"):
@@ -267,6 +280,24 @@ def test_copy_tiktoken_cache_wraps_os_error_as_init_error(monkeypatch: pytest.Mo
 
     with pytest.raises(InitError, match="disk full"):
         copy_tiktoken_cache()
+
+
+def test_copy_embedding_model_returns_install_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(klorb_init, "install_embedding_model", lambda: ["copied-msg"])
+
+    result = copy_embedding_model()
+
+    assert result.messages == ["copied-msg"]
+
+
+def test_copy_embedding_model_wraps_os_error_as_init_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fail() -> list[str]:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(klorb_init, "install_embedding_model", _fail)
+
+    with pytest.raises(InitError, match="disk full"):
+        copy_embedding_model()
 
 
 def test_copy_resource_data_copies_packaged_tree_into_klorb_data_dir(

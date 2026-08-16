@@ -300,6 +300,7 @@ SESSION_KEY_MAP: dict[str, str] = {
     "tools.hooks.maxChainedTurns": "max_chained_hook_turns",
     "tools.memory.writePermission": "memory_write_permission",
     "tools.memory.deletePermission": "memory_delete_permission",
+    "search.workspaceIndex.enabled": "search_workspace_index_enabled",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
@@ -653,7 +654,8 @@ def _expand_rule_block_macros(
         if not isinstance(entries, list):
             continue
         rule_block[category] = [
-            expand_macros(entry, macros=macros, forbid_char=forbid_char) if isinstance(entry, str) else entry
+            expand_macros(entry, macros=macros, forbid_char=forbid_char) if isinstance(
+                entry, str) else entry
             for entry in entries
         ]
 

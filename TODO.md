@@ -122,8 +122,10 @@
 
 * Context auto-compaction
 
-* Vector database indexing of skills and memories for fuzzier search of both.
-  * ... and then do vectordb indexing of the codebase, too.
+* Vector database indexing of skills and memories for fuzzier search of both (see
+  docs/specs/local-search-index.md's "Out of scope" -- the codebase/markdown catalog is already
+  built; `chunk.py`/`embedding.py`/`store.py`/`ranking.py` are catalog-agnostic, so each of these
+  needs only its own chunker plus a thin `Search*` integration).
 
 * Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
   to remove all the extraneous stuff it adds. (see docs/specs/chainlink-task-tracking.md)

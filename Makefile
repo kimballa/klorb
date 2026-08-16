@@ -23,7 +23,7 @@ help:
 cloud_setup:
 	# Install system dependencies
 	$(APT_GET) update -qq || true
-	$(APT_GET) -y --fix-missing install bubblewrap curl
+	$(APT_GET) -y --fix-missing install bubblewrap curl git-lfs
 	./bin/install_rust.sh
 	$(NPM) install -g markdownlint-cli2
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
