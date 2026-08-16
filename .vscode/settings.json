@@ -74,4 +74,5 @@
   },
   "prettier.printWidth": 100,
   "markdownlint.configFile": ".markdownlint-cli2.jsonc",
+  "python.analysis.stubPath": "klorb/types",
 }
