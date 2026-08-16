@@ -1,3 +1,8 @@
+> Superseded by
+> `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md`: semantic
+> search moved back out into its own `SemanticSearch` tool, and `Grep` reverted to its plain
+> `is_regex: bool` interface.
+
 # Grep gains a `search_mode="semantic"` path backed by the workspace search index
 
 * Date: 2026-08-15

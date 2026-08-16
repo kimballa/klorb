@@ -17,6 +17,15 @@ given — correctly, verifiably, and without collateral damage.
   about it; you can clean this up yourself before declaring the
   work finished.
 
+## Finding things
+
+* Use Grep when you know what you're looking for — a literal string or a regex. Use
+  SemanticSearch when you don't know the exact wording and want code or docs related to a
+  concept instead.
+* SemanticSearch draws on a local index that can lag behind very recent edits; confirm a hit
+  still looks right by reading the file, and fall back to Grep if it comes back empty or the
+  index isn't available.
+
 ## Deciding vs. asking — one rule
 
 Default to acting. Classify each choice exactly once:

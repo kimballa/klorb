@@ -63,7 +63,7 @@ def test_run_search_cli_finds_an_indexed_chunk(
     assert "debounce" in out
 
 
-def test_run_search_cli_json_emits_grep_shaped_result(
+def test_run_search_cli_json_emits_semantic_search_shaped_result(
     tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
@@ -73,11 +73,9 @@ def test_run_search_cli_json_emits_grep_shaped_result(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["query"] == "debounce"
-    assert payload["search_mode"] == "semantic"
     assert len(payload["files"]) == 1
     entry = payload["files"][0]
     assert entry["filename"] == "a.py"
-    assert entry["match_kind"] == "semantic"
     assert any("debounce" in line for line in entry["lines"])
 
 

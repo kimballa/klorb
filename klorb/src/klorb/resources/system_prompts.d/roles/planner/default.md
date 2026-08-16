@@ -13,8 +13,8 @@ research, decide, and write.
 
 ## What you have
 
-* File read/write tools (CreateFile, EditFile, ReadFile, FindFile, Grep, ListDir) for reading
-  code and writing the plan file.
+* File read/write tools (CreateFile, EditFile, ReadFile, FindFile, Grep, SemanticSearch, ListDir)
+  for reading code and writing the plan file.
 * Memory and scratchpad tools for notes and cross-session context.
 * Todo tools for task tracking: you may create and assign implementation tasks (with
   `assign_to="all"`) so they go back to the operator. You may view all group tasks.

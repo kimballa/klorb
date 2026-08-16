@@ -26,7 +26,7 @@ def build_search_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klorb index search",
         description="Search the workspace's local semantic search index, the same hybrid "
-        "(BM25 + vector KNN) search Grep's search_mode=\"semantic\" uses.",
+        "(BM25 + vector KNN) search the SemanticSearch tool uses.",
     )
     parser.add_argument("query", help="The search query.")
     parser.add_argument(
@@ -35,7 +35,7 @@ def build_search_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--json", action="store_true",
-        help="Emit results as JSON, in the same shape a Grep semantic-search result carries.",
+        help="Emit results as JSON, in the same shape a SemanticSearch tool result carries.",
     )
     return parser
 
@@ -78,12 +78,12 @@ def _chunk_to_file_entry(chunk: Chunk, score: float) -> dict[str, Any]:
         format_match_line(chunk.start_line + i, line, matched=True)
         for i, line in enumerate(chunk.text.splitlines())
     ]
-    return {"filename": chunk.source_path, "lines": lines, "match_kind": "semantic", "score": score}
+    return {"filename": chunk.source_path, "lines": lines, "score": score}
 
 
 def _hits_to_file_entries(hits: list[tuple[Chunk, float]]) -> list[dict[str, Any]]:
-    """Group `hits` (chunk/score pairs, already ranked) by file in the same shape Grep's
-    search_mode="semantic" result carries: each entry's `lines` are dense-format (`*line|text`,
+    """Group `hits` (chunk/score pairs, already ranked) by file in the same shape the
+    SemanticSearch tool's result carries: each entry's `lines` are dense-format (`*line|text`,
     every line of a matched chunk marked), and `score` is the file's best-scoring chunk."""
     entries_by_path: dict[str, dict[str, Any]] = {}
     for chunk, score in hits:
@@ -109,8 +109,8 @@ def _render_search_results(query: str, entries: list[dict[str, Any]]) -> str:
 def run_search_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index search`) and print the workspace's
     local search index's top matches for `query` to stdout -- the same hybrid (BM25 + vector
-    KNN) search and dense-line result shape `Grep`'s `search_mode="semantic"` merges in, either
-    pretty-printed for a human or (`--json`) as a Grep-shaped JSON result. If no process
+    KNN) search and dense-line result shape the `SemanticSearch` tool returns, either
+    pretty-printed for a human or (`--json`) as that same JSON shape. If no process
     currently owns the workspace's index, this call claims ownership and runs a full scan
     synchronously before searching -- see `WorkspaceIndexer.hybrid_search`. Returns 0 on
     success, 1 if the embedding model isn't installed.
@@ -132,7 +132,7 @@ def run_search_cli(argv: list[str]) -> int:
     entries = _hits_to_file_entries(hits)
     if args.json:
         result = {
-            "query": args.query, "search_mode": "semantic", "top_k": args.limit,
+            "query": args.query, "top_k": args.limit,
             "files": entries, "match_count": sum(len(entry["lines"]) for entry in entries),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))

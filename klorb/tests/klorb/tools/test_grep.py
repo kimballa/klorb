@@ -10,7 +10,6 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.search_index.chunk import Chunk, ChunkKind
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.grep import GrepTool
@@ -127,7 +126,7 @@ def test_regex_pattern(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
     result = GrepTool(_context(tmp_path)).apply(
-        {"path": "", "queries": [r"^def \w+\(\):"], "search_mode": "regex"})
+        {"path": "", "queries": [r"^def \w+\(\):"], "is_regex": True})
 
     assert result["match_count"] == 1
     file = result["files"][0]
@@ -142,7 +141,7 @@ def test_multiple_regex_queries_are_distinct_alternatives(tmp_path: Path) -> Non
     _make_tree(tmp_path)
 
     result = GrepTool(_context(tmp_path)).apply(
-        {"path": "", "queries": [r"^def \w+\(\):", r"^import \w+"], "search_mode": "regex"})
+        {"path": "", "queries": [r"^def \w+\(\):", r"^import \w+"], "is_regex": True})
 
     assert result["match_count"] == 2
     assert _matched_filenames(result) == {"top.py", "nested.py"}
@@ -152,7 +151,7 @@ def test_invalid_regex_raises_value_error(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
     with pytest.raises(ValueError, match="Invalid regex"):
-        GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["("], "search_mode": "regex"})
+        GrepTool(_context(tmp_path)).apply({"path": "", "queries": ["("], "is_regex": True})
 
 
 def test_empty_queries_raises_value_error(tmp_path: Path) -> None:
@@ -708,132 +707,3 @@ def test_explicit_single_file_ignores_gitignore_filtering(tmp_path: Path) -> Non
     assert _matched_filenames(result) == {"nested.py"}
     assert result["gitignored_hidden"] is False
 
-
-class _FakeWorkspaceIndexer:
-    """A stand-in for `klorb.search_index.indexer.WorkspaceIndexer` that returns a fixed set of
-    `(Chunk, score)` hits regardless of query text, so `GrepTool`'s merge logic can be tested
-    without a real embedding model or SQLite index."""
-
-    def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
-        self._hits = hits
-
-    def hybrid_search(self, query_text: str, limit: int = 20) -> list[tuple[Chunk, float]]:
-        return self._hits[:limit]
-
-
-def _chunk(source_path: str, kind: ChunkKind, start_line: int, end_line: int, text: str) -> Chunk:
-    return Chunk.create(
-        catalog="workspace", source_path=source_path, kind=kind,
-        start_line=start_line, end_line=end_line, text=text)
-
-
-def test_semantic_mode_adds_a_new_file_entry_for_a_chunk_only_hit(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    chunk = _chunk("sub/nested.py", "function", 1, 2, "def hello():\n    return 'hello again'")
-    session, context = _context_with_session(tmp_path)
-    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
-        [(chunk, 0.5)])
-    try:
-        result = GrepTool(context).apply(
-            {"path": "", "queries": ["completely unrelated string"], "search_mode": "semantic"})
-    finally:
-        session.close()
-
-    matches = [f for f in result["files"] if f["filename"].endswith("nested.py")]
-    assert len(matches) == 1
-    entry = matches[0]
-    assert entry["match_kind"] == "semantic"
-    assert entry["score"] == 0.5
-    parsed = _parse_lines(entry)
-    assert [line_number for line_number, _text, matched in parsed if matched] == [1, 2]
-
-
-def test_semantic_mode_merges_into_an_existing_literal_hit(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    chunk = _chunk("top.py", "toplevel", 1, 2, "import os\nprint('hello world')")
-    session, context = _context_with_session(tmp_path)
-    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
-        [(chunk, 0.9)])
-    try:
-        result = GrepTool(context).apply(
-            {"path": "", "queries": ["hello"], "search_mode": "semantic"})
-    finally:
-        session.close()
-
-    matches = [f for f in result["files"] if f["filename"].endswith("top.py")]
-    assert len(matches) == 1
-    assert matches[0]["match_kind"] == "literal+semantic"
-    assert matches[0]["score"] == 0.9
-
-
-def test_semantic_mode_respects_path_scope(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    out_of_scope_chunk = _chunk("top.py", "toplevel", 1, 2, "import os\nprint('hello world')")
-    session, context = _context_with_session(tmp_path)
-    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
-        [(out_of_scope_chunk, 0.5)])
-    try:
-        result = GrepTool(context).apply({
-            "path": str(tmp_path / "sub"), "queries": ["completely unrelated string"],
-            "search_mode": "semantic",
-        })
-    finally:
-        session.close()
-
-    assert "top.py" not in _matched_filenames(result)
-
-
-def test_semantic_mode_respects_file_glob(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    txt_chunk = _chunk("sub/notes.txt", "window", 1, 1, "hello from notes")
-    session, context = _context_with_session(tmp_path)
-    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
-        [(txt_chunk, 0.5)])
-    try:
-        result = GrepTool(context).apply({
-            "path": "", "queries": ["completely unrelated string"], "search_mode": "semantic",
-            "file_glob": "*.py",
-        })
-    finally:
-        session.close()
-
-    assert "notes.txt" not in _matched_filenames(result)
-
-
-def test_semantic_mode_without_a_workspace_indexer_raises_tool_call_error(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    session, context = _context_with_session(tmp_path)
-    assert session.workspace_indexer is None
-    try:
-        with pytest.raises(ToolCallError, match="search index"):
-            GrepTool(context).apply(
-                {"path": "", "queries": ["hello"], "search_mode": "semantic"})
-    finally:
-        session.close()
-
-
-def test_semantic_mode_top_k_caps_merged_chunks(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    (tmp_path / "sub" / "many.py").write_text(
-        "\n".join(f"def fn_{i}():\n    return {i}" for i in range(20)))
-    chunks = [
-        (_chunk("sub/many.py", "function", i * 2 + 1, i * 2 + 2, f"def fn_{i}():\n    return {i}"),
-         1.0 - i * 0.01)
-        for i in range(20)
-    ]
-    session, context = _context_with_session(tmp_path)
-    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
-        chunks)
-    try:
-        result = GrepTool(context).apply({
-            "path": "", "queries": ["completely unrelated string"], "search_mode": "semantic",
-            "top_k": 3,
-        })
-    finally:
-        session.close()
-
-    entry = next(f for f in result["files"] if f["filename"].endswith("many.py"))
-    matched_line_numbers = {line_number for line_number,
-        _text, matched in _parse_lines(entry) if matched}
-    # 3 chunks merged, 2 lines each.
-    assert len(matched_line_numbers) == 6

@@ -4,8 +4,8 @@
 
 `klorb.search_index` is a local, SQLite-backed hybrid (BM25 lexical + vector KNN) search index over
 one workspace's filesystem — source code (Python, TypeScript/TSX) and markdown (`docs/`, ADRs,
-specs, `TODO.md`, `CLAUDE.md`/`AGENTS.md`, READMEs). It backs `Grep`'s `search_mode="semantic"` path
-(see `docs/adrs/00193-grep-search-mode-adds-semantic-hits-via-workspace-index.md`). Embeddings run
+specs, `TODO.md`, `CLAUDE.md`/`AGENTS.md`, READMEs). It backs `SemanticSearch`
+(see `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md`). Embeddings run
 fully locally via a bundled ONNX model (`fastembed`); no network call is ever made at index or query
 time. Tools/Skills/Memories catalogs are anticipated follow-up work reusing this same
 chunk/embed/store/rank pipeline — not built yet.
@@ -171,14 +171,14 @@ feature itself construct or assign a `WorkspaceIndexer` directly instead of goin
 `reset_session()`/`/clear` never tears it down mid-process — a `/clear` keeps the same workspace, so
 there's nothing to rebuild.
 
-## `Grep` integration
+## `SemanticSearch` integration
 
-See `docs/adrs/00193-grep-search-mode-adds-semantic-hits-via-workspace-index.md` for the full design
-and rationale. In short: `Grep`'s `search_mode` parameter (`"literal"` | `"regex"` | `"semantic"`)
-replaces the old `is_regex` boolean; `"semantic"` runs the literal search unchanged and merges in up
-to `top_k` (default 10) chunk-level hits from `WorkspaceIndexer.hybrid_search()`, scoped by the same
-`path`/`file_glob` the literal search obeys. Raises `ToolCallError` if `context.session.
-workspace_indexer` is `None`.
+See `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md` for the full
+design and rationale. In short: `klorb.tools.semantic_search.SemanticSearchTool` runs each of its
+`queries` through `WorkspaceIndexer.hybrid_search()`, merges hits by chunk id (keeping the highest
+score), and returns up to `top_k` (default 25) chunk-level hits scoped by the same `path`/`file_glob`
+`Grep` uses for its own walk. Raises `ToolCallError` if `context.session.workspace_indexer` is
+`None`.
 
 ## CLI: `klorb index`
 
@@ -188,10 +188,10 @@ sub-main functions in `klorb.search_index.cli`:
 
 * **`search <query>`** (`-k`/`--limit`, default `DEFAULT_SEARCH_LIMIT`; `--json`) — runs
   `WorkspaceIndexer.hybrid_search()` and prints the results grouped by file, in the same dense-line
-  shape (`*line|text`, one entry per file with `match_kind`/`score`) `Grep`'s
-  `search_mode="semantic"` merges in. `--json` emits that shape directly; otherwise each file's
-  block is pretty-printed with its score. If no process currently owns the workspace's index, this
-  claims ownership and runs a full scan synchronously first, per `hybrid_search()`'s own contract.
+  shape (`*line|text`, one entry per file with `score`) `SemanticSearch` returns. `--json` emits that
+  shape directly; otherwise each file's block is pretty-printed with its score. If no process
+  currently owns the workspace's index, this claims ownership and runs a full scan synchronously
+  first, per `hybrid_search()`'s own contract.
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`) — calls
   `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
   scan: it walks the workspace once, (re)indexes every dirty file, and returns before exiting
@@ -228,13 +228,10 @@ an explicit `klorb index` invocation is itself the user's authorization, the sam
   subprocess/socket-RPC indexing service. Revisit if cross-process write contention on
   `.klorb/index/*.db` turns out to matter in practice — the owner-lock design already bounds it to at
   most one writer at a time, so this is a performance question, not a correctness one.
-* **Precise interval-merging of a semantic chunk's line range into an existing literal-hit context
-  window.** `Grep` appends a semantic chunk's dense lines after any literal hit's own lines rather
-  than merging overlapping ranges — a token-efficiency imperfection, not a correctness bug.
-* **Scoped-search efficiency at large scale.** `Grep`'s `path`/`file_glob` scoping for
-  `search_mode="semantic"` is a post-filter over an over-fetched hybrid-search result, not a `WHERE`
-  predicate pushed into the SQL query itself — fine for a single workspace's chunk count, but not
-  necessarily efficient for a narrow scope inside a very large repository.
+* **Scoped-search efficiency at large scale.** `SemanticSearch`'s `path`/`file_glob` scoping is a
+  post-filter over an over-fetched hybrid-search result, not a `WHERE` predicate pushed into the
+  SQL query itself — fine for a single workspace's chunk count, but not necessarily efficient for
+  a narrow scope inside a very large repository.
 * **Reindexing on `.gitignore` edits.** Unlike `klorb.tui.workspace_file_index.WorkspaceFileIndex`,
   the watcher doesn't force a full rescan when a `.gitignore` file itself changes — a newly-ignored
   file already indexed stays indexed until some other event touches it.

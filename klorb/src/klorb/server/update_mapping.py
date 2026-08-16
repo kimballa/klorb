@@ -85,6 +85,7 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "SearchMemories": "search",
     "SearchScratchpad": "search",
     "SearchSkills": "search",
+    "SemanticSearch": "search",
     "ListMemories": "search",
     "Bash": "execute",
     "WebFetch": "fetch",
@@ -111,6 +112,7 @@ TOOL_LOCATION_ARG: dict[str, str] = {
     "EditFile": "filename",
     "CreateFile": "filename",
     "Grep": "path",
+    "SemanticSearch": "path",
     "FindFile": "dirname",
     "ListDir": "dirname",
 }

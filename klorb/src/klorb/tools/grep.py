@@ -12,7 +12,6 @@ from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
-from klorb.search_index.chunk import Chunk
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
@@ -20,7 +19,6 @@ from klorb.tools.util import (
     SpillDir,
     compile_queries,
     context_lines_for_matches,
-    format_match_line,
     get_or_create_secret_redactor,
     match_line_indices,
     matches_only,
@@ -37,11 +35,6 @@ _GITIGNORE_HIDDEN_NOTE = (
 
 _TRUNCATION_SUFFIX = "[truncated...]"
 
-_VALID_SEARCH_MODES = frozenset({"literal", "regex", "semantic"})
-DEFAULT_SEMANTIC_TOP_K = 25
-"""Default `top_k`: how many extra semantic chunk hits `search_mode="semantic"` merges in,
-independent of `grep_max_results` (which caps literal line hits only)."""
-
 
 def _truncate_line(line: str, max_length: int) -> str:
     """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut —
@@ -54,12 +47,12 @@ def _truncate_line(line: str, max_length: int) -> str:
 
 class GrepTool(InterruptibleTool):
     """Recursively searches a directory tree for lines matching any of `queries` (each matched
-    as a literal substring in `search_mode="literal"` (the default) or `"semantic"`, or as a
-    distinct Python regex when `search_mode="regex"` — a line matching any one of them counts as
-    a hit, equivalent to `grep -e 'seq1' -e 'seq2' ...`), reusing
-    `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory level,
-    not just at the given path itself — see that function's docstring for how a denied,
-    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search.
+    as a literal substring by default, or as a distinct Python regex when `is_regex` is true —
+    a line matching any one of them counts as a hit, equivalent to `grep -e 'seq1' -e 'seq2'
+    ...`), reusing `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at
+    every directory level, not just at the given path itself — see that function's docstring for how
+    a denied, ask-gated, or symlinked subdirectory is pruned rather than aborting the whole
+    search.
 
     Each hit is reported with `context.process_config.grep_context_lines` lines of surrounding
     context on each side (like `grep -C`); overlapping or adjacent context windows within the
@@ -68,17 +61,6 @@ class GrepTool(InterruptibleTool):
     list of dense-format strings (see `klorb.tools.util.search_core`) — a leading `*` marks a
     line that itself matched, and each line carries its own 1-based number, so a gap between two
     merged windows shows up as a jump in those numbers with no separator line.
-
-    `search_mode="semantic"` runs the same literal-substring search as `"literal"` and
-    additionally merges in up to `top_k` chunk-level hits from the workspace's local hybrid
-    (BM25 + vector KNN) search index (see docs/specs/local-search-index.md), scoped by the same
-    `path`/`file_glob` the literal search obeys. A file entry a semantic hit contributed to
-    carries `match_kind` (`"literal"`, `"semantic"`, or `"literal+semantic"`) and `score` (the
-    hit's fused relevance score); a semantic-only hit's dense lines mark every line of its
-    matched chunk with `*` (the whole chunk is the unit of relevance, not one exact line).
-    Raises `ToolCallError` if the workspace index isn't available (see
-    `klorb.session.mixins.core.SessionCoreMixin._create_workspace_indexer`) rather than silently
-    degrading to a literal-only result.
 
     A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped silently
     (treated as binary) rather than raising — matches are only ever reported from files
@@ -127,21 +109,15 @@ class GrepTool(InterruptibleTool):
         return (
             "Recursively searches a directory tree for lines matching any of the given "
             "queries, so you can find where a piece of text or code appears without reading "
-            "every file yourself. Each entry in queries is matched as a literal substring "
-            "under search_mode \"literal\" (the default) or \"semantic\"; set search_mode to "
-            "\"regex\" to treat every entry as a distinct Python regular expression instead. "
-            "\"semantic\" additionally merges in up to top_k related chunks from the "
-            "workspace's local search index, found by meaning rather than exact wording — "
-            "useful when you don't know the exact string to search for. A line matching any "
-            "one query counts as a hit — equivalent to "
+            "every file yourself. Each entry in queries is matched as a literal substring by "
+            "default; set is_regex to treat every entry as a distinct Python regular "
+            "expression instead. A line matching any one query counts as a hit — equivalent to "
             "`grep -e query1 -e query2 ...`. Optionally filter which files are searched with a "
             "filename glob (e.g. '*.py'). path empty means search the whole project root. "
             "Results are grouped by file under 'files'; "
             "each line is a string like '*42|matched text' or ' 41|context text', where the "
-            "leading '*' marks a matching line (or, for a semantic-only hit, every line of the "
-            "matched chunk) and the number is its 1-based line number (a gap in those numbers "
-            "marks a break between context windows). A file a semantic hit contributed to "
-            "carries match_kind and score. "
+            "leading '*' marks a matching line and the number is its 1-based line number (a gap "
+            "in those numbers marks a break between context windows). "
             "Line numbers can be used directly as input to EditFile start_line / end_line. "
             "Returns at most "
             f"{self._max_results} matching lines per call; a 'truncated' flag in the result "
@@ -188,25 +164,11 @@ class GrepTool(InterruptibleTool):
                         "is true, in which case each is its own Python regular expression."
                     ),
                 },
-                "search_mode": {
-                    "type": "string",
-                    "enum": ["literal", "regex", "semantic"],
+                "is_regex": {
+                    "type": "boolean",
                     "description": (
-                        "How to interpret each entry in queries. \"literal\" (default): a "
-                        "plain substring match. \"regex\": each entry is its own Python "
-                        "regular expression. \"semantic\": runs the same literal substring "
-                        "search as \"literal\", plus a hybrid lexical+vector search over the "
-                        "workspace's local search index, merging in up to top_k additional "
-                        "chunk-level hits ranked by relevance -- useful for finding code "
-                        "related to a concept even when the exact wording differs."
-                    ),
-                },
-                "top_k": {
-                    "type": "integer",
-                    "description": (
-                        "Maximum extra semantic chunk hits to merge in when search_mode is "
-                        f"\"semantic\". Defaults to {DEFAULT_SEMANTIC_TOP_K}. Ignored for "
-                        "other search_mode values."
+                        "Treat every entry in queries as a Python regular expression. "
+                        "Defaults to false."
                     ),
                 },
                 "case_insensitive": {
@@ -255,21 +217,15 @@ class GrepTool(InterruptibleTool):
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
-        search_mode = args.get("search_mode", "literal")
-        if search_mode not in _VALID_SEARCH_MODES:
-            raise ValueError(
-                f"Invalid search_mode {search_mode!r}. Valid values are: "
-                f"{', '.join(sorted(_VALID_SEARCH_MODES))}.")
-        is_regex = search_mode == "regex"
-        top_k = args.get("top_k", DEFAULT_SEMANTIC_TOP_K)
+        is_regex = args.get("is_regex", False)
         case_insensitive = args.get("case_insensitive", False)
         file_glob = args.get("file_glob")
         use_gitignore = args.get("use_gitignore", True)
         output_style = validate_output_style(args.get("outputStyle"))
         logger.debug(
-            "Grep %r in %r (search_mode=%s, case_insensitive=%s, file_glob=%s, use_gitignore=%s, "
+            "Grep %r in %r (is_regex=%s, case_insensitive=%s, file_glob=%s, use_gitignore=%s, "
             "outputStyle=%s)",
-            queries, search_path, search_mode, case_insensitive, file_glob, use_gitignore,
+            queries, search_path, is_regex, case_insensitive, file_glob, use_gitignore,
             output_style)
 
         # A query may itself be (or contain) a [[SECRET:...]] token echoed back from an earlier
@@ -404,14 +360,6 @@ class GrepTool(InterruptibleTool):
                 if cancelled:
                     break
 
-        if search_mode == "semantic" and not cancelled:
-            workspace_root = self.context.session_config.workspace.path.resolve()
-            scope_path = single_file if single_file is not None else (root_path or workspace_root)
-            match_count += self._merge_semantic_matches(
-                search_queries, workspace_root, scope_path,
-                scope_is_file=single_file is not None, file_glob=file_glob, top_k=top_k,
-                output_style=output_style, files=files, list_files=list_files)
-
         logger.debug(
             "Grep found %d match(es) in %d file(s) (truncated=%s, cancelled=%s)",
             match_count, len(files) if output_style != "ListFiles" else len(list_files),
@@ -427,7 +375,7 @@ class GrepTool(InterruptibleTool):
             result: dict[str, Any] = {
                 "root": str(root_path) if root_path is not None else search_path,
                 "queries": redacted_queries,
-                "search_mode": search_mode,
+                "is_regex": is_regex,
                 "case_insensitive": case_insensitive,
                 "file_glob": file_glob,
                 "use_gitignore": use_gitignore,
@@ -441,7 +389,7 @@ class GrepTool(InterruptibleTool):
             result = {
                 "root": str(root_path) if root_path is not None else search_path,
                 "queries": redacted_queries,
-                "search_mode": search_mode,
+                "is_regex": is_regex,
                 "case_insensitive": case_insensitive,
                 "file_glob": file_glob,
                 "use_gitignore": use_gitignore,
@@ -456,99 +404,6 @@ class GrepTool(InterruptibleTool):
             result["note"] = _GITIGNORE_HIDDEN_NOTE
         self._spill_files_if_needed(result)
         return result
-
-    def _merge_semantic_matches(
-        self, search_queries: list[str], workspace_root: Path, scope_path: Path, *,
-        scope_is_file: bool, file_glob: str | None, top_k: int,
-        output_style: str, files: list[dict[str, Any]], list_files: list[str],
-    ) -> int:
-        """Run a hybrid (BM25 + vector KNN) search for each of `search_queries` against the
-        workspace's local index, scoped to `scope_path` (an exact file if `scope_is_file`, else a
-        directory tree) and `file_glob`, then merge the top `top_k` fused hits into `files`/
-        `list_files` in place. Returns the number of matched lines the merge added to
-        `match_count`. Raises `ToolCallError` if the workspace index isn't available.
-        """
-        indexer = self.context.session.workspace_indexer if self.context.session is not None else None
-        if indexer is None:
-            raise ToolCallError(
-                "The workspace search index isn't available for search_mode=\"semantic\" "
-                "(the workspace may be untrusted, the feature may be disabled, or `klorb init` "
-                "may not have run). Retry with search_mode=\"literal\" or \"regex\" instead.",
-                category="business_logic")
-
-        best_by_chunk_id: dict[str, tuple[Chunk, float]] = {}
-        for query in search_queries:
-            for chunk, score in indexer.hybrid_search(query, limit=top_k * 4):
-                existing = best_by_chunk_id.get(chunk.chunk_id)
-                if existing is None or score > existing[1]:
-                    best_by_chunk_id[chunk.chunk_id] = (chunk, score)
-
-        in_scope = [
-            (chunk, score) for chunk, score in best_by_chunk_id.values()
-            if self._chunk_in_scope(chunk, workspace_root, scope_path, scope_is_file, file_glob)
-        ]
-        in_scope.sort(key=lambda pair: pair[1], reverse=True)
-
-        added_lines = 0
-        files_by_name = {entry["filename"]: entry for entry in files}
-        for chunk, score in in_scope[:top_k]:
-            abs_path = workspace_root / chunk.source_path
-            dense_lines = self._render_chunk_lines(abs_path, chunk)
-            if dense_lines is None:
-                continue
-            filename = str(abs_path)
-            added_lines += len(dense_lines)
-            if output_style == "ListFiles":
-                if filename not in list_files:
-                    list_files.append(filename)
-                continue
-            existing_entry = files_by_name.get(filename)
-            if existing_entry is None:
-                new_entry = {
-                    "filename": filename, "lines": dense_lines,
-                    "match_kind": "semantic", "score": score,
-                }
-                files.append(new_entry)
-                files_by_name[filename] = new_entry
-            else:
-                existing_entry["lines"].extend(dense_lines)
-                existing_entry["match_kind"] = "literal+semantic"
-                existing_entry["score"] = max(existing_entry.get("score", 0.0), score)
-        return added_lines
-
-    @staticmethod
-    def _chunk_in_scope(
-        chunk: Chunk, workspace_root: Path, scope_path: Path, scope_is_file: bool,
-        file_glob: str | None,
-    ) -> bool:
-        abs_path = (workspace_root / chunk.source_path).resolve()
-        if scope_is_file:
-            if abs_path != scope_path:
-                return False
-        else:
-            try:
-                abs_path.relative_to(scope_path)
-            except ValueError:
-                return False
-        return not file_glob or fnmatch.fnmatch(abs_path.name, file_glob)
-
-    def _render_chunk_lines(self, abs_path: Path, chunk: Chunk) -> list[str] | None:
-        """`chunk`'s line span rendered in dense format, every line marked `*` (the whole chunk
-        is the unit of semantic relevance, not one exact matching line) -- re-reading `abs_path`
-        fresh rather than reusing `chunk.text`, since a structural chunk's `text` is a synthesized
-        synopsis for some kinds (see `klorb.search_index.chunkers._tree_sitter_base`), not
-        necessarily the file's real content over that line range. `None` if `abs_path` can no
-        longer be read (deleted or changed since it was indexed)."""
-        try:
-            text = abs_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return None
-        all_lines = text.splitlines()
-        start = max(0, chunk.start_line - 1)
-        end = min(len(all_lines), chunk.end_line)
-        dense_lines = [format_match_line(i + 1, all_lines[i], matched=True) for i in range(start, end)]
-        return [_truncate_line(line, self._max_line_length)
-                for line in self._redact_strings(dense_lines)]
 
     def _spill_files_if_needed(self, result: dict[str, Any]) -> None:
         """Replace `result["files"]` with a `results_data_file` path if its JSON serialization
