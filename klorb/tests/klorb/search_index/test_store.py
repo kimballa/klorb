@@ -125,6 +125,42 @@ def test_upsert_chunks_rejects_mismatched_lengths(store: SearchIndexStore) -> No
         store.upsert_chunks([chunk], [])
 
 
+def test_clear_removes_every_chunk_and_file_record(store: SearchIndexStore) -> None:
+    store.upsert_chunks([_chunk("a.py", "def debounce(fn): pass")], [_vector(1)])
+    store.set_file_hash("a.py", "hash1", 100.0)
+
+    store.clear()
+
+    assert store.search_lexical("debounce", 10) == []
+    assert store.file_records() == {}
+
+
+def test_stats_counts_files_and_chunks_by_kind(store: SearchIndexStore) -> None:
+    class_chunk = Chunk.create(
+        catalog="workspace", source_path="a.py", kind="class",
+        start_line=1, end_line=5, text="class A: pass")
+    method_chunk = Chunk.create(
+        catalog="workspace", source_path="a.py", kind="method",
+        start_line=2, end_line=3, text="def m(self): pass")
+    store.upsert_chunks([class_chunk, method_chunk], [_vector(1), _vector(2)])
+    store.set_file_hash("a.py", "hash1", 100.0)
+
+    stats = store.stats()
+
+    assert stats.file_count == 1
+    assert stats.chunk_count == 2
+    assert stats.chunk_counts_by_kind == {"class": 1, "method": 1}
+    assert stats.db_size_bytes > 0
+
+
+def test_stats_on_an_empty_store(store: SearchIndexStore) -> None:
+    stats = store.stats()
+
+    assert stats.file_count == 0
+    assert stats.chunk_count == 0
+    assert stats.chunk_counts_by_kind == {}
+
+
 def test_reopening_with_a_stale_schema_version_rebuilds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

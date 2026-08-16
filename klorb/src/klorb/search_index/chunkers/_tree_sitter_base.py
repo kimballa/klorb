@@ -7,6 +7,7 @@ fails to parse (tree-sitter reports an error node covering the whole tree) contr
 structural chunks at all; the windowed chunker still covers it.
 """
 
+import threading
 from dataclasses import dataclass, field
 
 from tree_sitter import Language, Node, Parser
@@ -63,13 +64,25 @@ def _line_span(node: Node) -> tuple[int, int]:
 
 
 class TreeSitterChunker(Chunker):
+    """A `tree_sitter.Parser` isn't safe for concurrent use, so each thread that calls `chunk()`
+    gets its own lazily-constructed instance (`self._local`) rather than one shared per
+    `TreeSitterChunker` -- the router that owns this chunker is itself a single shared instance
+    across every thread of a multi-threaded `klorb index scan`."""
+
     def __init__(self, spec: LanguageSpec) -> None:
         self._spec = spec
-        self._parser = Parser(spec.language)
+        self._local = threading.local()
+
+    def _parser(self) -> Parser:
+        parser = getattr(self._local, "parser", None)
+        if parser is None:
+            parser = Parser(self._spec.language)
+            self._local.parser = parser
+        return parser
 
     def chunk(self, source_path: str, text: str) -> list[Chunk]:
         source = text.encode("utf-8")
-        tree = self._parser.parse(source)
+        tree = self._parser().parse(source)
         root = tree.root_node
         if root.has_error and not root.named_children:
             return []

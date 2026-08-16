@@ -14,12 +14,14 @@ from dotenv import load_dotenv
 from klorb import __version__
 from klorb.agents.policy import compute_root_session_grants
 from klorb.cli._common import (
+    INDEX_SUBCOMMAND,
     INIT_SUBCOMMAND,
     MODELS_SUBCOMMAND,
     SERVER_SUBCOMMAND,
     SHOW_CONFIG_SUBCOMMAND,
     SYSTEM_PROMPT_SUBCOMMAND,
 )
+from klorb.cli.index import run_index_cli
 from klorb.cli.init import run_init_cli
 from klorb.cli.models import run_models_cli
 from klorb.cli.server import run_server_cli
@@ -53,7 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  models            List every discovered model.\n"
             "  show-config       Show the merged config from all config files.\n"
             "  server            Run a persistent Agent Client Protocol (ACP) server on "
-            "stdin/stdout.\n\n"
+            "stdin/stdout.\n"
+            "  index             Query or maintain the workspace's local semantic search "
+            "index (search/scan/stats).\n\n"
             "Run `klorb <subcommand> --help` to see subcommand-specific flags."
         ),
     )
@@ -229,6 +233,9 @@ def main() -> None:
 
     if len(sys.argv) > 1 and sys.argv[1] == SERVER_SUBCOMMAND:
         raise SystemExit(run_server_cli(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] == INDEX_SUBCOMMAND:
+        raise SystemExit(run_index_cli(sys.argv[2:]))
 
     parser = build_parser()
     args = parser.parse_args()

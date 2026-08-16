@@ -1,6 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.search_index.chunkers.code_python."""
 
+import threading
+
 from klorb.search_index.chunkers.code_python import PythonChunker
 
 _SOURCE = '''import os
@@ -78,3 +80,27 @@ def test_garbage_input_produces_no_class_or_function_chunks() -> None:
 
 def test_completely_empty_of_named_nodes_produces_no_chunks() -> None:
     assert PythonChunker().chunk("blank.py", "   \n\t\n") == []
+
+
+def test_chunk_is_safe_across_concurrent_threads() -> None:
+    # Regression test: a shared tree_sitter.Parser isn't safe for concurrent .parse() calls --
+    # TreeSitterChunker gives each calling thread its own lazily-constructed instance.
+    chunker = PythonChunker()
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            for _ in range(20):
+                chunks = chunker.chunk("foo.py", _SOURCE)
+                assert [chunk.kind for chunk in chunks] == [
+                    "toplevel", "class", "method", "method", "function", "toplevel"]
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors

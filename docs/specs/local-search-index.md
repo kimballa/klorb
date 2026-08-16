@@ -74,7 +74,10 @@ index is a poor definition of "background work."
 `klorb.search_index.store.SearchIndexStore` owns one `pysqlite3` (a self-contained SQLite build with
 FTS5 and loadable extensions — the stdlib `sqlite3` module's extension-loading support varies by how
 the running Python was built, so relying on it isn't reliable) connection per workspace, at
-`${workspace_root}/.klorb/index/workspace.db` (WAL mode):
+`${workspace_root}/.klorb/index/workspace.db` (WAL mode, `synchronous=NORMAL` — each commit's fsync
+is deferred to the next WAL checkpoint rather than paid immediately, trading a small durability
+window (an OS crash or power loss, not an application crash, can roll back the most recent
+transactions) for much cheaper per-file commits during a scan):
 
 * **`chunks`** — plain metadata table, one row per `Chunk`.
 * **`chunks_fts`** — an FTS5 virtual table (`chunk_id UNINDEXED, body`); `search_lexical()` ranks by
@@ -176,6 +179,40 @@ replaces the old `is_regex` boolean; `"semantic"` runs the literal search unchan
 to `top_k` (default 10) chunk-level hits from `WorkspaceIndexer.hybrid_search()`, scoped by the same
 `path`/`file_glob` the literal search obeys. Raises `ToolCallError` if `context.session.
 workspace_indexer` is `None`.
+
+## CLI: `klorb index`
+
+`klorb index <action>` gives a human direct command-line access to the index, independent of any
+agent session. `klorb.cli.index.run_index_cli` is a thin dispatcher (by `argv[0]`) to the actual
+sub-main functions in `klorb.search_index.cli`:
+
+* **`search <query>`** (`-k`/`--limit`, default `DEFAULT_SEARCH_LIMIT`; `--json`) — runs
+  `WorkspaceIndexer.hybrid_search()` and prints the results grouped by file, in the same dense-line
+  shape (`*line|text`, one entry per file with `match_kind`/`score`) `Grep`'s
+  `search_mode="semantic"` merges in. `--json` emits that shape directly; otherwise each file's
+  block is pretty-printed with its score. If no process currently owns the workspace's index, this
+  claims ownership and runs a full scan synchronously first, per `hybrid_search()`'s own contract.
+* **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`) — calls
+  `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
+  scan: it walks the workspace once, (re)indexes every dirty file, and returns before exiting
+  rather than continuing on a background thread. `--rebuild` clears the store first
+  (`SearchIndexStore.clear()`) so every file is treated as dirty. Multi-threaded scanning fans the
+  per-file read/chunk/embed work across `num_threads` worker threads — each `TreeSitterChunker`
+  keeps a lazily-constructed `Parser` per thread (`threading.local()`) rather than one shared
+  instance, since a `Parser` isn't safe for concurrent use, so chunking genuinely parallelizes
+  rather than serializing behind a lock. A `KeyboardInterrupt` mid-scan drops every not-yet-started
+  file immediately instead of draining the whole backlog, so it only waits on the files already in
+  flight (up to `num_threads`) before returning — see `run_foreground_scan`'s own docstring. Raises
+  if another process already owns the index (that process's own watcher already keeps it current)
+  or the embedding model isn't installed.
+* **`stats`** (`--json`) — reads `SearchIndexStore.stats()` (file/chunk counts, chunk counts by
+  `kind`, on-disk size including WAL/SHM sidecars) without constructing a `WorkspaceIndexer`, so it
+  never creates an index that doesn't already exist.
+
+All three actions resolve the workspace root via `TrustManager().resolve_workspace(cwd)` but,
+unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
+an explicit `klorb index` invocation is itself the user's authorization, the same treatment
+`klorb init` gets.
 
 ## Configuration
 

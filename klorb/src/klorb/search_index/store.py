@@ -38,6 +38,16 @@ class FileIndexRecord:
     last_modified_ts: float
 
 
+@dataclass
+class IndexStats:
+    """Summary counts and on-disk size for `SearchIndexStore.stats()`."""
+
+    file_count: int
+    chunk_count: int
+    chunk_counts_by_kind: dict[str, int]
+    db_size_bytes: int
+
+
 class SearchIndexStore:
     """Owns one workspace's chunk index database at `db_path`. SQLite requires a connection's calls
     to be serialized when shared across threads (the owning `WorkspaceIndexer`'s background
@@ -61,6 +71,7 @@ class SearchIndexStore:
         sqlite_vec.load(self._conn)
         self._conn.enable_load_extension(False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._ensure_schema()
 
     def close(self) -> None:
@@ -198,6 +209,34 @@ class SearchIndexStore:
         return {
             row[0]: FileIndexRecord(content_hash=row[1], last_modified_ts=row[2]) for row in rows
         }
+
+    def clear(self, write_lock: "WriteLock | None" = None) -> None:
+        """Delete every row from `chunks`/`chunks_fts`/`chunks_vec`/`files`, leaving the schema
+        itself intact -- used by `klorb index scan --rebuild` to force a full reindex from
+        scratch."""
+        with self._write_scope(write_lock), self._thread_lock:
+            self._conn.execute("DELETE FROM chunks")
+            self._conn.execute("DELETE FROM chunks_fts")
+            self._conn.execute("DELETE FROM chunks_vec")
+            self._conn.execute("DELETE FROM files")
+            self._conn.commit()
+        logger.debug("Cleared all rows from %s.", self._db_path)
+
+    def stats(self) -> IndexStats:
+        """Summary counts over this store's current contents and `db_path`'s on-disk size,
+        including its WAL/SHM sidecar files since a recent write may still be sitting in the
+        WAL rather than the main database file."""
+        with self._thread_lock:
+            file_count = self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            chunk_count = self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            kind_rows = self._conn.execute(
+                "SELECT kind, COUNT(*) FROM chunks GROUP BY kind").fetchall()
+        db_size_bytes = sum(
+            path.stat().st_size for path in self._db_path.parent.glob(f"{self._db_path.name}*")
+            if path.is_file())
+        return IndexStats(
+            file_count=file_count, chunk_count=chunk_count,
+            chunk_counts_by_kind=dict(kind_rows), db_size_bytes=db_size_bytes)
 
     def search_lexical(self, query: str, limit: int) -> list[str]:
         """Return up to `limit` `chunk_id`s matching `query` via FTS5, ranked by BM25 (most

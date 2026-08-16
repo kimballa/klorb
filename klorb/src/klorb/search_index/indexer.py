@@ -9,6 +9,8 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -35,6 +37,17 @@ DEFAULT_SEARCH_LIMIT = 20
 _ALWAYS_SKIP_DIR_NAMES = frozenset({".git", ".svn", ".cvs", ".hg",
                                     "venv", ".venv",
                                     "node_modules", KLORB_PROJECT_DIR_NAME})
+
+
+@dataclass
+class ScanStats:
+    """Result of `WorkspaceIndexer.run_foreground_scan()`: what changed and how long it took."""
+
+    files_scanned: int
+    files_indexed: int
+    files_removed: int
+    chunks_indexed: int
+    elapsed_seconds: float
 
 
 def _file_hash(text: str) -> str:
@@ -149,6 +162,109 @@ class WorkspaceIndexer:
         query_embedding = get_embedding_model().embed_query(query_text)
         return self._store.hybrid_search(query_text, query_embedding, limit)
 
+    def run_foreground_scan(self, *, rebuild: bool = False, num_threads: int = 1) -> ScanStats:
+        """Synchronously scan the workspace and (re)index every dirty file, for `klorb index
+        scan`. Unlike `start()`'s background catch-up scan, this blocks until finished and fans
+        the chunk/embed work for changed files out across `num_threads` worker threads.
+        `rebuild` clears the index first, so every file is treated as dirty. A `KeyboardInterrupt`
+        mid-scan (`num_threads > 1`) drops every not-yet-started file immediately rather than
+        draining the whole backlog, so it only waits on the up-to-`num_threads` files already in
+        flight -- see `_scan_dirty_files`. Raises `RuntimeError` if another process already owns
+        this workspace's index (its own watcher already keeps it current) or if the bundled
+        embedding model isn't installed.
+        """
+        if not embedding_model_available():
+            raise RuntimeError("Embedding model not installed; run `klorb init` first.")
+        lock = create_lockfile(self._owner_lock_path)
+        if not lock.try_acquire():
+            raise RuntimeError(
+                f"Search index for {self._workspace_root} is owned by another running klorb "
+                "process; it already keeps the index up to date.")
+        self._owner_lock = lock
+        try:
+            with self._store.acquire_write_lock() as write_lock:
+                if rebuild:
+                    self._store.clear(write_lock)
+                return self._scan_dirty_files(write_lock, num_threads=max(1, num_threads))
+        finally:
+            lock.release()
+            self._owner_lock = None
+
+    def _scan_dirty_files(self, write_lock: WriteLock, *, num_threads: int) -> ScanStats:
+        """Walk the workspace and (re)index every file whose mtime or content changed since it
+        was last indexed, fanning the per-file read/chunk/embed work out across `num_threads`
+        worker threads when more than one is requested. Used by `run_foreground_scan`;
+        `_initial_scan` (the background scan `start()` runs) stays always-sequential so it can
+        check `self._closing_event` between files.
+        """
+        start_time = time.monotonic()
+        existing = self._store.file_records()
+        gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
+        seen: set[str] = set()
+        dirty: list[tuple[str, Path, float]] = []
+        for abs_path in _walk_indexable_files(self._workspace_root, gitignore):
+            rel_path = abs_path.relative_to(self._workspace_root).as_posix()
+            seen.add(rel_path)
+            try:
+                mtime = abs_path.stat().st_mtime
+            except OSError:
+                continue
+            existing_record = existing.get(rel_path)
+            if existing_record is None or existing_record.last_modified_ts != mtime:
+                dirty.append((rel_path, abs_path, mtime))
+
+        files_indexed = 0
+        chunks_indexed = 0
+        counts_lock = threading.Lock()
+
+        def process_one(item: tuple[str, Path, float]) -> None:
+            nonlocal files_indexed, chunks_indexed
+            rel_path, abs_path, mtime = item
+            text = _read_text(abs_path)
+            if text is None:
+                return
+            content_hash = _file_hash(text)
+            existing_record = existing.get(rel_path)
+            if existing_record is not None and existing_record.content_hash == content_hash:
+                self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
+                return
+            chunk_count = self._reindex_file(rel_path, text, content_hash, mtime, write_lock)
+            with counts_lock:
+                files_indexed += 1
+                chunks_indexed += chunk_count
+
+        if num_threads <= 1 or len(dirty) <= 1:
+            for item in dirty:
+                process_one(item)
+        else:
+            # Submitted up front (mirroring Executor.map's own eager-submit behavior) rather than
+            # via `with ThreadPoolExecutor(...) as pool:` -- that context manager's `__exit__`
+            # unconditionally calls `shutdown(wait=True)`, which on an interrupt would block until
+            # every already-submitted file finished, however deep the backlog, since none of them
+            # get cancelled. `cancel_futures=True` here drops every not-yet-started file
+            # immediately, so an interrupt only waits on the up-to-`num_threads` files already in
+            # flight rather than the whole scan.
+            pool = ThreadPoolExecutor(max_workers=num_threads)
+            try:
+                futures = [pool.submit(process_one, item) for item in dirty]
+                for future in futures:
+                    future.result()
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+
+        stale_paths = set(existing) - seen
+        for rel_path in stale_paths:
+            self._store.delete_for_path(rel_path, write_lock)
+
+        elapsed = time.monotonic() - start_time
+        logger.debug(
+            "Foreground scan of %s: %d file(s) scanned, %d indexed, %d removed, %d chunk(s) "
+            "(%.1fs).", self._workspace_root, len(seen), files_indexed, len(stale_paths),
+            chunks_indexed, elapsed)
+        return ScanStats(
+            files_scanned=len(seen), files_indexed=files_indexed, files_removed=len(stale_paths),
+            chunks_indexed=chunks_indexed, elapsed_seconds=elapsed)
+
     def _begin_ownership(self) -> None:
         if self.is_owner() or self._closing_event.is_set():
             return
@@ -219,13 +335,15 @@ class WorkspaceIndexer:
     def _reindex_file(
         self, rel_path: str, text: str, content_hash: str, last_modified_ts: float,
         write_lock: WriteLock | None = None,
-    ) -> None:
+    ) -> int:
+        """(Re)chunk and (re)embed `rel_path`, returning how many chunks it produced."""
         self._store.delete_for_path(rel_path, write_lock)
         chunks = get_chunker_router().chunk_file(rel_path, text)
         if chunks:
             embeddings = get_embedding_model().embed_passages([chunk.text for chunk in chunks])
             self._store.upsert_chunks(chunks, embeddings, write_lock)
         self._store.set_file_hash(rel_path, content_hash, last_modified_ts, write_lock)
+        return len(chunks)
 
     def _start_watcher(self) -> None:
         if self._observer is not None or self._closing_event.is_set():

@@ -222,6 +222,135 @@ def test_initial_scan_skips_reembedding_when_only_mtime_changed(
         workspace_indexer.close()
 
 
+def test_run_foreground_scan_indexes_dirty_files(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+    (tmp_path / "b.py").write_text("def other():\n    pass\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_scanned == 2
+        assert stats.files_indexed == 2
+        assert stats.files_removed == 0
+        assert stats.chunks_indexed > 0
+        assert workspace_indexer._store.file_records().keys() == {"a.py", "b.py"}
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_skips_files_whose_mtime_is_unchanged(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("def unchanged(): pass\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        first = workspace_indexer.run_foreground_scan()
+        assert first.files_indexed == 1
+
+        second = workspace_indexer.run_foreground_scan()
+        assert second.files_indexed == 0
+        assert second.files_scanned == 1
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_removes_stale_files(tmp_path: Path) -> None:
+    path = tmp_path / "a.py"
+    path.write_text("def gone(): pass\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.run_foreground_scan()
+        path.unlink()
+
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_removed == 1
+        assert workspace_indexer._store.file_records() == {}
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_rebuild_reindexes_everything(tmp_path: Path) -> None:
+    path = tmp_path / "a.py"
+    path.write_text("def debounce(fn): pass\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.run_foreground_scan()
+
+        stats = workspace_indexer.run_foreground_scan(rebuild=True)
+
+        assert stats.files_indexed == 1  # re-indexed despite unchanged mtime
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_with_multiple_threads_indexes_every_file(tmp_path: Path) -> None:
+    for i in range(10):
+        (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}():\n    return {i}\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan(num_threads=4)
+
+        assert stats.files_indexed == 10
+        assert len(workspace_indexer._store.file_records()) == 10
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_cancels_pending_work_on_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for i in range(20):
+        (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+
+    processed_count = 0
+    original_embed_passages = _FakeEmbeddingModel.embed_passages
+
+    class _InterruptingEmbeddingModel(_FakeEmbeddingModel):
+        def embed_passages(self, texts: list[str]) -> list[np.ndarray]:
+            nonlocal processed_count
+            processed_count += 1
+            if processed_count == 2:
+                raise KeyboardInterrupt()
+            return original_embed_passages(self, texts)
+
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _InterruptingEmbeddingModel())
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            workspace_indexer.run_foreground_scan(num_threads=2)
+
+        # If shutdown() had drained the whole backlog instead of cancelling it (the bug under
+        # test), every one of the 20 dirty files would still get indexed despite the interrupt.
+        assert len(workspace_indexer._store.file_records()) < 20
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_raises_without_an_embedding_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: False)
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="Embedding model"):
+            workspace_indexer.run_foreground_scan()
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_raises_when_another_process_owns_the_index(tmp_path: Path) -> None:
+    owner = WorkspaceIndexer(tmp_path)
+    contender = WorkspaceIndexer(tmp_path)
+    try:
+        owner.start()
+        assert _wait_until(owner.is_owner)
+
+        with pytest.raises(RuntimeError, match="owned by another running klorb process"):
+            contender.run_foreground_scan()
+    finally:
+        owner.close()
+        contender.close()
+
+
 def test_hybrid_search_raises_without_an_embedding_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
