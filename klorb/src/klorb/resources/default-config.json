@@ -313,6 +313,7 @@
   "shell.command": "/bin/bash",
   "shell.timeout": null,
   "watchdog.timeout": 10.0,
+  "search.workspaceIndex.enabled": true,
   "compatibility.claudeMarkdown": false,
   "compatibility.claudeSkills": false,
   "ui.sidebar": null,

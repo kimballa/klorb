@@ -144,11 +144,17 @@ short-circuits to `None` — no directory created, no SQLite file opened, no thr
 **all** of:
 
 * `SessionConfig.search_workspace_index_enabled` is `true` (config key `search.workspaceIndex.enabled`,
-  default `false` — opt-in until proven, and unconditionally off for a `Session` built without going
-  through `klorb-config.json`, i.e. most unit tests).
+  default `true`).
 * `SessionConfig.workspace.trusted` is `true` — the same `.klorb`-writing trust gate `memories`/
   `skills` apply.
 * `klorb.search_index.embedding.embedding_model_available()` is `true` — `klorb init` has run.
+
+An autouse `klorb/tests/conftest.py` fixture (`_isolate_embedding_model_dir`) points
+`embedding_model_target_dir()` at an empty per-test temp dir, so `embedding_model_available()` is
+always `false` in the suite and the third gate above always short-circuits construction —
+deterministic across machines whether or not `klorb init` has run locally. Tests covering the
+feature itself construct or assign a `WorkspaceIndexer` directly instead of going through
+`Session`.
 
 `WorkspaceIndexer.close()` is registered as a root-session teardown subject
 (`_WORKSPACE_INDEXER_TEARDOWN_SUBJECT`), added to `_INFRASTRUCTURE_TEARDOWN_SUBJECTS` so
@@ -166,7 +172,7 @@ workspace_indexer` is `None`.
 
 ## Configuration
 
-* `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `false`, backing
+* `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `true`, backing
   `SessionConfig.search_workspace_index_enabled`.
 
 ## Out of scope

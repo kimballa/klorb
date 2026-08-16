@@ -3,15 +3,18 @@
 
 import glob
 import shutil
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from klorb import logging_config
 from klorb import process_config as process_config_module
+from klorb.session import SessionConfig
 from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tools.skill import common as skill_common
+from klorb.workspace import Workspace
 
 
 @pytest.fixture(autouse=True)
@@ -125,6 +128,27 @@ def _skip_session_naming(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_embedding_model_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Point `klorb.search_index.embedding.embedding_model_target_dir()` at an empty temp dir, so
+    `embedding_model_available()` is always `False` in the suite and `Session.
+    _create_workspace_indexer` never constructs a real `WorkspaceIndexer` for a trusted-workspace
+    `SessionConfig()`."""
+    monkeypatch.setattr(
+        "klorb.search_index.embedding.get_klorb_data_dir", lambda: tmp_path / "embedding-model-dir")
+
+
+@pytest.fixture
+def make_session_config(tmp_path: Path) -> Callable[..., SessionConfig]:
+    """Factory for a `SessionConfig` rooted at this test's own `tmp_path`, so a test that needs a
+    customized `SessionConfig` doesn't have to restate `workspace=Workspace(path=tmp_path)` for
+    every call; any field, including `workspace` itself, can still be overridden by keyword."""
+    def _make(**overrides: Any) -> SessionConfig:
+        overrides.setdefault("workspace", Workspace(path=tmp_path))
+        return SessionConfig(**overrides)
+    return _make
 
 
 @pytest.fixture(autouse=True)
