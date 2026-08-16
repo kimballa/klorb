@@ -67,19 +67,6 @@
     autonomously continuously pulling new tasks out from a queue (e.g. a directory filled with new
     feature spec documents or bug report documents) and executing them one after the next.
 
-* now that we have the python tui fzf for files, we have a python mechanism for maintaining a list of
-  all files in the repo. The FindFiles tool should take advantage of that for much faster
-  performance than actually hitting the filesystem directly. (The "server side" tool should maintain
-  its own list, not share with the tui. It should also include gitignored files... as well as anything
-  that readDirs and readFiles deny access to. It should build this list on startup then subscribe to
-  watchdog events, like the other fzf file index. It should also rebuild this file any time readDirs
-  or readFiles permissions are updated. It should definitely do this work on a bg thread.)
-
-* Sometimes the agent just thinks and thinks and keeps reading things and doesn't really make decisions
-  or start testing anything. Maybe we should notice this condition (only using read-only tools for N
-  tool calls in a row) and force it to deliver a report to the user that enumerates some concrete
-  next steps, or something like that.
-
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
     into role, task, context, constraints, and output format. (maybe ask a
@@ -112,6 +99,7 @@
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
   * Improve ability to use MessageSubagent for peer to peer 1:1 messaging while agent loops are ongoing?
+  * ToolSearch tool to do case-insensitive literal match + semantic index search of tool name/description/parameter schema docs. (Requires json- or tool-specific chunker.)
 
 * Improvements to Skills:
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
