@@ -8,6 +8,7 @@ docs/specs/local-search-index.md.
 import contextlib
 import logging
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -23,10 +24,18 @@ from klorb.search_index.ranking import reciprocal_rank_fusion
 logger = logging.getLogger(__name__)
 
 SCHEMA_NAME = "klorb.search_index.workspace"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 """Bumping this drops and rebuilds the whole index on next open rather than migrating it."""
 
 _WRITE_LOCK_FILENAME = "write.lock"
+
+
+@dataclass
+class FileIndexRecord:
+    """A previously-indexed file's whole-content hash and filesystem modification time."""
+
+    content_hash: str
+    last_modified_ts: float
 
 
 class SearchIndexStore:
@@ -83,7 +92,8 @@ class SearchIndexStore:
             self._conn.execute(
                 "CREATE INDEX idx_chunks_source_path ON chunks(source_path)")
             self._conn.execute(
-                "CREATE TABLE files (source_path TEXT PRIMARY KEY, content_hash TEXT NOT NULL)")
+                "CREATE TABLE files (source_path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, "
+                "last_modified_ts REAL NOT NULL)")
             self._conn.execute(
                 "CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, body)")
             self._conn.execute(
@@ -163,24 +173,31 @@ class SearchIndexStore:
                          len(chunk_ids), source_path, self._db_path)
 
     def set_file_hash(
-        self, source_path: str, content_hash: str, write_lock: "WriteLock | None" = None,
+        self, source_path: str, content_hash: str, last_modified_ts: float,
+        write_lock: "WriteLock | None" = None,
     ) -> None:
-        """Record `source_path`'s whole-file `content_hash` -- distinct from any individual
-        chunk's `Chunk.content_hash` -- so `file_hashes()` can answer "did this file change since
-        it was last indexed" unambiguously, without needing to pick among a file's several
-        chunks."""
+        """Record `source_path`'s whole-file `content_hash` and filesystem `last_modified_ts` --
+        distinct from any individual chunk's `Chunk.content_hash` -- so `file_records()` can
+        answer "did this file change since it was last indexed" unambiguously, without needing to
+        pick among a file's several chunks."""
         with self._write_scope(write_lock), self._thread_lock:
             self._conn.execute(
-                "INSERT INTO files(source_path, content_hash) VALUES (?, ?) "
-                "ON CONFLICT(source_path) DO UPDATE SET content_hash = excluded.content_hash",
-                (source_path, content_hash))
+                "INSERT INTO files(source_path, content_hash, last_modified_ts) VALUES (?, ?, ?) "
+                "ON CONFLICT(source_path) DO UPDATE SET content_hash = excluded.content_hash, "
+                "last_modified_ts = excluded.last_modified_ts",
+                (source_path, content_hash, last_modified_ts))
             self._conn.commit()
 
-    def file_hashes(self) -> dict[str, str]:
-        """Every currently-indexed `source_path` mapped to its whole-file `content_hash` --
-        used by the indexer to detect files that changed since they were last chunked."""
+    def file_records(self) -> dict[str, FileIndexRecord]:
+        """Every currently-indexed `source_path` mapped to its `FileIndexRecord` -- used by the
+        indexer to skip re-reading and re-hashing a file whose mtime hasn't changed, and to detect
+        files that changed since they were last chunked."""
         with self._thread_lock:
-            return dict(self._conn.execute("SELECT source_path, content_hash FROM files"))
+            rows = self._conn.execute(
+                "SELECT source_path, content_hash, last_modified_ts FROM files").fetchall()
+        return {
+            row[0]: FileIndexRecord(content_hash=row[1], last_modified_ts=row[2]) for row in rows
+        }
 
     def search_lexical(self, query: str, limit: int) -> list[str]:
         """Return up to `limit` `chunk_id`s matching `query` via FTS5, ranked by BM25 (most

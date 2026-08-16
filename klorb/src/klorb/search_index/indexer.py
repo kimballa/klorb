@@ -175,9 +175,13 @@ class WorkspaceIndexer:
 
     def _initial_scan(self, write_lock: WriteLock) -> None:
         """Reindex every changed or new file, and drop stale ones, under a single hold of
-        `write_lock` for the whole scan rather than a separate file-lock acquisition per file."""
+        `write_lock` for the whole scan rather than a separate file-lock acquisition per file.
+        A file whose mtime matches its stored `FileIndexRecord.last_modified_ts` is skipped
+        without reading or hashing it; a file whose mtime changed but whose content hash didn't
+        (e.g. a `git checkout` that touches mtimes) is skipped for chunking/embedding but still
+        gets its stored mtime refreshed."""
         start_time = time.monotonic()
-        existing_hashes = self._store.file_hashes()
+        existing = self._store.file_records()
         seen: set[str] = set()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
         for abs_path in _walk_indexable_files(self._workspace_root, gitignore):
@@ -186,16 +190,24 @@ class WorkspaceIndexer:
                     "Initial scan of %s interrupted by close() after %d file(s).",
                     self._workspace_root, len(seen))
                 return
+            rel_path = abs_path.relative_to(self._workspace_root).as_posix()
+            seen.add(rel_path)
+            try:
+                mtime = abs_path.stat().st_mtime
+            except OSError:
+                continue
+            existing_record = existing.get(rel_path)
+            if existing_record is not None and existing_record.last_modified_ts == mtime:
+                continue
             text = _read_text(abs_path)
             if text is None:
                 continue
-            rel_path = abs_path.relative_to(self._workspace_root).as_posix()
-            seen.add(rel_path)
             content_hash = _file_hash(text)
-            if existing_hashes.get(rel_path) == content_hash:
+            if existing_record is not None and existing_record.content_hash == content_hash:
+                self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
                 continue
-            self._reindex_file(rel_path, text, content_hash, write_lock)
-        stale_paths = set(existing_hashes) - seen
+            self._reindex_file(rel_path, text, content_hash, mtime, write_lock)
+        stale_paths = set(existing) - seen
         for rel_path in stale_paths:
             self._store.delete_for_path(rel_path, write_lock)
         end_time = time.monotonic()
@@ -205,14 +217,15 @@ class WorkspaceIndexer:
             self._workspace_root, len(seen), len(stale_paths), elapsed)
 
     def _reindex_file(
-        self, rel_path: str, text: str, content_hash: str, write_lock: WriteLock | None = None,
+        self, rel_path: str, text: str, content_hash: str, last_modified_ts: float,
+        write_lock: WriteLock | None = None,
     ) -> None:
         self._store.delete_for_path(rel_path, write_lock)
         chunks = get_chunker_router().chunk_file(rel_path, text)
         if chunks:
             embeddings = get_embedding_model().embed_passages([chunk.text for chunk in chunks])
             self._store.upsert_chunks(chunks, embeddings, write_lock)
-        self._store.set_file_hash(rel_path, content_hash, write_lock)
+        self._store.set_file_hash(rel_path, content_hash, last_modified_ts, write_lock)
 
     def _start_watcher(self) -> None:
         if self._observer is not None or self._closing_event.is_set():
@@ -259,7 +272,12 @@ class WorkspaceIndexer:
         if text is None:
             self._store.delete_for_path(rel_path)
             return
-        self._reindex_file(rel_path, text, _file_hash(text))
+        try:
+            mtime = abs_path.stat().st_mtime
+        except OSError:
+            self._store.delete_for_path(rel_path)
+            return
+        self._reindex_file(rel_path, text, _file_hash(text), mtime)
 
 
 class _ChangeHandler(FileSystemEventHandler):

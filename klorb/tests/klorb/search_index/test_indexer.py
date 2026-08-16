@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.search_index.indexer."""
 
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -158,6 +159,67 @@ def test_ownership_transfers_after_the_owner_closes(tmp_path: Path) -> None:
         assert _wait_until(second.is_owner)
     finally:
         second.close()
+
+
+def test_initial_scan_does_not_reread_a_file_whose_mtime_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.py").write_text("def unchanged(): pass\n")
+    original_read_text = indexer_module._read_text
+    read_calls: list[Path] = []
+
+    def _tracking_read_text(path: Path) -> str | None:
+        read_calls.append(path)
+        return original_read_text(path)
+
+    monkeypatch.setattr(indexer_module, "_read_text", _tracking_read_text)
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        with workspace_indexer._store.acquire_write_lock() as write_lock:
+            workspace_indexer._initial_scan(write_lock)
+        assert read_calls == [tmp_path / "a.py"]
+
+        with workspace_indexer._store.acquire_write_lock() as write_lock:
+            workspace_indexer._initial_scan(write_lock)
+        assert read_calls == [tmp_path / "a.py"]  # not re-read: mtime unchanged
+    finally:
+        workspace_indexer.close()
+
+
+def test_initial_scan_skips_reembedding_when_only_mtime_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "a.py"
+    path.write_text("def unchanged(): pass\n")
+    embed_calls = 0
+    original_embed_passages = _FakeEmbeddingModel.embed_passages
+
+    class _CountingEmbeddingModel(_FakeEmbeddingModel):
+        def embed_passages(self, texts: list[str]) -> list[np.ndarray]:
+            nonlocal embed_calls
+            embed_calls += 1
+            return original_embed_passages(self, texts)
+
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _CountingEmbeddingModel())
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        with workspace_indexer._store.acquire_write_lock() as write_lock:
+            workspace_indexer._initial_scan(write_lock)
+        assert embed_calls == 1
+
+        # Rewrite the same content, bumping only the mtime -- the `git checkout` case.
+        future = time.time() + 5
+        path.write_text("def unchanged(): pass\n")
+        os.utime(path, (future, future))
+
+        with workspace_indexer._store.acquire_write_lock() as write_lock:
+            workspace_indexer._initial_scan(write_lock)
+        assert embed_calls == 1  # content hash matches -- no re-embed
+
+        record = workspace_indexer._store.file_records()["a.py"]
+        assert record.last_modified_ts == pytest.approx(future)
+    finally:
+        workspace_indexer.close()
 
 
 def test_hybrid_search_raises_without_an_embedding_model(

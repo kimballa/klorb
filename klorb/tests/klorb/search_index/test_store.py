@@ -9,7 +9,7 @@ import pytest
 
 from klorb.search_index import store as store_module
 from klorb.search_index.chunk import Chunk
-from klorb.search_index.store import SearchIndexStore
+from klorb.search_index.store import FileIndexRecord, SearchIndexStore
 
 
 def _chunk(source_path: str, text: str, *, start_line: int = 1, end_line: int = 1) -> Chunk:
@@ -91,26 +91,31 @@ def test_delete_for_path_removes_every_chunk_for_that_file(store: SearchIndexSto
     assert store.search_lexical("debounce", 10) == [other_file.chunk_id]
 
 
-def test_file_hashes_round_trip(store: SearchIndexStore) -> None:
-    store.set_file_hash("a.py", "hash1")
-    store.set_file_hash("b.py", "hash2")
+def test_file_records_round_trip(store: SearchIndexStore) -> None:
+    store.set_file_hash("a.py", "hash1", 100.0)
+    store.set_file_hash("b.py", "hash2", 200.0)
 
-    assert store.file_hashes() == {"a.py": "hash1", "b.py": "hash2"}
+    assert store.file_records() == {
+        "a.py": FileIndexRecord(content_hash="hash1", last_modified_ts=100.0),
+        "b.py": FileIndexRecord(content_hash="hash2", last_modified_ts=200.0),
+    }
 
 
 def test_set_file_hash_overwrites_an_existing_value(store: SearchIndexStore) -> None:
-    store.set_file_hash("a.py", "hash1")
-    store.set_file_hash("a.py", "hash2")
+    store.set_file_hash("a.py", "hash1", 100.0)
+    store.set_file_hash("a.py", "hash2", 200.0)
 
-    assert store.file_hashes() == {"a.py": "hash2"}
+    assert store.file_records() == {
+        "a.py": FileIndexRecord(content_hash="hash2", last_modified_ts=200.0),
+    }
 
 
 def test_delete_for_path_removes_its_file_hash(store: SearchIndexStore) -> None:
-    store.set_file_hash("a.py", "hash1")
+    store.set_file_hash("a.py", "hash1", 100.0)
 
     store.delete_for_path("a.py")
 
-    assert store.file_hashes() == {}
+    assert store.file_records() == {}
 
 
 def test_upsert_chunks_rejects_mismatched_lengths(store: SearchIndexStore) -> None:

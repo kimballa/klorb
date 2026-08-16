@@ -81,9 +81,11 @@ the running Python was built, so relying on it isn't reliable) connection per wo
   `bm25()`.
 * **`chunks_vec`** — a `sqlite-vec` `vec0` virtual table (`chunk_id TEXT PRIMARY KEY,
   embedding FLOAT[384]`); `search_vector()` ranks by KNN distance.
-* **`files`** — `source_path -> whole-file content_hash`, distinct from any individual chunk's own
-  `content_hash`, so the indexer can answer "did this file change since it was last indexed"
-  unambiguously without picking among a file's several chunks.
+* **`files`** — `source_path -> (content_hash, last_modified_ts)`; `content_hash` is a whole-file
+  hash distinct from any individual chunk's own `content_hash`, so the indexer can answer "did this
+  file change since it was last indexed" unambiguously without picking among a file's several
+  chunks. `last_modified_ts` is the file's mtime as of that indexing, letting a scan skip reading
+  and hashing a file whose mtime hasn't moved.
 * **`meta`** — a `schema` row (`SCHEMA_NAME:SCHEMA_VERSION`); a mismatch drops and rebuilds every
   other table rather than migrating — the SQLite-file analogue of the JSON schema-envelope
   convention in `docs/specs/persisted-json-schema-versioning.md`, applied here since this isn't a
@@ -129,9 +131,11 @@ scan, the background filesystem watcher, and cross-process ownership.
   same gitignore-aware filtering `klorb.tui.workspace_file_index.WorkspaceFileIndex` uses for its own
   `@`-mention index), skipping `.git`/`.klorb` unconditionally, symlinks, and any file over
   `MAX_INDEXED_FILE_BYTES` (500KB) or that fails to decode as UTF-8 (the same silent-skip `Grep` gives
-  an undecodable file). Compares each file's whole-content hash against `SearchIndexStore.
-  file_hashes()` and only rechunks/re-embeds a file whose hash changed; a previously-indexed path no
-  longer seen is deleted.
+  an undecodable file). A file whose mtime matches its stored `FileIndexRecord.last_modified_ts` is
+  skipped without being read or hashed. Otherwise its whole-content hash is compared against the
+  stored `content_hash`: an unchanged hash (e.g. a `git checkout` that only bumps mtimes) just
+  refreshes the stored mtime, while a changed hash rechunks and re-embeds it. A previously-indexed
+  path no longer seen is deleted.
 * **The watcher** — a `watchdog` `Observer` + debounce-`Timer`, the same idiom
   `klorb.hooks.fs_events.FileSystemWatcher`/`klorb.tui.workspace_file_index.WorkspaceFileIndex` use —
   reindexes (or deletes, if the path no longer exists or gitignore now excludes it) each changed path
