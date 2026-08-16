@@ -14,6 +14,7 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from klorb.lockfile import Lockfile, create_lockfile
+from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.router import get_chunker_router
 from klorb.search_index.embedding import EmbeddingModel, embedding_model_available, get_embedding_model
@@ -21,19 +22,6 @@ from klorb.search_index.indexer import DEBOUNCE_SECONDS, DEFAULT_SEARCH_LIMIT, M
 from klorb.search_index.store import SearchIndexStore, WriteLock
 
 logger = logging.getLogger(__name__)
-
-MEMORIES_GLOBAL_CATALOG = "memories-global"
-MEMORIES_WORKSPACE_CATALOG = "memories-workspace"
-
-
-def namespace_for_catalog(catalog: str) -> str:
-    """Return the memory namespace (`"global"`/`"workspace"`) `catalog` belongs to. Raises
-    `ValueError` if `catalog` isn't one of the two memories catalogs."""
-    if catalog == MEMORIES_GLOBAL_CATALOG:
-        return "global"
-    if catalog == MEMORIES_WORKSPACE_CATALOG:
-        return "workspace"
-    raise ValueError(f"{catalog!r} is not a memories catalog")
 
 
 def _file_hash(text: str) -> str:
@@ -115,13 +103,15 @@ class MemoryCatalogIndexer:
         return self._owner_lock is not None
 
     def hybrid_search(
-        self, query_text: str, limit: int = DEFAULT_SEARCH_LIMIT,
+        self, query_text: str, limit: int = DEFAULT_SEARCH_LIMIT, catalog: str | None = None,
     ) -> list[tuple[Chunk, float]]:
-        """Fused BM25 + vector-KNN search over whatever this namespace's index currently holds."""
+        """Fused BM25 + vector-KNN search over whatever this namespace's index currently holds.
+        `catalog`, if given, must be this indexer's own `catalog`; defaults to it when omitted."""
         if not self.is_owner():
             self._begin_ownership()
         query_embedding = get_embedding_model().embed_query(query_text)
-        return self._store.hybrid_search(query_text, query_embedding, limit)
+        return self._store.hybrid_search(
+            query_text, query_embedding, limit, catalog if catalog is not None else self._catalog)
 
     def _begin_ownership(self) -> None:
         if self.is_owner() or self._closing_event.is_set():

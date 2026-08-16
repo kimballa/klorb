@@ -24,7 +24,7 @@ from klorb.search_index.ranking import reciprocal_rank_fusion
 logger = logging.getLogger(__name__)
 
 SCHEMA_NAME = "klorb.search_index.workspace"
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 """Bumping this drops and rebuilds the whole index on next open rather than migrating it."""
 
 _WRITE_LOCK_FILENAME = "write.lock"
@@ -106,10 +106,11 @@ class SearchIndexStore:
                 "CREATE TABLE files (source_path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, "
                 "last_modified_ts REAL NOT NULL)")
             self._conn.execute(
-                "CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, body)")
+                "CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, catalog UNINDEXED, body)")
             self._conn.execute(
                 f"CREATE VIRTUAL TABLE chunks_vec USING vec0("
-                f" chunk_id TEXT PRIMARY KEY, embedding FLOAT[{EMBEDDING_DIMENSIONS}])")
+                f" chunk_id TEXT PRIMARY KEY, catalog TEXT PARTITION KEY,"
+                f" embedding FLOAT[{EMBEDDING_DIMENSIONS}])")
             self._conn.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (current,))
@@ -156,13 +157,13 @@ class SearchIndexStore:
                 self._conn.execute(
                     "DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk.chunk_id,))
                 self._conn.execute(
-                    "INSERT INTO chunks_fts(chunk_id, body) VALUES (?, ?)",
-                    (chunk.chunk_id, chunk.text))
+                    "INSERT INTO chunks_fts(chunk_id, catalog, body) VALUES (?, ?, ?)",
+                    (chunk.chunk_id, chunk.catalog, chunk.text))
                 self._conn.execute(
                     "DELETE FROM chunks_vec WHERE chunk_id = ?", (chunk.chunk_id,))
                 self._conn.execute(
-                    "INSERT INTO chunks_vec(chunk_id, embedding) VALUES (?, ?)",
-                    (chunk.chunk_id, np.asarray(embedding, dtype=np.float32).tobytes()))
+                    "INSERT INTO chunks_vec(chunk_id, catalog, embedding) VALUES (?, ?, ?)",
+                    (chunk.chunk_id, chunk.catalog, np.asarray(embedding, dtype=np.float32).tobytes()))
             self._conn.commit()
         logger.debug("Upserted %d chunk(s) into %s.", len(chunks), self._db_path)
 
@@ -238,36 +239,40 @@ class SearchIndexStore:
             file_count=file_count, chunk_count=chunk_count,
             chunk_counts_by_kind=dict(kind_rows), db_size_bytes=db_size_bytes)
 
-    def search_lexical(self, query: str, limit: int) -> list[str]:
-        """Return up to `limit` `chunk_id`s matching `query` via FTS5, ranked by BM25 (most
-        relevant first). `query` is escaped as a set of quoted FTS5 tokens, so punctuation in a
-        natural-language query can never be parsed as FTS5 query syntax."""
+    def search_lexical(self, query: str, limit: int, catalog: str) -> list[str]:
+        """Return up to `limit` `chunk_id`s matching `query` within `catalog` via FTS5, ranked by
+        BM25 (most relevant first). `query` is escaped as a set of quoted FTS5 tokens, so
+        punctuation in a natural-language query can never be parsed as FTS5 query syntax."""
         fts_query = " ".join(f'"{term}"' for term in query.split() if term)
         if not fts_query:
             return []
         with self._thread_lock:
             rows = self._conn.execute(
-                "SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?",
-                (fts_query, limit)).fetchall()
+                "SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? AND catalog = ? "
+                "ORDER BY bm25(chunks_fts) LIMIT ?",
+                (fts_query, catalog, limit)).fetchall()
         return [row[0] for row in rows]
 
-    def search_vector(self, query_embedding: np.ndarray, limit: int) -> list[str]:
-        """Return up to `limit` `chunk_id`s nearest to `query_embedding` via `vec0` KNN (closest
-        first)."""
+    def search_vector(self, query_embedding: np.ndarray, limit: int, catalog: str) -> list[str]:
+        """Return up to `limit` `chunk_id`s within `catalog` nearest to `query_embedding` via
+        `vec0` KNN (closest first). `catalog` is a `vec0` partition key, so this is a true
+        within-catalog nearest-neighbor search, not a global top-`limit` search filtered
+        afterward."""
         with self._thread_lock:
             rows = self._conn.execute(
-                "SELECT chunk_id FROM chunks_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-                (np.asarray(query_embedding, dtype=np.float32).tobytes(), limit)).fetchall()
+                "SELECT chunk_id FROM chunks_vec WHERE embedding MATCH ? AND catalog = ? "
+                "AND k = ? ORDER BY distance",
+                (np.asarray(query_embedding, dtype=np.float32).tobytes(), catalog, limit)).fetchall()
         return [row[0] for row in rows]
 
     def hybrid_search(
-        self, query_text: str, query_embedding: np.ndarray, limit: int,
+        self, query_text: str, query_embedding: np.ndarray, limit: int, catalog: str,
     ) -> list[tuple[Chunk, float]]:
-        """Fuse `search_lexical`/`search_vector` (each capped to `limit`) via
-        `reciprocal_rank_fusion`, then hydrate the top `limit` fused results into full `Chunk`
-        rows paired with their fused score."""
-        lexical_ids = self.search_lexical(query_text, limit)
-        vector_ids = self.search_vector(query_embedding, limit)
+        """Fuse `search_lexical`/`search_vector` (each capped to `limit`, both scoped to
+        `catalog`) via `reciprocal_rank_fusion`, then hydrate the top `limit` fused results into
+        full `Chunk` rows paired with their fused score."""
+        lexical_ids = self.search_lexical(query_text, limit, catalog)
+        vector_ids = self.search_vector(query_embedding, limit, catalog)
         fused = reciprocal_rank_fusion([lexical_ids, vector_ids])[:limit]
         chunks_by_id = self._load_chunks([chunk_id for chunk_id, _ in fused])
         return [

@@ -10,6 +10,7 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.search_index.chunk import Chunk
+from klorb.search_index.chunkers.base import CATALOG
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
@@ -161,7 +162,7 @@ class SemanticSearchTool(Tool):
         search_queries = [
             self._secret_redactor.detokenize(self.context.session, query) for query in queries]
 
-        hits = self._core.merged_hits([indexer], search_queries, limit_per_query=top_k * 4)
+        hits = self._core.merged_hits([(indexer, CATALOG)], search_queries, limit_per_query=top_k * 4)
 
         in_scope = [
             (chunk, score) for chunk, score in hits

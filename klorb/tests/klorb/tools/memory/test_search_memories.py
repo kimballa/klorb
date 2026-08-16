@@ -7,8 +7,8 @@ import pytest
 
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
+from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
 from klorb.search_index.chunk import Chunk
-from klorb.search_index.memory_indexer import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
 from klorb.session import Session, SessionConfig
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory import search_memories as search_memories_module
@@ -32,8 +32,8 @@ def _context(
 def _context_with_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, trusted: bool = True,
 ) -> tuple[Session, ToolSetupContext]:
-    """A `ToolSetupContext` backed by a real `Session`, so `context.session.
-    workspace_memory_indexer` can be overridden. Caller must `session.close()` when done."""
+    """A `ToolSetupContext` backed by a real `Session`, so `context.session.workspace_indexer`
+    can be overridden. Caller must `session.close()` when done."""
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
@@ -61,15 +61,21 @@ class _FakeMemoryIndexer:
     def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
         self._hits = hits
 
-    def hybrid_search(self, query_text: str, limit: int) -> list[tuple[Chunk, float]]:
+    def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
         return self._hits[:limit]
 
 
 def _semantic_chunk(namespace: Namespace, filename: str, start_line: int, end_line: int) -> Chunk:
-    catalog = MEMORIES_GLOBAL_CATALOG if namespace == "global" else MEMORIES_WORKSPACE_CATALOG
+    """A `Chunk` matching how `WorkspaceIndexer`/`MemoryCatalogIndexer` would actually have
+    indexed `filename`: workspace-root-relative for the `workspace` namespace (it shares
+    `WorkspaceIndexer` with the `workspace` catalog), bare for the `global` namespace."""
+    if namespace == "global":
+        catalog, source_path = MEMORIES_GLOBAL_CATALOG, filename
+    else:
+        catalog, source_path = MEMORIES_WORKSPACE_CATALOG, f".klorb/memories/{filename}"
     return Chunk.create(
-        catalog=catalog, source_path=filename, kind="markdown_section",
-        start_line=start_line, end_line=end_line, text="ignored -- rendered from disk")
+        catalog=catalog, source_path=source_path, kind="markdown_section",
+        start_line=start_line, end_line=end_line, text="ignored, rendered from disk")
 
 
 def test_finds_case_insensitive_content_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +453,7 @@ def test_semantic_hit_from_workspace_index_is_included(
     session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "workspace", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("workspace", "notes.md", 1, 2)
-    session._workspace_memory_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
         [(chunk, 0.5)])
     try:
         result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})

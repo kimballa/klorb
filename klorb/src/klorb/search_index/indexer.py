@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`WorkspaceIndexer`: owns one workspace's search index -- the initial scan, the background
-filesystem watcher, and lockfile-based single-writer ownership so at most one klorb process
-sharing a workspace runs the indexer at a time. See docs/specs/local-search-index.md.
+"""`WorkspaceIndexer`: owns one workspace's search index, covering the `workspace` and
+`memories-workspace` catalogs. See docs/specs/local-search-index.md.
 """
 
 import hashlib
@@ -19,10 +18,13 @@ from watchdog.observers.api import BaseObserver
 
 from klorb.lockfile import Lockfile, create_lockfile
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace_klorb_dir
+from klorb.search_index.catalogs import MEMORIES_WORKSPACE_CATALOG
 from klorb.search_index.chunk import Chunk
+from klorb.search_index.chunkers.base import CATALOG
 from klorb.search_index.chunkers.router import get_chunker_router
 from klorb.search_index.embedding import EmbeddingModel, embedding_model_available, get_embedding_model
-from klorb.search_index.store import SearchIndexStore, WriteLock
+from klorb.search_index.store import FileIndexRecord, SearchIndexStore, WriteLock
+from klorb.tools.memory.common import MEMORIES_DIRNAME
 from klorb.tools.util.gitignore import GitignoreFilter
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,51 @@ def _walk_indexable_files(root: Path, gitignore: GitignoreFilter) -> Iterator[Pa
             yield entry
 
 
+def _walk_workspace_memory_files(workspace_root: Path) -> list[Path]:
+    """Every `.md`, non-dotfile file directly in `workspace_root`'s `.klorb/memories/`. A flat
+    directory, so this never recurses and ignores gitignore."""
+    memories_dir = workspace_klorb_dir(workspace_root) / MEMORIES_DIRNAME
+    try:
+        entries = sorted(memories_dir.iterdir(), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    return [
+        entry for entry in entries
+        if entry.is_file() and entry.suffix == ".md" and not entry.name.startswith(".")
+    ]
+
+
+@dataclass
+class _DirtyFile:
+    """One file `_scan_dirty_files` found changed or new, queued for (re)chunking/(re)embedding."""
+
+    rel_path: str
+    abs_path: Path
+    mtime: float
+    catalog: str
+
+
+def _collect_dirty(
+    paths: Iterator[Path] | list[Path], workspace_root: Path, catalog: str,
+    existing: dict[str, FileIndexRecord], seen: set[str],
+) -> list[_DirtyFile]:
+    """Filter `paths` (all belonging to `catalog`) down to the ones whose mtime changed since
+    `existing`, recording every path's `rel_path` into `seen` along the way regardless of
+    dirtiness."""
+    dirty = []
+    for abs_path in paths:
+        rel_path = abs_path.relative_to(workspace_root).as_posix()
+        seen.add(rel_path)
+        try:
+            mtime = abs_path.stat().st_mtime
+        except OSError:
+            continue
+        existing_record = existing.get(rel_path)
+        if existing_record is None or existing_record.last_modified_ts != mtime:
+            dirty.append(_DirtyFile(rel_path, abs_path, mtime, catalog))
+    return dirty
+
+
 class WorkspaceIndexer:
     """One workspace's search index. `start()` is non-blocking: it spawns a background thread
     that attempts to become the workspace's sole indexer (via a `klorb.lockfile` owner lock) and,
@@ -179,17 +226,18 @@ class WorkspaceIndexer:
     def is_owner(self) -> bool:
         return self._owner_lock is not None
 
-    def hybrid_search(self, query_text: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[tuple[Chunk, float]]:
-        """Fused BM25 + vector-KNN search over whatever this workspace's index currently holds.
-        If no process currently owns the index, this call's process claims ownership and starts
-        indexing in the background (see `start()`) -- the results returned *this* call are still
-        whatever was already committed, not blocked on that catch-up scan finishing. Raises
-        `RuntimeError` if the embedding model isn't available (`klorb init` hasn't run, or an
-        embedding dependency failed to import)."""
+    def hybrid_search(
+        self, query_text: str, limit: int, catalog: str = CATALOG,
+    ) -> list[tuple[Chunk, float]]:
+        """Fused BM25 + vector-KNN search, scoped to `catalog`, over whatever this workspace's
+        index currently holds. If no process currently owns the index, this call's process
+        claims ownership and starts indexing in the background, though the results returned
+        *this* call are still whatever was already committed. Raises `RuntimeError` if the
+        embedding model isn't available."""
         if not self.is_owner():
             self._begin_ownership()
         query_embedding = get_embedding_model().embed_query(query_text)
-        return self._store.hybrid_search(query_text, query_embedding, limit)
+        return self._store.hybrid_search(query_text, query_embedding, limit, catalog)
 
     def run_foreground_scan(
         self, *, rebuild: bool = False, num_threads: int = 1, use_gpu: bool = False,
@@ -254,17 +302,12 @@ class WorkspaceIndexer:
         existing = self._store.file_records()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
         seen: set[str] = set()
-        dirty: list[tuple[str, Path, float]] = []
-        for abs_path in _walk_indexable_files(self._workspace_root, gitignore):
-            rel_path = abs_path.relative_to(self._workspace_root).as_posix()
-            seen.add(rel_path)
-            try:
-                mtime = abs_path.stat().st_mtime
-            except OSError:
-                continue
-            existing_record = existing.get(rel_path)
-            if existing_record is None or existing_record.last_modified_ts != mtime:
-                dirty.append((rel_path, abs_path, mtime))
+        dirty: list[_DirtyFile] = []
+        for paths, catalog in (
+            (_walk_indexable_files(self._workspace_root, gitignore), CATALOG),
+            (_walk_workspace_memory_files(self._workspace_root), MEMORIES_WORKSPACE_CATALOG),
+        ):
+            dirty.extend(_collect_dirty(paths, self._workspace_root, catalog, existing, seen))
 
         files_indexed = 0
         chunks_indexed = 0
@@ -279,18 +322,17 @@ class WorkspaceIndexer:
                 thread_local.model = model
             return model
 
-        def process_one(item: tuple[str, Path, float]) -> None:
+        def process_one(item: _DirtyFile) -> None:
             nonlocal files_indexed, chunks_indexed
-            rel_path, abs_path, mtime = item
             read_start = time.monotonic()
-            text = _read_text(abs_path)
+            text = _read_text(item.abs_path)
             timings.add_read(time.monotonic() - read_start)
             if text is None:
                 return
             content_hash = _file_hash(text)
-            existing_record = existing.get(rel_path)
+            existing_record = existing.get(item.rel_path)
             if existing_record is not None and existing_record.content_hash == content_hash:
-                self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
+                self._store.set_file_hash(item.rel_path, content_hash, item.mtime, write_lock)
                 return
             if shared_gpu_model is not None:
                 embedding_model = shared_gpu_model
@@ -299,7 +341,8 @@ class WorkspaceIndexer:
             else:
                 embedding_model = None
             chunk_count = self._reindex_file(
-                rel_path, text, content_hash, mtime, write_lock, embedding_model, timings)
+                item.rel_path, text, content_hash, item.mtime, write_lock, embedding_model,
+                timings, item.catalog)
             with counts_lock:
                 files_indexed += 1
                 chunks_indexed += chunk_count
@@ -373,29 +416,19 @@ class WorkspaceIndexer:
         existing = self._store.file_records()
         seen: set[str] = set()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
-        for abs_path in _walk_indexable_files(self._workspace_root, gitignore):
-            if self._closing_event.is_set():
-                logger.debug(
-                    "Initial scan of %s interrupted by close() after %d file(s).",
-                    self._workspace_root, len(seen))
-                return
-            rel_path = abs_path.relative_to(self._workspace_root).as_posix()
-            seen.add(rel_path)
-            try:
-                mtime = abs_path.stat().st_mtime
-            except OSError:
-                continue
-            existing_record = existing.get(rel_path)
-            if existing_record is not None and existing_record.last_modified_ts == mtime:
-                continue
-            text = _read_text(abs_path)
-            if text is None:
-                continue
-            content_hash = _file_hash(text)
-            if existing_record is not None and existing_record.content_hash == content_hash:
-                self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
-                continue
-            self._reindex_file(rel_path, text, content_hash, mtime, write_lock)
+        for paths, catalog in (
+            (_walk_indexable_files(self._workspace_root, gitignore), CATALOG),
+            (_walk_workspace_memory_files(self._workspace_root), MEMORIES_WORKSPACE_CATALOG),
+        ):
+            for abs_path in paths:
+                if self._closing_event.is_set():
+                    logger.debug(
+                        "Initial scan of %s interrupted by close() after %d file(s).",
+                        self._workspace_root, len(seen))
+                    return
+                rel_path = abs_path.relative_to(self._workspace_root).as_posix()
+                seen.add(rel_path)
+                self._scan_one_file(rel_path, abs_path, catalog, existing, write_lock)
         stale_paths = set(existing) - seen
         for rel_path in stale_paths:
             self._store.delete_for_path(rel_path, write_lock)
@@ -405,18 +438,40 @@ class WorkspaceIndexer:
             "Initial scan of %s indexed %d file(s), removed %d stale. (%.1f s)",
             self._workspace_root, len(seen), len(stale_paths), elapsed)
 
+    def _scan_one_file(
+        self, rel_path: str, abs_path: Path, catalog: str,
+        existing: dict[str, FileIndexRecord], write_lock: WriteLock,
+    ) -> None:
+        """Reindex `abs_path` into `catalog` if its mtime or content hash changed since
+        `existing`, or refresh its stored mtime if only the mtime changed."""
+        try:
+            mtime = abs_path.stat().st_mtime
+        except OSError:
+            return
+        existing_record = existing.get(rel_path)
+        if existing_record is not None and existing_record.last_modified_ts == mtime:
+            return
+        text = _read_text(abs_path)
+        if text is None:
+            return
+        content_hash = _file_hash(text)
+        if existing_record is not None and existing_record.content_hash == content_hash:
+            self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
+            return
+        self._reindex_file(rel_path, text, content_hash, mtime, write_lock, catalog=catalog)
+
     def _reindex_file(
         self, rel_path: str, text: str, content_hash: str, last_modified_ts: float,
         write_lock: WriteLock | None = None, embedding_model: EmbeddingModel | None = None,
-        timings: _ScanPhaseTimings | None = None,
+        timings: _ScanPhaseTimings | None = None, catalog: str = CATALOG,
     ) -> int:
-        """(Re)chunk and (re)embed `rel_path`, returning how many chunks it produced.
-        `embedding_model`, if given, is used instead of the shared `get_embedding_model()`
-        singleton -- see `_scan_dirty_files`. `timings`, if given, accumulates this call's
+        """(Re)chunk and (re)embed `rel_path` into `catalog`, returning how many chunks it
+        produced. `embedding_model`, if given, is used instead of the shared
+        `get_embedding_model()` singleton. `timings`, if given, accumulates this call's
         chunk/embed/store phase durations."""
         self._store.delete_for_path(rel_path, write_lock)
         chunk_start = time.monotonic()
-        chunks = get_chunker_router().chunk_file(rel_path, text)
+        chunks = get_chunker_router().chunk_file(rel_path, text, catalog)
         if timings is not None:
             timings.add_chunk(time.monotonic() - chunk_start)
         if chunks:
@@ -466,7 +521,11 @@ class WorkspaceIndexer:
             relative = abs_path.relative_to(self._workspace_root)
         except ValueError:
             return
-        if any(part in _ALWAYS_SKIP_DIR_NAMES for part in relative.parts[:-1]):
+        parts = relative.parts
+        if len(parts) == 3 and parts[0] == KLORB_PROJECT_DIR_NAME and parts[1] == MEMORIES_DIRNAME:
+            self._reindex_changed_memory_path(abs_path, relative.as_posix())
+            return
+        if any(part in _ALWAYS_SKIP_DIR_NAMES for part in parts[:-1]):
             return
         rel_path = relative.as_posix()
         gitignore = GitignoreFilter.for_root(self._workspace_root, abs_path.parent)
@@ -482,7 +541,23 @@ class WorkspaceIndexer:
         except OSError:
             self._store.delete_for_path(rel_path)
             return
-        self._reindex_file(rel_path, text, _file_hash(text), mtime)
+        self._reindex_file(rel_path, text, _file_hash(text), mtime, catalog=CATALOG)
+
+    def _reindex_changed_memory_path(self, abs_path: Path, rel_path: str) -> None:
+        """Reindex or delete a changed path directly under `.klorb/memories/`, the flat namespace
+        `_walk_workspace_memory_files` also covers."""
+        if abs_path.name.startswith(".") or abs_path.suffix != ".md":
+            return
+        text = _read_text(abs_path) if abs_path.is_file() else None
+        if text is None:
+            self._store.delete_for_path(rel_path)
+            return
+        try:
+            mtime = abs_path.stat().st_mtime
+        except OSError:
+            self._store.delete_for_path(rel_path)
+            return
+        self._reindex_file(rel_path, text, _file_hash(text), mtime, catalog=MEMORIES_WORKSPACE_CATALOG)
 
 
 class _ChangeHandler(FileSystemEventHandler):

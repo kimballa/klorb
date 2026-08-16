@@ -9,14 +9,9 @@ import numpy as np
 import pytest
 
 from klorb.search_index import memory_indexer as memory_indexer_module
+from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
 from klorb.search_index.embedding import EMBEDDING_DIMENSIONS
-from klorb.search_index.memory_indexer import (
-    MEMORIES_GLOBAL_CATALOG,
-    MEMORIES_WORKSPACE_CATALOG,
-    MemoryCatalogIndexer,
-    get_global_memory_indexer,
-    namespace_for_catalog,
-)
+from klorb.search_index.memory_indexer import MemoryCatalogIndexer, get_global_memory_indexer
 
 
 def _wait_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
@@ -40,16 +35,6 @@ class _FakeEmbeddingModel:
 def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(memory_indexer_module, "embedding_model_available", lambda: True)
     monkeypatch.setattr(memory_indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
-
-
-def test_namespace_for_catalog_resolves_both_catalogs() -> None:
-    assert namespace_for_catalog(MEMORIES_GLOBAL_CATALOG) == "global"
-    assert namespace_for_catalog(MEMORIES_WORKSPACE_CATALOG) == "workspace"
-
-
-def test_namespace_for_catalog_rejects_an_unknown_catalog() -> None:
-    with pytest.raises(ValueError, match="not a memories catalog"):
-        namespace_for_catalog("workspace")
 
 
 def test_start_becomes_owner_and_indexes_memory_files(tmp_path: Path) -> None:

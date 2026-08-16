@@ -56,7 +56,9 @@ class _FakeWorkspaceIndexer:
     def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
         self._hits = hits
 
-    def hybrid_search(self, query_text: str, limit: int = 20) -> list[tuple[Chunk, float]]:
+    def hybrid_search(
+        self, query_text: str, limit: int = 20, catalog: str = "workspace",
+    ) -> list[tuple[Chunk, float]]:
         return self._hits[:limit]
 
 

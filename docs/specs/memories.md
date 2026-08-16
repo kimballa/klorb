@@ -109,16 +109,17 @@ over that namespace's other memory files rather than a place to record full deta
 * On top of the literal search above, `SearchMemoriesTool` folds in up to `SEMANTIC_TOP_K` (5)
   semantic hits — chunks related to any query by meaning rather than exact wording — from
   whichever of the requested namespace's `memories-global`/`memories-workspace` search indexes
-  (see docs/specs/local-search-index.md's "Memories catalogs") are currently available, via the
-  same `klorb.tools.util.semantic_search_core.SemanticSearchCore` `SemanticSearch` uses. Only a
-  hit scoring at least `SEMANTIC_MIN_SCORE` (equivalent to ranking in the top 3 of at least one of
-  the fused lexical/vector lists — a high bar, appropriate since a session isn't expected to
-  accumulate many memory files) surfaces; a semantic entry carries an additional `score` field and
-  lists its matched chunk's line span (all lines marked). A file already reported via a literal
-  match is never duplicated as a separate semantic entry. Unlike `SemanticSearch`, an unavailable
-  index (feature disabled, embedding model not installed, or the relevant `MemoryCatalogIndexer`
-  hasn't been built for this session) is never an error — the semantic hits it would have added
-  are simply omitted, since the literal search above always still runs.
+  (see docs/specs/local-search-index.md's "Indexing: `WorkspaceIndexer`" and "The `memories-global`
+  catalog" sections) are currently available, via the same `klorb.tools.util.semantic_search_core.
+  SemanticSearchCore` `SemanticSearch` uses. Only a hit scoring at least `SEMANTIC_MIN_SCORE`
+  (equivalent to ranking in the top 3 of at least one of the fused lexical/vector lists — a high
+  bar, appropriate since a session isn't expected to accumulate many memory files) surfaces; a
+  semantic entry carries an additional `score` field and lists its matched chunk's line span (all
+  lines marked). A file already reported via a literal match is never duplicated as a separate
+  semantic entry. Unlike `SemanticSearch`, an unavailable index (feature disabled, embedding model
+  not installed, or `context.session.workspace_indexer`/`get_global_memory_indexer()` returning
+  `None`) is never an error — the semantic hits it would have added are simply omitted, since the
+  literal search above always still runs.
 * **Untrusted-workspace gating**: `workspace` memories are inaccessible in an untrusted
   workspace (see `klorb.workspace.Workspace.trusted`). `ListMemories`/`SearchMemories` report
   the `workspace` namespace as empty (or skip it entirely during iteration) rather than

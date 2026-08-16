@@ -78,9 +78,6 @@ if TYPE_CHECKING:
     # `klorb.search_index.indexer` imports `klorb.tools.util.gitignore`, and `klorb.session`
     # doesn't otherwise import anything from `klorb.tools.util`
     from klorb.search_index.indexer import WorkspaceIndexer
-    # `klorb.search_index.memory_indexer` imports `klorb.tools.memory.common`, and `klorb.session`
-    # doesn't otherwise import anything from `klorb.tools.memory`
-    from klorb.search_index.memory_indexer import MemoryCatalogIndexer
     # isort: on
 
 logger = logging.getLogger(__name__)
@@ -88,10 +85,9 @@ logger = logging.getLogger(__name__)
 _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT = "FileSystemWatcher"
 _TIMER_SCHEDULER_TEARDOWN_SUBJECT = "TimerScheduler"
 _WORKSPACE_INDEXER_TEARDOWN_SUBJECT = "WorkspaceIndexer"
-_WORKSPACE_MEMORY_INDEXER_TEARDOWN_SUBJECT = "WorkspaceMemoryIndexer"
 _INFRASTRUCTURE_TEARDOWN_SUBJECTS = frozenset({
     _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT, _TIMER_SCHEDULER_TEARDOWN_SUBJECT,
-    _WORKSPACE_INDEXER_TEARDOWN_SUBJECT, _WORKSPACE_MEMORY_INDEXER_TEARDOWN_SUBJECT})
+    _WORKSPACE_INDEXER_TEARDOWN_SUBJECT})
 """Teardown subjects `_reset_state()` must never touch: workspace/process-level resources
 registered once at root-session start (`_start_workspace_event_watchers`) and torn down only by
 a real `close()`, never recreated mid-session -- unlike `Scratchpad`/`Bash`'s persistent shell,
@@ -288,16 +284,6 @@ class SessionCoreMixin(SessionBase):
         there's nothing to rebuild."""
         if self._workspace_indexer is not None and parent is None:
             self.register_teardown(_WORKSPACE_INDEXER_TEARDOWN_SUBJECT, self._workspace_indexer.close)
-        self._workspace_memory_indexer = (
-            parent.workspace_memory_indexer if parent is not None
-            else self._create_workspace_memory_indexer(config)
-        )
-        """The local search index backing `SearchMemories`' semantic hits for the `workspace`
-        memories namespace, or `None` if this is an untrusted workspace, the feature is disabled,
-        or construction failed. Built once per root session and shared with subagents."""
-        if self._workspace_memory_indexer is not None and parent is None:
-            self.register_teardown(
-                _WORKSPACE_MEMORY_INDEXER_TEARDOWN_SUBJECT, self._workspace_memory_indexer.close)
 
     def _reset_state(self, *, scratchpad_path: str | None = None) -> None:
         """Reset every conversation-scoped field to a freshly constructed `Session`'s own value.
@@ -371,31 +357,6 @@ class SessionCoreMixin(SessionBase):
             indexer = WorkspaceIndexer(config.workspace.path)
         except OSError:
             logger.warning("Could not construct workspace search index.", exc_info=True)
-            return None
-        indexer.start()
-        return indexer
-
-    @staticmethod
-    def _create_workspace_memory_indexer(config: SessionConfig) -> "MemoryCatalogIndexer | None":
-        """Construct and `start()` a `MemoryCatalogIndexer` over `config.workspace.path`'s
-        `.klorb/memories` directory for the `memories-workspace` catalog, or return `None` if
-        `search_memories_index_enabled` is off, the workspace is untrusted, the bundled embedding
-        model isn't installed, or construction itself fails."""
-        if not config.search_memories_index_enabled or not config.workspace.trusted:
-            return None
-        from klorb.search_index.embedding import embedding_model_available
-        if not embedding_model_available():
-            return None
-        from klorb.permissions.directory_access import workspace_klorb_dir
-        from klorb.search_index.indexer import INDEX_DIR_NAME
-        from klorb.search_index.memory_indexer import MEMORIES_WORKSPACE_CATALOG, MemoryCatalogIndexer
-        from klorb.tools.memory.common import MEMORIES_DIRNAME
-        klorb_dir = workspace_klorb_dir(config.workspace.path)
-        try:
-            indexer = MemoryCatalogIndexer(
-                klorb_dir / MEMORIES_DIRNAME, MEMORIES_WORKSPACE_CATALOG, klorb_dir / INDEX_DIR_NAME)
-        except OSError:
-            logger.warning("Could not construct workspace memory search index.", exc_info=True)
             return None
         indexer.start()
         return indexer
@@ -505,12 +466,6 @@ class SessionCoreMixin(SessionBase):
     def workspace_indexer(self) -> "WorkspaceIndexer | None":
         """Return this session's `WorkspaceIndexer` or None."""
         return self._workspace_indexer
-
-    @property
-    def workspace_memory_indexer(self) -> "MemoryCatalogIndexer | None":
-        """Return this session's `MemoryCatalogIndexer` for the `memories-workspace` catalog, or
-        `None`."""
-        return self._workspace_memory_indexer
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:

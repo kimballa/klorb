@@ -18,7 +18,7 @@ class _FakeIndexer:
     def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
         self._hits = hits
 
-    def hybrid_search(self, query_text: str, limit: int) -> list[tuple[Chunk, float]]:
+    def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
         return self._hits[:limit]
 
 
@@ -31,7 +31,7 @@ def test_merged_hits_deduplicates_by_chunk_id_keeping_the_highest_score() -> Non
     indexer = _FakeIndexer([(chunk, 0.3)])
     core = _core()
 
-    hits = core.merged_hits([indexer], ["q1", "q2"], limit_per_query=10)
+    hits = core.merged_hits([(indexer, "workspace")], ["q1", "q2"], limit_per_query=10)
 
     assert len(hits) == 1
     assert hits[0] == (chunk, 0.3)
@@ -45,11 +45,11 @@ def test_merged_hits_keeps_the_higher_score_across_queries() -> None:
         def __init__(self) -> None:
             self._calls = 0
 
-        def hybrid_search(self, query_text: str, limit: int) -> list[tuple[Chunk, float]]:
+        def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
             self._calls += 1
             return [(chunk, 0.1 if self._calls == 1 else 0.9)]
 
-    hits = core.merged_hits([_VaryingIndexer()], ["q1", "q2"], limit_per_query=10)
+    hits = core.merged_hits([(_VaryingIndexer(), "workspace")], ["q1", "q2"], limit_per_query=10)
 
     assert hits == [(chunk, 0.9)]
 
@@ -60,7 +60,7 @@ def test_merged_hits_merges_across_indexers() -> None:
     core = _core()
 
     hits = core.merged_hits(
-        [_FakeIndexer([(chunk_a, 0.5)]), _FakeIndexer([(chunk_b, 0.4)])],
+        [(_FakeIndexer([(chunk_a, 0.5)]), "workspace"), (_FakeIndexer([(chunk_b, 0.4)]), "workspace")],
         ["q"], limit_per_query=10)
 
     assert {chunk.source_path for chunk, _score in hits} == {"a.py", "b.py"}
@@ -72,7 +72,8 @@ def test_merged_hits_drops_scores_below_min_score() -> None:
     core = _core()
 
     hits = core.merged_hits(
-        [_FakeIndexer([(low, 0.01), (high, 0.5)])], ["q"], limit_per_query=10, min_score=0.1)
+        [(_FakeIndexer([(low, 0.01), (high, 0.5)]), "workspace")],
+        ["q"], limit_per_query=10, min_score=0.1)
 
     assert [chunk.source_path for chunk, _score in hits] == ["high.py"]
 

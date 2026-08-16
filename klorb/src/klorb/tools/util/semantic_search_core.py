@@ -19,7 +19,7 @@ _TRUNCATION_SUFFIX = "[truncated...]"
 class HybridSearchable(Protocol):
     """Structural type for anything `SemanticSearchCore.merged_hits` can query."""
 
-    def hybrid_search(self, query_text: str, limit: int) -> list[tuple[Chunk, float]]: ...
+    def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]: ...
 
 
 def _truncate_line(line: str, max_length: int) -> str:
@@ -36,15 +36,16 @@ class SemanticSearchCore:
         self._secret_redactor = secret_redactor
 
     def merged_hits(
-        self, indexers: list[HybridSearchable], queries: list[str], *,
+        self, indexers: list[tuple[HybridSearchable, str]], queries: list[str], *,
         limit_per_query: int, min_score: float = 0.0,
     ) -> list[tuple[Chunk, float]]:
-        """Run every query through every indexer's `hybrid_search`, deduplicating by chunk id and
-        keeping each chunk's highest score, dropping any hit scoring below `min_score`."""
+        """Run every query through every `(indexer, catalog)` pair's `hybrid_search`,
+        deduplicating by chunk id and keeping each chunk's highest score, dropping any hit
+        scoring below `min_score`."""
         best_by_chunk_id: dict[str, tuple[Chunk, float]] = {}
-        for indexer in indexers:
+        for indexer, catalog in indexers:
             for query in queries:
-                for chunk, score in indexer.hybrid_search(query, limit_per_query):
+                for chunk, score in indexer.hybrid_search(query, limit_per_query, catalog):
                     if score < min_score:
                         continue
                     existing = best_by_chunk_id.get(chunk.chunk_id)

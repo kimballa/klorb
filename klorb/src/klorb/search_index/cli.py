@@ -112,13 +112,11 @@ def _render_search_results(query: str, entries: list[dict[str, Any]]) -> str:
 
 
 def run_search_cli(argv: list[str]) -> int:
-    """Parse `argv` (the arguments following `klorb index search`) and print the workspace's
-    local search index's top matches for `query` to stdout -- the same hybrid (BM25 + vector
-    KNN) search and dense-line result shape the `SemanticSearch` tool returns, either
-    pretty-printed for a human or (`--json`) as that same JSON shape. If no process
-    currently owns the workspace's index, this call claims ownership and runs a full scan
-    synchronously before searching -- see `WorkspaceIndexer.hybrid_search`. Returns 0 on
-    success, 1 if the embedding model isn't installed.
+    """Parse `argv` (the arguments following `klorb index search`) and print the `workspace`
+    catalog's top matches for `query` to stdout, in the same result shape the `SemanticSearch`
+    tool returns. If no process currently owns the workspace's index, this call claims ownership
+    and runs a full scan synchronously before searching. Returns 0 on success, 1 if the embedding
+    model isn't installed.
     """
     parser = build_search_parser()
     args = parser.parse_args(argv)
@@ -147,14 +145,13 @@ def run_search_cli(argv: list[str]) -> int:
 
 
 def run_scan_cli(argv: list[str]) -> int:
-    """Parse `argv` (the arguments following `klorb index scan`) and synchronously scan the
-    workspace, indexing every dirty file (`WorkspaceIndexer.run_foreground_scan`). `--threads`/
-    `-j` defaults to `os.cpu_count()`; `--rebuild` clears the index first so every file is
-    treated as dirty; `--gpu` embeds on CUDA instead of CPU (see `build_scan_parser`). A
-    Ctrl-C mid-scan returns 0, leaving the index however far the scan got -- see
-    `run_foreground_scan`'s own docstring for how it unwinds promptly rather than draining its
-    whole backlog first. Returns 1 if the embedding model isn't installed, another process
-    already owns the workspace's index, or `--gpu` was given but CUDA isn't available.
+    """Parse `argv` (the arguments following `klorb index scan`) and synchronously scan both the
+    `workspace` and `memories-workspace` catalogs, indexing every dirty file
+    (`WorkspaceIndexer.run_foreground_scan`). `--threads`/`-j` defaults to `os.cpu_count()`;
+    `--rebuild` clears the index first so every file is treated as dirty; `--gpu` embeds on CUDA
+    instead of CPU. A Ctrl-C mid-scan returns 0, leaving the index however far the scan got.
+    Returns 1 if the embedding model isn't installed, another process already owns the
+    workspace's index, or `--gpu` was given but CUDA isn't available.
     """
     parser = build_scan_parser()
     args = parser.parse_args(argv)

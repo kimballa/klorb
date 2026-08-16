@@ -131,10 +131,10 @@ class SessionConfig(BaseModel):
     """Whether `Session` builds a local hybrid (BM25 + vector KNN) search index for the workspace.
     """
     search_memories_index_enabled: bool = True
-    """Whether `Session` builds local hybrid search indexes for the `memories-global`/
-    `memories-workspace` catalogs `SearchMemories` draws its semantic hits from -- see
-    docs/specs/local-search-index.md. The global catalog is unaffected by workspace trust; the
-    workspace catalog is still gated on it, same as `search_workspace_index_enabled`."""
+    """Whether `SearchMemories` may draw semantic hits from the process-wide `memories-global`
+    search index. The `memories-workspace` catalog isn't governed by this flag: it shares
+    `WorkspaceIndexer` with the `workspace` catalog, so it's already gated by
+    `search_workspace_index_enabled` and workspace trust."""
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
     (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult
