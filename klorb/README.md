@@ -34,6 +34,22 @@ klorb --model anthropic/claude-3.5-sonnet --message "Summarize this repo."
 See [`usage.md`](../docs/user/usage.md) for the full command reference, including the
 `--session-log`/`--no-session-log` flags and supported environment variables.
 
+## Testing
+
+```bash
+make test                              # full suite, resumes from the last failure on rerun
+make TEST_SUITE=session_config test    # only tests matching a pytest -k substring/expression
+make TEST_ARGS='-rP -x' test           # extra args forwarded to pytest verbatim
+```
+
+`TEST_SUITE` is forwarded to pytest as `-k`, so it matches by substring against test, class, and
+module names; combine terms with pytest's `-k` boolean syntax (`TEST_SUITE='session_config or
+hooks'`). Run a scoped `TEST_SUITE` while iterating on a change, then a single unscoped `make
+test` before calling the work done — the full suite takes a few minutes. An unscoped run also
+uses pytest's stepwise plugin: it stops at the first failure and resumes there next time instead
+of re-running everything, until a clean run or `make clean` (which clears `.pytest_cache`) resets
+it.
+
 ## Evals
 
 ```bash
