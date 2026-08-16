@@ -31,6 +31,8 @@
 
 ### Feature backlog
 
+* "bin/klorb index search" command should by default *not* synchronously reindex before returning the search result. Could add a "--update" arg that does the synchronous index refresh update first.
+
 * namespace arg should be optional in SearchMemories.
   ... it should also use semantic search.
 
