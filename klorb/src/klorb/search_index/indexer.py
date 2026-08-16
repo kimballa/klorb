@@ -21,7 +21,7 @@ from klorb.lockfile import Lockfile, create_lockfile
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace_klorb_dir
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.router import get_chunker_router
-from klorb.search_index.embedding import embedding_model_available, get_embedding_model
+from klorb.search_index.embedding import EmbeddingModel, embedding_model_available, get_embedding_model
 from klorb.search_index.store import SearchIndexStore, WriteLock
 from klorb.tools.util.gitignore import GitignoreFilter
 
@@ -48,6 +48,35 @@ class ScanStats:
     files_removed: int
     chunks_indexed: int
     elapsed_seconds: float
+
+
+class _ScanPhaseTimings:
+    """Cumulative wall-clock time `_scan_dirty_files` spent in each phase, summed across every
+    file and worker thread -- diagnostic only, logged at `run_foreground_scan`'s debug level so a
+    slow scan's dominant cost is visible directly instead of inferred from CPU usage."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.read_seconds = 0.0
+        self.chunk_seconds = 0.0
+        self.embed_seconds = 0.0
+        self.store_seconds = 0.0
+
+    def add_read(self, seconds: float) -> None:
+        with self._lock:
+            self.read_seconds += seconds
+
+    def add_chunk(self, seconds: float) -> None:
+        with self._lock:
+            self.chunk_seconds += seconds
+
+    def add_embed(self, seconds: float) -> None:
+        with self._lock:
+            self.embed_seconds += seconds
+
+    def add_store(self, seconds: float) -> None:
+        with self._lock:
+            self.store_seconds += seconds
 
 
 def _file_hash(text: str) -> str:
@@ -162,16 +191,20 @@ class WorkspaceIndexer:
         query_embedding = get_embedding_model().embed_query(query_text)
         return self._store.hybrid_search(query_text, query_embedding, limit)
 
-    def run_foreground_scan(self, *, rebuild: bool = False, num_threads: int = 1) -> ScanStats:
+    def run_foreground_scan(
+        self, *, rebuild: bool = False, num_threads: int = 1, use_gpu: bool = False,
+    ) -> ScanStats:
         """Synchronously scan the workspace and (re)index every dirty file, for `klorb index
         scan`. Unlike `start()`'s background catch-up scan, this blocks until finished and fans
         the chunk/embed work for changed files out across `num_threads` worker threads.
-        `rebuild` clears the index first, so every file is treated as dirty. A `KeyboardInterrupt`
+        `rebuild` clears the index first, so every file is treated as dirty. `use_gpu` embeds on
+        CUDA instead of CPU -- see `_scan_dirty_files`'s docstring for how that changes the
+        embedding-model strategy, and `EmbeddingModel` for what it requires. A `KeyboardInterrupt`
         mid-scan (`num_threads > 1`) drops every not-yet-started file immediately rather than
         draining the whole backlog, so it only waits on the up-to-`num_threads` files already in
         flight -- see `_scan_dirty_files`. Raises `RuntimeError` if another process already owns
-        this workspace's index (its own watcher already keeps it current) or if the bundled
-        embedding model isn't installed.
+        this workspace's index (its own watcher already keeps it current), if the bundled
+        embedding model isn't installed, or if `use_gpu` is set but CUDA isn't available.
         """
         if not embedding_model_available():
             raise RuntimeError("Embedding model not installed; run `klorb init` first.")
@@ -185,19 +218,39 @@ class WorkspaceIndexer:
             with self._store.acquire_write_lock() as write_lock:
                 if rebuild:
                     self._store.clear(write_lock)
-                return self._scan_dirty_files(write_lock, num_threads=max(1, num_threads))
+                return self._scan_dirty_files(
+                    write_lock, num_threads=max(1, num_threads), use_gpu=use_gpu)
         finally:
             lock.release()
             self._owner_lock = None
 
-    def _scan_dirty_files(self, write_lock: WriteLock, *, num_threads: int) -> ScanStats:
+    def _scan_dirty_files(
+        self, write_lock: WriteLock, *, num_threads: int, use_gpu: bool = False,
+    ) -> ScanStats:
         """Walk the workspace and (re)index every file whose mtime or content changed since it
         was last indexed, fanning the per-file read/chunk/embed work out across `num_threads`
         worker threads when more than one is requested. Used by `run_foreground_scan`;
         `_initial_scan` (the background scan `start()` runs) stays always-sequential so it can
         check `self._closing_event` between files.
+
+        When `num_threads > 1` and `use_gpu` is false, each worker thread gets its own
+        `EmbeddingModel(threads=1)` (`_thread_local.model`, lazily built and reused for every
+        file that thread processes) instead of sharing `get_embedding_model()`'s cached
+        singleton -- that singleton's session is capped at `EMBEDDING_THREADS` (2) for the
+        *background* scan's sake, so every worker thread funneling through it would bottleneck on
+        that one shared, capped session no matter how many threads are submitting work. A
+        single-threaded scan keeps using the shared singleton, since there's no contention to
+        avoid and no reason to load the model twice.
+
+        `use_gpu` is the opposite shape: one `EmbeddingModel(use_gpu=True)` is built once, up
+        front, and shared by every worker thread regardless of `num_threads` -- unlike CPU cores,
+        one GPU is one physical device, so building `num_threads` independent CUDA sessions
+        would just multiply VRAM usage and session-creation cost for no real concurrency gain.
+        Raises `RuntimeError` immediately (before walking the workspace) if CUDA isn't
+        available -- see `EmbeddingModel`.
         """
         start_time = time.monotonic()
+        shared_gpu_model = EmbeddingModel(use_gpu=True) if use_gpu else None
         existing = self._store.file_records()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
         seen: set[str] = set()
@@ -216,11 +269,22 @@ class WorkspaceIndexer:
         files_indexed = 0
         chunks_indexed = 0
         counts_lock = threading.Lock()
+        thread_local = threading.local()
+        timings = _ScanPhaseTimings()
+
+        def thread_embedding_model() -> EmbeddingModel:
+            model = getattr(thread_local, "model", None)
+            if model is None:
+                model = EmbeddingModel(threads=1)
+                thread_local.model = model
+            return model
 
         def process_one(item: tuple[str, Path, float]) -> None:
             nonlocal files_indexed, chunks_indexed
             rel_path, abs_path, mtime = item
+            read_start = time.monotonic()
             text = _read_text(abs_path)
+            timings.add_read(time.monotonic() - read_start)
             if text is None:
                 return
             content_hash = _file_hash(text)
@@ -228,7 +292,14 @@ class WorkspaceIndexer:
             if existing_record is not None and existing_record.content_hash == content_hash:
                 self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
                 return
-            chunk_count = self._reindex_file(rel_path, text, content_hash, mtime, write_lock)
+            if shared_gpu_model is not None:
+                embedding_model = shared_gpu_model
+            elif num_threads > 1:
+                embedding_model = thread_embedding_model()
+            else:
+                embedding_model = None
+            chunk_count = self._reindex_file(
+                rel_path, text, content_hash, mtime, write_lock, embedding_model, timings)
             with counts_lock:
                 files_indexed += 1
                 chunks_indexed += chunk_count
@@ -259,8 +330,10 @@ class WorkspaceIndexer:
         elapsed = time.monotonic() - start_time
         logger.debug(
             "Foreground scan of %s: %d file(s) scanned, %d indexed, %d removed, %d chunk(s) "
-            "(%.1fs).", self._workspace_root, len(seen), files_indexed, len(stale_paths),
-            chunks_indexed, elapsed)
+            "(%.1fs). Phase totals summed across %d thread(s): read=%.1fs chunk=%.1fs "
+            "embed=%.1fs store=%.1fs.", self._workspace_root, len(seen), files_indexed,
+            len(stale_paths), chunks_indexed, elapsed, max(1, num_threads), timings.read_seconds,
+            timings.chunk_seconds, timings.embed_seconds, timings.store_seconds)
         return ScanStats(
             files_scanned=len(seen), files_indexed=files_indexed, files_removed=len(stale_paths),
             chunks_indexed=chunks_indexed, elapsed_seconds=elapsed)
@@ -334,14 +407,28 @@ class WorkspaceIndexer:
 
     def _reindex_file(
         self, rel_path: str, text: str, content_hash: str, last_modified_ts: float,
-        write_lock: WriteLock | None = None,
+        write_lock: WriteLock | None = None, embedding_model: EmbeddingModel | None = None,
+        timings: _ScanPhaseTimings | None = None,
     ) -> int:
-        """(Re)chunk and (re)embed `rel_path`, returning how many chunks it produced."""
+        """(Re)chunk and (re)embed `rel_path`, returning how many chunks it produced.
+        `embedding_model`, if given, is used instead of the shared `get_embedding_model()`
+        singleton -- see `_scan_dirty_files`. `timings`, if given, accumulates this call's
+        chunk/embed/store phase durations."""
         self._store.delete_for_path(rel_path, write_lock)
+        chunk_start = time.monotonic()
         chunks = get_chunker_router().chunk_file(rel_path, text)
+        if timings is not None:
+            timings.add_chunk(time.monotonic() - chunk_start)
         if chunks:
-            embeddings = get_embedding_model().embed_passages([chunk.text for chunk in chunks])
+            model = embedding_model if embedding_model is not None else get_embedding_model()
+            embed_start = time.monotonic()
+            embeddings = model.embed_passages([chunk.text for chunk in chunks])
+            if timings is not None:
+                timings.add_embed(time.monotonic() - embed_start)
+            store_start = time.monotonic()
             self._store.upsert_chunks(chunks, embeddings, write_lock)
+            if timings is not None:
+                timings.add_store(time.monotonic() - store_start)
         self._store.set_file_hash(rel_path, content_hash, last_modified_ts, write_lock)
         return len(chunks)
 

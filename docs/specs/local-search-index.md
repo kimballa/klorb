@@ -197,14 +197,26 @@ sub-main functions in `klorb.search_index.cli`:
   scan: it walks the workspace once, (re)indexes every dirty file, and returns before exiting
   rather than continuing on a background thread. `--rebuild` clears the store first
   (`SearchIndexStore.clear()`) so every file is treated as dirty. Multi-threaded scanning fans the
-  per-file read/chunk/embed work across `num_threads` worker threads — each `TreeSitterChunker`
-  keeps a lazily-constructed `Parser` per thread (`threading.local()`) rather than one shared
-  instance, since a `Parser` isn't safe for concurrent use, so chunking genuinely parallelizes
-  rather than serializing behind a lock. A `KeyboardInterrupt` mid-scan drops every not-yet-started
-  file immediately instead of draining the whole backlog, so it only waits on the files already in
-  flight (up to `num_threads`) before returning — see `run_foreground_scan`'s own docstring. Raises
-  if another process already owns the index (that process's own watcher already keeps it current)
-  or the embedding model isn't installed.
+  per-file read/chunk/embed work across `num_threads` worker threads:
+  * Each `TreeSitterChunker` keeps a lazily-constructed `Parser` per thread (`threading.local()`)
+    rather than one shared instance, since a `Parser` isn't safe for concurrent use, so chunking
+    genuinely parallelizes rather than serializing behind a lock.
+  * Each worker thread also gets its own `EmbeddingModel(threads=1)` (also `threading.local()`,
+    built once per thread and reused for every file that thread processes) instead of sharing
+    `get_embedding_model()`'s cached singleton. That singleton's session is capped at
+    `EMBEDDING_THREADS` (2) for the *background* scan's sake (see "Embeddings" above); every
+    worker thread funneling through the same capped session would bottleneck there regardless of
+    `num_threads`, since onnxruntime doesn't grow a session's own thread pool to serve concurrent
+    `Run()` calls faster. A single-threaded scan (`num_threads=1`, the default when `-j 1`) keeps
+    using the shared singleton instead, since there's no contention to avoid.
+  A `KeyboardInterrupt` mid-scan drops every not-yet-started file immediately instead of draining
+  the whole backlog, so it only waits on the files already in flight (up to `num_threads`) before
+  returning — see `run_foreground_scan`'s own docstring. Raises if another process already owns
+  the index (that process's own watcher already keeps it current) or the embedding model isn't
+  installed. `_scan_dirty_files` accumulates each phase's total wall-clock time across every file
+  and worker thread (`_ScanPhaseTimings`: read/chunk/embed/store) and logs the breakdown at debug
+  level alongside its usual scan-summary line, so a slow scan's dominant cost is visible directly
+  (`KLORB_LOG_LEVEL=DEBUG klorb index scan ...`) instead of inferred from CPU usage.
 * **`stats`** (`--json`) — reads `SearchIndexStore.stats()` (file/chunk counts, chunk counts by
   `kind`, on-disk size including WAL/SHM sidecars) without constructing a `WorkspaceIndexer`, so it
   never creates an index that doesn't already exist.

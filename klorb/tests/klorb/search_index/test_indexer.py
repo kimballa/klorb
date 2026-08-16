@@ -28,6 +28,10 @@ def _wait_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
 
 
 class _FakeEmbeddingModel:
+    def __init__(self, *, threads: int = 2, use_gpu: bool = False) -> None:
+        self.threads = threads
+        self.use_gpu = use_gpu
+
     def embed_passages(self, texts: list[str]) -> list[np.ndarray]:
         return [np.zeros(EMBEDDING_DIMENSIONS, dtype=np.float32) for _ in texts]
 
@@ -39,6 +43,7 @@ class _FakeEmbeddingModel:
 def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
     monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
 
 
 def test_file_hash_is_stable_for_the_same_text() -> None:
@@ -295,6 +300,126 @@ def test_run_foreground_scan_with_multiple_threads_indexes_every_file(tmp_path: 
         workspace_indexer.close()
 
 
+def test_run_foreground_scan_logs_phase_timing_breakdown(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    with caplog.at_level("DEBUG", logger="klorb.search_index.indexer"):
+        try:
+            workspace_indexer.run_foreground_scan()
+        finally:
+            workspace_indexer.close()
+
+    assert "read=" in caplog.text
+    assert "chunk=" in caplog.text
+    assert "embed=" in caplog.text
+    assert "store=" in caplog.text
+
+
+def test_run_foreground_scan_multithreaded_uses_per_thread_embedding_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for i in range(12):
+        (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+
+    construction_threads: list[int] = []
+
+    class _TrackingEmbeddingModel(_FakeEmbeddingModel):
+        def __init__(self, *, threads: int = 2) -> None:
+            construction_threads.append(threads)
+            super().__init__(threads=threads)
+
+    def _shared_model_must_not_be_used() -> _FakeEmbeddingModel:
+        raise AssertionError("shared singleton must not be used during a multi-threaded scan")
+
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _TrackingEmbeddingModel)
+    monkeypatch.setattr(indexer_module, "get_embedding_model", _shared_model_must_not_be_used)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan(num_threads=4)
+
+        assert stats.files_indexed == 12
+        # Bounded by the worker-thread count, not one model per file -- each worker thread builds
+        # its own model once and reuses it for every file that thread processes.
+        assert 0 < len(construction_threads) <= 4
+        assert all(threads == 1 for threads in construction_threads)
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_single_threaded_uses_the_shared_embedding_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.py").write_text("def fn(): return 1\n")
+
+    def _per_thread_model_must_not_be_constructed(*, threads: int = 2) -> _FakeEmbeddingModel:
+        raise AssertionError("a single-threaded scan must reuse the shared singleton")
+
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _per_thread_model_must_not_be_constructed)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan(num_threads=1)
+        assert stats.files_indexed == 1
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_use_gpu_builds_one_shared_model_regardless_of_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for i in range(12):
+        (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+
+    constructions: list[dict[str, object]] = []
+
+    class _TrackingGpuModel(_FakeEmbeddingModel):
+        def __init__(self, *, threads: int = 2, use_gpu: bool = False) -> None:
+            constructions.append({"threads": threads, "use_gpu": use_gpu})
+            super().__init__(threads=threads, use_gpu=use_gpu)
+
+    def _shared_singleton_must_not_be_used() -> _FakeEmbeddingModel:
+        raise AssertionError("a GPU scan must not fall back to the shared CPU singleton")
+
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _TrackingGpuModel)
+    monkeypatch.setattr(indexer_module, "get_embedding_model", _shared_singleton_must_not_be_used)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan(num_threads=4, use_gpu=True)
+
+        assert stats.files_indexed == 12
+        # Exactly one GPU model, built once up front -- not one per worker thread the way the
+        # CPU per-thread-model path builds them, since a GPU is one physical device.
+        assert constructions == [{"threads": 2, "use_gpu": True}]
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_use_gpu_raises_when_directml_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.py").write_text("def fn(): return 1\n")
+
+    def _raise_without_directml(*, threads: int = 2, use_gpu: bool = False) -> _FakeEmbeddingModel:
+        if use_gpu:
+            raise RuntimeError("GPU embedding requested but ... DmlExecutionProvider ...")
+        return _FakeEmbeddingModel(threads=threads, use_gpu=use_gpu)
+
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _raise_without_directml)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="DmlExecutionProvider"):
+            workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=True)
+        # Nothing got indexed -- the GPU model is built before the workspace is even walked.
+        assert workspace_indexer._store.file_records() == {}
+    finally:
+        workspace_indexer.close()
+
+
 def test_run_foreground_scan_cancels_pending_work_on_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -312,7 +437,7 @@ def test_run_foreground_scan_cancels_pending_work_on_interrupt(
                 raise KeyboardInterrupt()
             return original_embed_passages(self, texts)
 
-    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _InterruptingEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _InterruptingEmbeddingModel)
     workspace_indexer = WorkspaceIndexer(tmp_path)
     try:
         with pytest.raises(KeyboardInterrupt):

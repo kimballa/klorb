@@ -18,6 +18,9 @@ from klorb.workspace import Workspace
 
 
 class _FakeEmbeddingModel:
+    def __init__(self, *, threads: int = 2) -> None:
+        self.threads = threads
+
     def embed_passages(self, texts: list[str]) -> list[np.ndarray]:
         return [np.zeros(EMBEDDING_DIMENSIONS, dtype=np.float32) for _ in texts]
 
@@ -29,6 +32,7 @@ class _FakeEmbeddingModel:
 def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
     monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
     monkeypatch.setattr(cli_module, "embedding_model_available", lambda: True)
 
 
@@ -121,7 +125,8 @@ def test_run_scan_cli_defaults_threads_to_cpu_count(tmp_path: Path) -> None:
         with patch("klorb.search_index.cli.os.cpu_count", return_value=7):
             run_scan_cli([])
 
-    fake_indexer.run_foreground_scan.assert_called_once_with(rebuild=False, num_threads=7)
+    fake_indexer.run_foreground_scan.assert_called_once_with(
+        rebuild=False, num_threads=7, use_gpu=False)
 
 
 def test_run_scan_cli_passes_threads_and_rebuild_flags(tmp_path: Path) -> None:
@@ -131,7 +136,33 @@ def test_run_scan_cli_passes_threads_and_rebuild_flags(tmp_path: Path) -> None:
     with patch("klorb.search_index.cli.WorkspaceIndexer", return_value=fake_indexer):
         run_scan_cli(["--threads", "3", "--rebuild"])
 
-    fake_indexer.run_foreground_scan.assert_called_once_with(rebuild=True, num_threads=3)
+    fake_indexer.run_foreground_scan.assert_called_once_with(
+        rebuild=True, num_threads=3, use_gpu=False)
+
+
+def test_run_scan_cli_passes_gpu_flag(tmp_path: Path) -> None:
+    fake_indexer = MagicMock()
+    fake_indexer.run_foreground_scan.return_value = ScanStats(
+        files_scanned=0, files_indexed=0, files_removed=0, chunks_indexed=0, elapsed_seconds=0.0)
+    with patch("klorb.search_index.cli.WorkspaceIndexer", return_value=fake_indexer):
+        with patch("klorb.search_index.cli.os.cpu_count", return_value=7):
+            run_scan_cli(["--gpu"])
+
+    fake_indexer.run_foreground_scan.assert_called_once_with(
+        rebuild=False, num_threads=7, use_gpu=True)
+
+
+def test_run_scan_cli_returns_1_when_gpu_requested_but_unavailable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    fake_indexer = MagicMock()
+    fake_indexer.run_foreground_scan.side_effect = RuntimeError(
+        "GPU embedding requested but the installed onnxruntime build has no DmlExecutionProvider.")
+    with patch("klorb.search_index.cli.WorkspaceIndexer", return_value=fake_indexer):
+        exit_code = run_scan_cli(["--gpu"])
+
+    assert exit_code == 1
+    assert "DmlExecutionProvider" in capsys.readouterr().err
 
 
 def test_run_scan_cli_returns_1_when_index_owned_elsewhere(

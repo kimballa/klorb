@@ -31,6 +31,11 @@
 
 ### Feature backlog
 
+* namespace arg should be optional in SearchMemories.
+  ... it should also use semantic search.
+
+* embedding should also use gpu in background-scanner mode.
+
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point.

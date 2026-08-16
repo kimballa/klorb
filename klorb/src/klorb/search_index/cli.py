@@ -56,6 +56,11 @@ def build_scan_parser() -> argparse.ArgumentParser:
         "--rebuild", action="store_true", default=False,
         help="Treat every file as dirty and rebuild the index from scratch.",
     )
+    parser.add_argument(
+        "--gpu", action="store_true", default=False,
+        help="Embed on GPU via CUDA instead of CPU. Requires onnxruntime-gpu (and matching "
+        "installed (not a default klorb dependency); fails with an explanatory error otherwise.",
+    )
     return parser
 
 
@@ -145,10 +150,11 @@ def run_scan_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index scan`) and synchronously scan the
     workspace, indexing every dirty file (`WorkspaceIndexer.run_foreground_scan`). `--threads`/
     `-j` defaults to `os.cpu_count()`; `--rebuild` clears the index first so every file is
-    treated as dirty. A Ctrl-C mid-scan returns 0, leaving the index however far the scan got --
-    see `run_foreground_scan`'s own docstring for how it unwinds promptly rather than draining
-    its whole backlog first. Returns 1 if the embedding model isn't installed or another process
-    already owns the workspace's index.
+    treated as dirty; `--gpu` embeds on CUDA instead of CPU (see `build_scan_parser`). A
+    Ctrl-C mid-scan returns 0, leaving the index however far the scan got -- see
+    `run_foreground_scan`'s own docstring for how it unwinds promptly rather than draining its
+    whole backlog first. Returns 1 if the embedding model isn't installed, another process
+    already owns the workspace's index, or `--gpu` was given but CUDA isn't available.
     """
     parser = build_scan_parser()
     args = parser.parse_args(argv)
@@ -161,7 +167,8 @@ def run_scan_cli(argv: list[str]) -> int:
     workspace_path = _resolve_workspace_path()
     indexer = WorkspaceIndexer(workspace_path)
     try:
-        stats = indexer.run_foreground_scan(rebuild=args.rebuild, num_threads=num_threads)
+        stats = indexer.run_foreground_scan(
+            rebuild=args.rebuild, num_threads=num_threads, use_gpu=args.gpu)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
