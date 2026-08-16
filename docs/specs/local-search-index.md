@@ -95,9 +95,12 @@ whichever ranked lists a chunk appears in — which sidesteps having to calibrat
 cosine-distance scores on a common scale, then hydrates the top results into full `Chunk` rows.
 
 Every write method (`upsert_chunks`, `delete_for_path`, `set_file_hash`) acquires a short-lived
-`write.lock` (`klorb.lockfile.acquire_lockfile_with_backoff`) around its own transaction — defense in
-depth around the owner-lock handoff race described below; read methods take no lock, relying on WAL
-mode to see committed writes.
+`write.lock` (`klorb.lockfile.acquire_lockfile_with_backoff`) around its own transaction by default —
+defense in depth around the owner-lock handoff race described below; read methods take no lock,
+relying on WAL mode to see committed writes. A caller doing many writes in a row, such as the
+initial scan, instead holds `write.lock` itself via `SearchIndexStore.acquire_write_lock()` and
+passes it into each write call so the file lock is acquired once for the whole batch rather than
+once per file.
 
 ## Indexing: `WorkspaceIndexer`
 

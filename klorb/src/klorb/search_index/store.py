@@ -5,6 +5,7 @@ virtual table for KNN, and a plain metadata table joining both back to full `Chu
 docs/specs/local-search-index.md.
 """
 
+import contextlib
 import logging
 import threading
 from pathlib import Path
@@ -36,7 +37,9 @@ class SearchIndexStore:
 
     Every write method additionally acquires the short-lived `write.lock` (via `klorb.lockfile`)
     around its own transaction as defense in depth around the owner-lock handoff race described in
-    docs/specs/local-search-index.md.
+    docs/specs/local-search-index.md. A caller making many writes in a row can instead hold the
+    lock itself via `acquire_write_lock()` and pass it into each write call, paying the file-lock
+    cost once rather than per call.
     """
 
     def __init__(self, db_path: Path) -> None:
@@ -92,10 +95,23 @@ class SearchIndexStore:
             self._conn.commit()
             logger.debug("Search index schema (re)created at %s.", self._db_path)
 
-    def _with_write_lock(self) -> "_WriteLock":
-        return _WriteLock(self._write_lock_path)
+    def acquire_write_lock(self) -> "WriteLock":
+        """Acquire this store's `write.lock` for the duration of a `with` block, so a caller
+        making many write calls in a row can pass the returned lock into each one instead of
+        re-acquiring the file lock per call."""
+        return WriteLock(self._write_lock_path)
 
-    def upsert_chunks(self, chunks: list[Chunk], embeddings: list[np.ndarray]) -> None:
+    def _write_scope(
+        self, write_lock: "WriteLock | None",
+    ) -> "contextlib.AbstractContextManager[WriteLock | None]":
+        if write_lock is not None:
+            return contextlib.nullcontext()
+        return WriteLock(self._write_lock_path)
+
+    def upsert_chunks(
+        self, chunks: list[Chunk], embeddings: list[np.ndarray],
+        write_lock: "WriteLock | None" = None,
+    ) -> None:
         """Insert or replace `chunks` (and their parallel `embeddings`) in all three tables,
         keyed by `chunk_id`. `chunks` and `embeddings` must be the same length and order."""
         if len(chunks) != len(embeddings):
@@ -103,7 +119,7 @@ class SearchIndexStore:
                 f"chunks ({len(chunks)}) and embeddings ({len(embeddings)}) must be the same length")
         if not chunks:
             return
-        with self._with_write_lock(), self._thread_lock:
+        with self._write_scope(write_lock), self._thread_lock:
             for chunk, embedding in zip(chunks, embeddings):
                 self._conn.execute(
                     "INSERT INTO chunks(chunk_id, catalog, source_path, kind, start_line, "
@@ -129,10 +145,10 @@ class SearchIndexStore:
             self._conn.commit()
         logger.debug("Upserted %d chunk(s) into %s.", len(chunks), self._db_path)
 
-    def delete_for_path(self, source_path: str) -> None:
+    def delete_for_path(self, source_path: str, write_lock: "WriteLock | None" = None) -> None:
         """Delete every chunk indexed for `source_path` (a file removed, or about to be
         rechunked from scratch), and its `files` bookkeeping row."""
-        with self._with_write_lock(), self._thread_lock:
+        with self._write_scope(write_lock), self._thread_lock:
             chunk_ids = [
                 row[0] for row in self._conn.execute(
                     "SELECT chunk_id FROM chunks WHERE source_path = ?", (source_path,))]
@@ -146,12 +162,14 @@ class SearchIndexStore:
             logger.debug("Deleted %d chunk(s) for %s from %s.",
                          len(chunk_ids), source_path, self._db_path)
 
-    def set_file_hash(self, source_path: str, content_hash: str) -> None:
+    def set_file_hash(
+        self, source_path: str, content_hash: str, write_lock: "WriteLock | None" = None,
+    ) -> None:
         """Record `source_path`'s whole-file `content_hash` -- distinct from any individual
         chunk's `Chunk.content_hash` -- so `file_hashes()` can answer "did this file change since
         it was last indexed" unambiguously, without needing to pick among a file's several
         chunks."""
-        with self._with_write_lock(), self._thread_lock:
+        with self._write_scope(write_lock), self._thread_lock:
             self._conn.execute(
                 "INSERT INTO files(source_path, content_hash) VALUES (?, ?) "
                 "ON CONFLICT(source_path) DO UPDATE SET content_hash = excluded.content_hash",
@@ -220,7 +238,7 @@ class SearchIndexStore:
         return result
 
 
-class _WriteLock:
+class WriteLock:
     """Context manager acquiring `path` via `acquire_lockfile_with_backoff` on enter, releasing
     it on exit. Raises `RuntimeError` if the lock couldn't be acquired -- a write that can't get
     exclusive access must fail loudly, not proceed and risk corrupting the index."""
@@ -229,11 +247,12 @@ class _WriteLock:
         self._path = path
         self._lock: Lockfile | None = None
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> "WriteLock":
         lock = acquire_lockfile_with_backoff(self._path)
         if lock is None:
             raise RuntimeError(f"Could not acquire search index write lock at {self._path}.")
         self._lock = lock
+        return self
 
     def __exit__(self, *exc_info: object) -> None:
         if self._lock is not None:

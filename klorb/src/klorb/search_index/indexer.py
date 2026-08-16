@@ -20,7 +20,7 @@ from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.router import get_chunker_router
 from klorb.search_index.embedding import embedding_model_available, get_embedding_model
-from klorb.search_index.store import SearchIndexStore
+from klorb.search_index.store import SearchIndexStore, WriteLock
 from klorb.tools.util.gitignore import GitignoreFilter
 
 logger = logging.getLogger(__name__)
@@ -166,13 +166,16 @@ class WorkspaceIndexer:
         self._owner_lock = lock
         logger.debug("Claimed search index ownership for %s.", self._workspace_root)
         try:
-            self._initial_scan()
+            with self._store.acquire_write_lock() as write_lock:
+                self._initial_scan(write_lock)
         except Exception:
             logger.error("Initial search index scan failed for %s.", self._workspace_root, exc_info=True)
         if not self._closing_event.is_set():
             self._start_watcher()
 
-    def _initial_scan(self) -> None:
+    def _initial_scan(self, write_lock: WriteLock) -> None:
+        """Reindex every changed or new file, and drop stale ones, under a single hold of
+        `write_lock` for the whole scan rather than a separate file-lock acquisition per file."""
         start_time = time.monotonic()
         existing_hashes = self._store.file_hashes()
         seen: set[str] = set()
@@ -191,23 +194,25 @@ class WorkspaceIndexer:
             content_hash = _file_hash(text)
             if existing_hashes.get(rel_path) == content_hash:
                 continue
-            self._reindex_file(rel_path, text, content_hash)
+            self._reindex_file(rel_path, text, content_hash, write_lock)
         stale_paths = set(existing_hashes) - seen
         for rel_path in stale_paths:
-            self._store.delete_for_path(rel_path)
+            self._store.delete_for_path(rel_path, write_lock)
         end_time = time.monotonic()
         elapsed = end_time - start_time
         logger.debug(
             "Initial scan of %s indexed %d file(s), removed %d stale. (%.1f s)",
             self._workspace_root, len(seen), len(stale_paths), elapsed)
 
-    def _reindex_file(self, rel_path: str, text: str, content_hash: str) -> None:
-        self._store.delete_for_path(rel_path)
+    def _reindex_file(
+        self, rel_path: str, text: str, content_hash: str, write_lock: WriteLock | None = None,
+    ) -> None:
+        self._store.delete_for_path(rel_path, write_lock)
         chunks = get_chunker_router().chunk_file(rel_path, text)
         if chunks:
             embeddings = get_embedding_model().embed_passages([chunk.text for chunk in chunks])
-            self._store.upsert_chunks(chunks, embeddings)
-        self._store.set_file_hash(rel_path, content_hash)
+            self._store.upsert_chunks(chunks, embeddings, write_lock)
+        self._store.set_file_hash(rel_path, content_hash, write_lock)
 
     def _start_watcher(self) -> None:
         if self._observer is not None or self._closing_event.is_set():
