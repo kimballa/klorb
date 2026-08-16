@@ -2,6 +2,7 @@
 """Tests for klorb.search_index.cli."""
 
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -32,7 +33,7 @@ class _FakeEmbeddingModel:
 @pytest.fixture(autouse=True)
 def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
-    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _FakeEmbeddingModel())
     monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
     # No real GPU in these tests regardless of what's actually installed on the machine running
     # the suite -- scan/search/stats tests exercise the CPU fallback path deterministically.
@@ -142,6 +143,40 @@ def test_run_scan_cli_passes_threads_and_rebuild_flags(tmp_path: Path) -> None:
 
     fake_indexer.run_foreground_scan.assert_called_once_with(
         rebuild=True, num_threads=3, use_gpu=True)
+
+
+def test_run_scan_cli_gpu_default_reflects_config_false(tmp_path: Path) -> None:
+    config_path = tmp_path / ".klorb" / "klorb-config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({
+        "schema": {"name": "klorb-config", "version": "1.0.0"},
+        "sessionDefaults": {"search.workspaceIndex.gpuEnabled": False},
+    }))
+    fake_indexer = MagicMock()
+    fake_indexer.run_foreground_scan.return_value = ScanStats(
+        files_scanned=0, files_indexed=0, files_removed=0, chunks_indexed=0, elapsed_seconds=0.0)
+    with patch("klorb.search_index.cli.WorkspaceIndexer", return_value=fake_indexer):
+        run_scan_cli([])
+
+    fake_indexer.run_foreground_scan.assert_called_once_with(
+        rebuild=False, num_threads=os.cpu_count() or 1, use_gpu=False)
+
+
+def test_run_scan_cli_explicit_gpu_flag_overrides_config_default(tmp_path: Path) -> None:
+    config_path = tmp_path / ".klorb" / "klorb-config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({
+        "schema": {"name": "klorb-config", "version": "1.0.0"},
+        "sessionDefaults": {"search.workspaceIndex.gpuEnabled": False},
+    }))
+    fake_indexer = MagicMock()
+    fake_indexer.run_foreground_scan.return_value = ScanStats(
+        files_scanned=0, files_indexed=0, files_removed=0, chunks_indexed=0, elapsed_seconds=0.0)
+    with patch("klorb.search_index.cli.WorkspaceIndexer", return_value=fake_indexer):
+        run_scan_cli(["--gpu"])
+
+    fake_indexer.run_foreground_scan.assert_called_once_with(
+        rebuild=False, num_threads=os.cpu_count() or 1, use_gpu=True)
 
 
 def test_run_scan_cli_no_gpu_flag_forces_cpu(tmp_path: Path) -> None:

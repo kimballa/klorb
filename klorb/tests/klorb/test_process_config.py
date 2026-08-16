@@ -258,6 +258,21 @@ def test_memory_permission_fields_are_overridable_via_config_file(tmp_path: Path
     assert process_config.session.memory_delete_permission == "allow"
 
 
+def test_search_workspace_index_gpu_enabled_defaults_true(tmp_path: Path) -> None:
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.session.search_workspace_index_gpu_enabled is True
+
+
+def test_search_workspace_index_gpu_enabled_is_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {"sessionDefaults": {"search.workspaceIndex.gpuEnabled": False}},
+    )
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+    assert process_config.session.search_workspace_index_gpu_enabled is False
+
+
 def test_memory_permission_field_rejects_an_invalid_verdict(tmp_path: Path) -> None:
     _write_config(
         tmp_path / ".klorb" / "klorb-config.json",

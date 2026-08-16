@@ -42,7 +42,7 @@ class _FakeEmbeddingModel:
 @pytest.fixture(autouse=True)
 def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
-    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _FakeEmbeddingModel())
     monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
     # try_gpu_embedding_model() is a real function (not a mockable-by-proxy indirection like
     # get_embedding_model()/EmbeddingModel() above): it calls embedding.py's own EmbeddingModel
@@ -111,6 +111,46 @@ def test_start_becomes_owner_and_indexes_files(tmp_path: Path) -> None:
         workspace_indexer.close()
 
 
+def test_initial_scan_passes_use_gpu_false_to_get_embedding_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+    use_gpu_calls: list[bool] = []
+
+    def _tracking_get_embedding_model(**kwargs: bool) -> _FakeEmbeddingModel:
+        use_gpu_calls.append(kwargs["use_gpu"])
+        return _FakeEmbeddingModel()
+
+    monkeypatch.setattr(indexer_module, "get_embedding_model", _tracking_get_embedding_model)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path, use_gpu=False)
+    try:
+        with workspace_indexer._store.acquire_write_lock() as write_lock:
+            workspace_indexer._initial_scan(write_lock)
+        assert use_gpu_calls == [False]
+    finally:
+        workspace_indexer.close()
+
+
+def test_hybrid_search_passes_use_gpu_false_to_get_embedding_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_gpu_calls: list[bool] = []
+
+    def _tracking_get_embedding_model(**kwargs: bool) -> _FakeEmbeddingModel:
+        use_gpu_calls.append(kwargs["use_gpu"])
+        return _FakeEmbeddingModel()
+
+    monkeypatch.setattr(indexer_module, "get_embedding_model", _tracking_get_embedding_model)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path, use_gpu=False)
+    try:
+        workspace_indexer.hybrid_search("anything", 10)
+        assert use_gpu_calls == [False]
+    finally:
+        workspace_indexer.close()
+
+
 def test_close_during_an_in_flight_scan_does_not_log_a_scan_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -129,7 +169,7 @@ def test_close_during_an_in_flight_scan_does_not_log_a_scan_failure(
             time.sleep(0.3)
             return super().embed_passages(texts)
 
-    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _SlowEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _SlowEmbeddingModel())
 
     workspace_indexer = WorkspaceIndexer(tmp_path)
     with caplog.at_level("ERROR", logger="klorb.search_index.indexer"):
@@ -212,7 +252,7 @@ def test_initial_scan_skips_reembedding_when_only_mtime_changed(
             embed_calls += 1
             return original_embed_passages(self, texts)
 
-    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _CountingEmbeddingModel())
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _CountingEmbeddingModel())
     workspace_indexer = WorkspaceIndexer(tmp_path)
     try:
         with workspace_indexer._store.acquire_write_lock() as write_lock:
@@ -514,7 +554,7 @@ def test_run_foreground_scan_raises_when_another_process_owns_the_index(tmp_path
 def test_hybrid_search_raises_without_an_embedding_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _unavailable() -> "_FakeEmbeddingModel":
+    def _unavailable(**kwargs: object) -> "_FakeEmbeddingModel":
         raise FileNotFoundError("no model")
 
     monkeypatch.setattr(indexer_module, "get_embedding_model", _unavailable)

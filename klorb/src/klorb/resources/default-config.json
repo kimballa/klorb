@@ -314,6 +314,7 @@
   "shell.timeout": null,
   "watchdog.timeout": 10.0,
   "search.workspaceIndex.enabled": true,
+  "search.workspaceIndex.gpuEnabled": true,
   "compatibility.claudeMarkdown": false,
   "compatibility.claudeSkills": false,
   "ui.sidebar": null,

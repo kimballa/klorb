@@ -91,10 +91,10 @@ can actually load). `embedding.try_gpu_embedding_model()` is the shared "prefer 
 CPU silently" policy: it returns `None` (logged at debug level) rather than raising if this
 platform has no GPU provider, it isn't available, or it fails to actually load, since most
 environments (no GPU at all, or GPU deps not installed) hit this normally, not as an error. Both
-`get_embedding_model()` (the shared singleton `WorkspaceIndexer`'s background scan and
-`hybrid_search`'s query embedding use) and `WorkspaceIndexer.run_foreground_scan()` (`klorb index
-scan`, default `use_gpu=True`, `--no-gpu` to force CPU) go through it, so GPU is klorb's default
-embedding path everywhere, not just the foreground CLI scan. `EmbeddingModel(use_gpu=True)`
+`get_embedding_model(use_gpu=...)` (the shared singleton `WorkspaceIndexer`'s background scan and
+`hybrid_search`'s query embedding use, gated by `WorkspaceIndexer(use_gpu=...)`) and
+`WorkspaceIndexer.run_foreground_scan()` (`klorb index scan`, `--gpu`/`--no-gpu`) go through it.
+`EmbeddingModel(use_gpu=True)`
 itself is the stricter low-level primitive `try_gpu_embedding_model()` wraps: it raises
 `RuntimeError` if this platform's GPU provider isn't available or fails to load, rather than
 falling back -- checked by inspecting the constructed session's own `get_providers()` (`self.
@@ -192,6 +192,10 @@ short-circuits to `None` — no directory created, no SQLite file opened, no thr
   `skills` apply.
 * `klorb.search_index.embedding.embedding_model_available()` is `true` — `klorb init` has run.
 
+`SessionConfig.search_workspace_index_gpu_enabled` (config key `search.workspaceIndex.gpuEnabled`,
+default `true`) is passed as `WorkspaceIndexer(use_gpu=...)`; `false` forces the background scan
+and query embedding onto CPU-only embedding, regardless of GPU availability.
+
 An autouse `klorb/tests/conftest.py` fixture (`_isolate_embedding_model_dir`) points
 `embedding_model_target_dir()` at an empty per-test temp dir, so `embedding_model_available()` is
 always `false` in the suite and the third gate above always short-circuits construction —
@@ -226,7 +230,8 @@ sub-main functions in `klorb.search_index.cli`:
   currently owns the workspace's index, this claims ownership and runs a full scan synchronously
   first, per `hybrid_search()`'s own contract.
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`; `--gpu`/`--no-gpu`, default
-  on) — calls `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s
+  from the resolved `search.workspaceIndex.gpuEnabled` config value) — calls
+  `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s
   background scan: it walks the workspace once, (re)indexes every dirty file, and returns before
   exiting rather than continuing on a background thread. `--rebuild` clears the store first
   (`SearchIndexStore.clear()`) so every file is treated as dirty. Every `TreeSitterChunker` keeps
@@ -263,12 +268,15 @@ sub-main functions in `klorb.search_index.cli`:
 All three actions resolve the workspace root via `TrustManager().resolve_workspace(cwd)` but,
 unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
 an explicit `klorb index` invocation is itself the user's authorization, the same treatment
-`klorb init` gets.
+`klorb init` gets. `run_scan_cli` additionally calls `load_process_config()` before parsing
+`argv`, to resolve `--gpu`'s config-driven default.
 
 ## Configuration
 
 * `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `true`, backing
   `SessionConfig.search_workspace_index_enabled`.
+* `sessionDefaults.search.workspaceIndex.gpuEnabled` — `bool`, default `true`, backing
+  `SessionConfig.search_workspace_index_gpu_enabled`.
 
 ## Out of scope
 

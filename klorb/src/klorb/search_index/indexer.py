@@ -127,8 +127,9 @@ class WorkspaceIndexer:
     ownership and runs a catch-up scan.
     """
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(self, workspace_root: Path, *, use_gpu: bool = True) -> None:
         self._workspace_root = workspace_root.resolve()
+        self._use_gpu = use_gpu
         index_dir = workspace_klorb_dir(self._workspace_root) / INDEX_DIR_NAME
         index_dir.mkdir(parents=True, exist_ok=True)
         self._store = SearchIndexStore(index_dir / DB_FILENAME)
@@ -194,7 +195,7 @@ class WorkspaceIndexer:
         embedding dependency failed to import)."""
         if not self.is_owner():
             self._begin_ownership()
-        query_embedding = get_embedding_model().embed_query(query_text)
+        query_embedding = get_embedding_model(use_gpu=self._use_gpu).embed_query(query_text)
         return self._store.hybrid_search(query_text, query_embedding, limit)
 
     def run_foreground_scan(
@@ -413,7 +414,8 @@ class WorkspaceIndexer:
         if timings is not None:
             timings.add_chunk(time.monotonic() - chunk_start)
         if chunks:
-            model = embedding_model if embedding_model is not None else get_embedding_model()
+            model = embedding_model if embedding_model is not None \
+                else get_embedding_model(use_gpu=self._use_gpu)
             embed_start = time.monotonic()
             embeddings = model.embed_passages([chunk.text for chunk in chunks])
             if timings is not None:

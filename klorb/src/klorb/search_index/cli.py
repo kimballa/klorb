@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from klorb.permissions.directory_access import workspace_klorb_dir
+from klorb.process_config import load_process_config
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.embedding import embedding_model_available
 from klorb.search_index.indexer import DB_FILENAME, DEFAULT_SEARCH_LIMIT, INDEX_DIR_NAME, WorkspaceIndexer
 from klorb.search_index.store import IndexStats, SearchIndexStore
 from klorb.tools.util import format_match_line
-from klorb.workspace import TrustManager
+from klorb.workspace import TrustManager, Workspace
 
 _NEEDS_INIT_MESSAGE = "Embedding model not installed; run `klorb init` first."
 
@@ -40,8 +41,9 @@ def build_search_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_scan_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb index scan`'s own flags -- see `run_scan_cli()`."""
+def build_scan_parser(*, default_gpu: bool = True) -> argparse.ArgumentParser:
+    """Build the argument parser for `klorb index scan`'s own flags -- see `run_scan_cli()`.
+    `default_gpu` sets `--gpu`'s default when neither `--gpu` nor `--no-gpu` is passed."""
     parser = argparse.ArgumentParser(
         prog="klorb index scan",
         description="Scan the workspace for dirty files not yet indexed and add them to the "
@@ -57,9 +59,9 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Treat every file as dirty and rebuild the index from scratch.",
     )
     parser.add_argument(
-        "--gpu", dest="gpu", action=argparse.BooleanOptionalAction, default=True,
+        "--gpu", dest="gpu", action=argparse.BooleanOptionalAction, default=default_gpu,
         help="Embed on GPU via CUDA when available, falling back to CPU otherwise. Defaults to "
-        "on; use --no-gpu to force CPU-only embedding.",
+        "the search.workspaceIndex.gpuEnabled config value; pass --gpu/--no-gpu to override.",
     )
     return parser
 
@@ -74,8 +76,12 @@ def build_stats_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_workspace() -> Workspace:
+    return TrustManager().resolve_workspace(Path.cwd())
+
+
 def _resolve_workspace_path() -> Path:
-    return TrustManager().resolve_workspace(Path.cwd()).path
+    return _resolve_workspace().path
 
 
 def _chunk_to_file_entry(chunk: Chunk, score: float) -> dict[str, Any]:
@@ -151,7 +157,11 @@ def run_scan_cli(argv: list[str]) -> int:
     workspace, indexing every dirty file (`WorkspaceIndexer.run_foreground_scan`). Returns 1 if the
     embedding model isn't installed or another process already owns the workspace's index.
     """
-    parser = build_scan_parser()
+    cwd = Path.cwd()
+    workspace = _resolve_workspace()
+    process_config = load_process_config(cwd=cwd, workspace=workspace)
+    parser = build_scan_parser(
+        default_gpu=process_config.session.search_workspace_index_gpu_enabled)
     args = parser.parse_args(argv)
 
     if not embedding_model_available():
@@ -159,8 +169,7 @@ def run_scan_cli(argv: list[str]) -> int:
         return 1
 
     num_threads = args.threads if args.threads is not None else (os.cpu_count() or 1)
-    workspace_path = _resolve_workspace_path()
-    indexer = WorkspaceIndexer(workspace_path)
+    indexer = WorkspaceIndexer(workspace.path)
     try:
         stats = indexer.run_foreground_scan(
             rebuild=args.rebuild, num_threads=num_threads, use_gpu=args.gpu)

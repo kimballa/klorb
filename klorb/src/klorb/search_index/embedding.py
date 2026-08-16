@@ -236,10 +236,11 @@ def try_gpu_embedding_model(*, threads: int = EMBEDDING_THREADS) -> EmbeddingMod
 _embedding_model: EmbeddingModel | None = None
 
 
-def get_embedding_model() -> EmbeddingModel:
+def get_embedding_model(*, use_gpu: bool = True) -> EmbeddingModel:
     """Return the shared `EmbeddingModel`, caching on first use (loading the ONNX model is
-    expensive). Prefers GPU (`try_gpu_embedding_model()`) over CPU."""
+    expensive). Prefers GPU (`try_gpu_embedding_model()`) over CPU when `use_gpu` is true; the
+    cached model's provider is fixed by whichever `use_gpu` value first constructed it."""
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = try_gpu_embedding_model() or EmbeddingModel()
+        _embedding_model = (try_gpu_embedding_model() if use_gpu else None) or EmbeddingModel()
     return _embedding_model
