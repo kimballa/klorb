@@ -87,14 +87,25 @@ Examples of GOOD bash commands:
 
 * `make lint typecheck test`
 * `make test`
+* `make TEST_SUITE=session_config test`
 
 Examples of BAD bash commands:
 
 * `PYTHONPATH=./src:./tests venv/bin/pytest -q tests/ 2>&1 | tail -30`
 * `make test | tail -30`
+* `make TEST_SUITE='test_method or test_other' test` (the `'...'` quoting around a multi-word
+  `-k` expression voids prior approval same as any other quoted argument; pick a single
+  substring that needs no quoting instead, e.g. `TEST_SUITE=session_config`)
 
 When you make up complex commands, you waste more time waiting for user approval than if
 you had just stuck to using the pre-approved "make" commands, even if `make test`, etc,
 would run a larger number of tests or typecheck more files than an alternative you can
 generate. CPU time is fast. User effort is slow. The user is very sad when you make him
 proofread bash statements if a clean alternative was already provided for you.
+
+## Test suite guidance
+
+`klorb/`'s full `make test` run takes a few minutes. Within a dev loop, run `make
+TEST_SUITE=<keyword> test` against the suite(s) covering the code you're touching, as often as
+you like. Run one unscoped `make test` at the end, before treating the task as done — that full
+pass is still the bar for "work is not done" in AGENTS.md, not the scoped runs along the way.

@@ -45,16 +45,28 @@ LOCAL_REQUIREMENTS=dev-requirements.txt
 PYTHONPATH=./src/:./tests/
 MYPYPATH=./types/
 
-# e.g. to run a single test, use: `TESTARGS='-k one_specific_test_name --show-capture=log' make test`
-#
-# ... if you want to see the logger output even if the test succeeded, add `-rP`.
-#
-# The --stepwise flag exits on first test fail rather than run them all; then next run
-# it picks up where it left off.. Hunt thru fewer logs. If the previous full run was
-# clean, start from the beginning (--lfnf=all).
-#
-# We only show the logger output, not stdout/stderr since those are redundant with the log.
-TESTARGS ?=--stepwise --lfnf=all --show-capture=log
+# Restrict `make test` to matching tests via pytest's -k substring expression, e.g.
+# `make TEST_SUITE=session_config test` or `make TEST_SUITE='test_method or test_other' test`.
+# Leave unset to run the full suite.
+TEST_SUITE ?=
+
+# Extra args forwarded to pytest verbatim, e.g. `TEST_ARGS='-rP -x' make test` (-rP also shows
+# logger output for passing tests, not just failures).
+TEST_ARGS ?=
+
+# A full-suite run (TEST_SUITE unset) uses pytest's stepwise/cache plugin: it exits on the
+# first failure and resumes from there next time instead of re-running everything, and starts
+# from the beginning if the previous run was clean (--lfnf=all). `make clean` deletes
+# .pytest_cache, which resets this resume point. A TEST_SUITE run skips stepwise -- it's
+# already narrow enough to just run straight through, and stepwise's resume point is only
+# meaningful relative to the same selection of tests that produced it.
+ifeq ($(strip $(TEST_SUITE)),)
+FORMATTED_SUITE_ARG=--stepwise --lfnf=all
+else
+FORMATTED_SUITE_ARG=-k "$(TEST_SUITE)"
+endif
+
+TEST_FULL_ARGS=$(FORMATTED_SUITE_ARG) $(TEST_ARGS)
 
 # Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
 EVALARGS ?=--model xiaomi/mimo-v2.5 --self-review
@@ -64,6 +76,11 @@ all: lint typecheck test
 help:
 	@echo "Available commands:"
 	@echo "${COMMANDS}"
+	@echo ""
+	@echo "Test selection:"
+	@echo "  make test                             # full suite, resumes from last failure on rerun"
+	@echo "  make TEST_SUITE=<pytest -k expr> test  # only tests matching the given substring/expression"
+	@echo "  make TEST_ARGS='<pytest flags>' test   # extra args forwarded to pytest verbatim"
 
 
 lint:
@@ -152,7 +169,8 @@ distclean: clean
 	-rm .venv_init_ok
 
 test:
-	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)" -o cache_dir=.pytest_cache tests/ $(TESTARGS)
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)" -o cache_dir=.pytest_cache tests/ \
+		--show-capture=log $(TEST_FULL_ARGS)
 
 # Tool-efficacy evals: makes real calls to a real hosted model (see docs/specs/tool-eval-harness.md,
 # docs/adrs/tool-evals-skip-without-api-key.md).
