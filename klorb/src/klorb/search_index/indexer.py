@@ -21,7 +21,13 @@ from klorb.lockfile import Lockfile, create_lockfile
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace_klorb_dir
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.router import get_chunker_router
-from klorb.search_index.embedding import EmbeddingModel, embedding_model_available, get_embedding_model
+from klorb.search_index.embedding import (
+    EMBEDDING_THREADS,
+    EmbeddingModel,
+    embedding_model_available,
+    get_embedding_model,
+    try_gpu_embedding_model,
+)
 from klorb.search_index.store import SearchIndexStore, WriteLock
 from klorb.tools.util.gitignore import GitignoreFilter
 
@@ -192,19 +198,17 @@ class WorkspaceIndexer:
         return self._store.hybrid_search(query_text, query_embedding, limit)
 
     def run_foreground_scan(
-        self, *, rebuild: bool = False, num_threads: int = 1, use_gpu: bool = False,
+        self, *, rebuild: bool = False, num_threads: int = 1, use_gpu: bool = True,
     ) -> ScanStats:
         """Synchronously scan the workspace and (re)index every dirty file, for `klorb index
         scan`. Unlike `start()`'s background catch-up scan, this blocks until finished and fans
         the chunk/embed work for changed files out across `num_threads` worker threads.
-        `rebuild` clears the index first, so every file is treated as dirty. `use_gpu` embeds on
-        CUDA instead of CPU -- see `_scan_dirty_files`'s docstring for how that changes the
-        embedding-model strategy, and `EmbeddingModel` for what it requires. A `KeyboardInterrupt`
-        mid-scan (`num_threads > 1`) drops every not-yet-started file immediately rather than
-        draining the whole backlog, so it only waits on the up-to-`num_threads` files already in
-        flight -- see `_scan_dirty_files`. Raises `RuntimeError` if another process already owns
-        this workspace's index (its own watcher already keeps it current), if the bundled
-        embedding model isn't installed, or if `use_gpu` is set but CUDA isn't available.
+
+        * `rebuild` clears the index first, so every file is treated as dirty.
+        * `use_gpu` (the default) tries CUDA before falling back to CPU.
+
+        Raises `RuntimeError` if another process already owns this workspace's index (its own
+        watcher already keeps it current) or if the bundled embedding model isn't installed.
         """
         if not embedding_model_available():
             raise RuntimeError("Embedding model not installed; run `klorb init` first.")
@@ -225,32 +229,21 @@ class WorkspaceIndexer:
             self._owner_lock = None
 
     def _scan_dirty_files(
-        self, write_lock: WriteLock, *, num_threads: int, use_gpu: bool = False,
+        self, write_lock: WriteLock, *, num_threads: int, use_gpu: bool = True,
     ) -> ScanStats:
         """Walk the workspace and (re)index every file whose mtime or content changed since it
         was last indexed, fanning the per-file read/chunk/embed work out across `num_threads`
-        worker threads when more than one is requested. Used by `run_foreground_scan`;
-        `_initial_scan` (the background scan `start()` runs) stays always-sequential so it can
-        check `self._closing_event` between files.
+        worker threads when more than one is requested.
 
-        When `num_threads > 1` and `use_gpu` is false, each worker thread gets its own
-        `EmbeddingModel(threads=1)` (`_thread_local.model`, lazily built and reused for every
-        file that thread processes) instead of sharing `get_embedding_model()`'s cached
-        singleton -- that singleton's session is capped at `EMBEDDING_THREADS` (2) for the
-        *background* scan's sake, so every worker thread funneling through it would bottleneck on
-        that one shared, capped session no matter how many threads are submitting work. A
-        single-threaded scan keeps using the shared singleton, since there's no contention to
-        avoid and no reason to load the model twice.
+        `use_gpu` tries `try_gpu_embedding_model()` once, up front, and if that succeeds shares
+        the one resulting `EmbeddingModel` across every worker thread regardless of `num_threads`.
 
-        `use_gpu` is the opposite shape: one `EmbeddingModel(use_gpu=True)` is built once, up
-        front, and shared by every worker thread regardless of `num_threads` -- unlike CPU cores,
-        one GPU is one physical device, so building `num_threads` independent CUDA sessions
-        would just multiply VRAM usage and session-creation cost for no real concurrency gain.
-        Raises `RuntimeError` immediately (before walking the workspace) if CUDA isn't
-        available -- see `EmbeddingModel`.
+        If `use_gpu` is false, or GPU wasn't actually available, this falls back to a CPU-only
+        `EmbeddingModel` private to each worker thread (`thread_embedding_model()`,
+        `_thread_local.model`, lazily built and reused for every file that thread processes).
         """
         start_time = time.monotonic()
-        shared_gpu_model = EmbeddingModel(use_gpu=True) if use_gpu else None
+        shared_gpu_model = try_gpu_embedding_model() if use_gpu else None
         existing = self._store.file_records()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
         seen: set[str] = set()
@@ -273,9 +266,13 @@ class WorkspaceIndexer:
         timings = _ScanPhaseTimings()
 
         def thread_embedding_model() -> EmbeddingModel:
+            """A CPU-only model private to the calling thread, lazily built and cached in
+            `threading.local()`. When `num_threads > 1`, each thread's own session is capped to
+            `threads=1` to avoid oversubscribing many concurrent sessions across worker threads.
+            """
             model = getattr(thread_local, "model", None)
             if model is None:
-                model = EmbeddingModel(threads=1)
+                model = EmbeddingModel(threads=1 if num_threads > 1 else EMBEDDING_THREADS)
                 thread_local.model = model
             return model
 
@@ -292,12 +289,8 @@ class WorkspaceIndexer:
             if existing_record is not None and existing_record.content_hash == content_hash:
                 self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
                 return
-            if shared_gpu_model is not None:
-                embedding_model = shared_gpu_model
-            elif num_threads > 1:
-                embedding_model = thread_embedding_model()
-            else:
-                embedding_model = None
+            embedding_model = shared_gpu_model if shared_gpu_model is not None \
+                else thread_embedding_model()
             chunk_count = self._reindex_file(
                 rel_path, text, content_hash, mtime, write_lock, embedding_model, timings)
             with counts_lock:

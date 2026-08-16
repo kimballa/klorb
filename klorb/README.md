@@ -22,6 +22,9 @@ make install_dev_deps
   regenerate `dev-requirements.txt` and `release-requirements.txt`, then
   `make install_dev_deps` to install the updated lock.
 * `make lint typecheck test` runs the full local CI suite. See `make help` for all targets.
+* For GPU-accelerated embedding on Linux/Windows, run `../bin/install-cuda-nvidia.sh` after
+  the above -- see the top-level [`README.md`](../README.md#gpu-accelerated-embedding-linuxwindows).
+  Not needed on macOS (Core ML support ships in the default `onnxruntime` package).
 
 ## Usage
 

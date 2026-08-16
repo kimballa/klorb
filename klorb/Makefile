@@ -41,6 +41,11 @@ PYPROJECT=pyproject.toml
 RELEASE_REQUIREMENTS=release-requirements.txt
 # Dependencies needed at runtime plus development time:
 LOCAL_REQUIREMENTS=dev-requirements.txt
+# GPU (CUDA) embedding dependencies -- resolved separately since onnxruntime-gpu ships no macOS
+# wheel; installed on demand by bin/install-cuda-nvidia.sh, not by install_deps/install_dev_deps.
+# See nvidia-requirements.in.
+NVIDIA_REQUIREMENTS_IN=nvidia-requirements.in
+NVIDIA_REQUIREMENTS=nvidia-requirements.txt
 
 PYTHONPATH=./src/:./tests/
 MYPYPATH=./types/
@@ -123,10 +128,13 @@ sync_deps: venv
 	$(LOAD_VENV); "$(UV)" pip compile pyproject.toml --extra dev -o "$(LOCAL_REQUIREMENTS)" -U
 	@echo "Resolving runtime dependencies..."
 	$(LOAD_VENV); "$(UV)" pip compile pyproject.toml -o "$(RELEASE_REQUIREMENTS)" -U
+	@echo "Resolving GPU (CUDA) dependencies..."
+	$(LOAD_VENV); "$(UV)" pip compile "$(NVIDIA_REQUIREMENTS_IN)" -o "$(NVIDIA_REQUIREMENTS)" -U
 	@echo ""
 	@echo "Runtime and development dependencies calculated."
 	@echo "Use 'make install_deps' to install runtime dependencies."
 	@echo "Use 'make install_dev_deps' to install runtime and dev dependencies."
+	@echo "Use './bin/install-cuda-nvidia.sh' (from the repo root) for GPU embedding on Linux/Windows."
 
 install_chainlink:
 	# Install chainlink for task tracking

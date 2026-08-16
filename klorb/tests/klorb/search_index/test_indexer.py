@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from klorb.search_index import indexer as indexer_module
-from klorb.search_index.embedding import EMBEDDING_DIMENSIONS
+from klorb.search_index.embedding import EMBEDDING_DIMENSIONS, EMBEDDING_THREADS
 from klorb.search_index.indexer import WorkspaceIndexer, _file_hash, _read_text, _walk_indexable_files
 from klorb.tools.util.gitignore import GitignoreFilter
 
@@ -44,6 +44,13 @@ def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
     monkeypatch.setattr(indexer_module, "get_embedding_model", lambda: _FakeEmbeddingModel())
     monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
+    # try_gpu_embedding_model() is a real function (not a mockable-by-proxy indirection like
+    # get_embedding_model()/EmbeddingModel() above): it calls embedding.py's own EmbeddingModel
+    # reference internally, unaffected by patching indexer_module.EmbeddingModel. Default it to
+    # "no GPU" so run_foreground_scan()'s now-GPU-by-default tests exercise the CPU fallback path
+    # deterministically, regardless of what's actually installed on the machine running the
+    # suite; GPU-specific tests below override this themselves.
+    monkeypatch.setattr(indexer_module, "try_gpu_embedding_model", lambda **kwargs: None)
 
 
 def test_file_hash_is_stable_for_the_same_text() -> None:
@@ -349,20 +356,32 @@ def test_run_foreground_scan_multithreaded_uses_per_thread_embedding_models(
         workspace_indexer.close()
 
 
-def test_run_foreground_scan_single_threaded_uses_the_shared_embedding_model(
+def test_run_foreground_scan_single_threaded_cpu_fallback_never_uses_the_shared_singleton(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "a.py").write_text("def fn(): return 1\n")
+    construction_threads: list[int] = []
 
-    def _per_thread_model_must_not_be_constructed(*, threads: int = 2) -> _FakeEmbeddingModel:
-        raise AssertionError("a single-threaded scan must reuse the shared singleton")
+    class _TrackingEmbeddingModel(_FakeEmbeddingModel):
+        def __init__(self, *, threads: int = 2, use_gpu: bool = False) -> None:
+            construction_threads.append(threads)
+            super().__init__(threads=threads, use_gpu=use_gpu)
 
-    monkeypatch.setattr(indexer_module, "EmbeddingModel", _per_thread_model_must_not_be_constructed)
+    def _shared_singleton_must_not_be_used() -> _FakeEmbeddingModel:
+        raise AssertionError(
+            "a --no-gpu / GPU-unavailable scan must never use get_embedding_model()'s "
+            "GPU-preferring shared singleton, even when single-threaded")
+
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _TrackingEmbeddingModel)
+    monkeypatch.setattr(indexer_module, "get_embedding_model", _shared_singleton_must_not_be_used)
 
     workspace_indexer = WorkspaceIndexer(tmp_path)
     try:
-        stats = workspace_indexer.run_foreground_scan(num_threads=1)
+        stats = workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=False)
         assert stats.files_indexed == 1
+        # A single-threaded fallback keeps the fuller EMBEDDING_THREADS pool, not threads=1 --
+        # there's only one thread, so there's no oversubscription risk to guard against.
+        assert construction_threads == [EMBEDDING_THREADS]
     finally:
         workspace_indexer.close()
 
@@ -373,49 +392,65 @@ def test_run_foreground_scan_use_gpu_builds_one_shared_model_regardless_of_threa
     for i in range(12):
         (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
 
-    constructions: list[dict[str, object]] = []
+    call_count = 0
+    gpu_model = _FakeEmbeddingModel(use_gpu=True)
 
-    class _TrackingGpuModel(_FakeEmbeddingModel):
-        def __init__(self, *, threads: int = 2, use_gpu: bool = False) -> None:
-            constructions.append({"threads": threads, "use_gpu": use_gpu})
-            super().__init__(threads=threads, use_gpu=use_gpu)
+    def _tracking_try_gpu_embedding_model(**kwargs: object) -> _FakeEmbeddingModel:
+        nonlocal call_count
+        call_count += 1
+        return gpu_model
 
     def _shared_singleton_must_not_be_used() -> _FakeEmbeddingModel:
         raise AssertionError("a GPU scan must not fall back to the shared CPU singleton")
 
-    monkeypatch.setattr(indexer_module, "EmbeddingModel", _TrackingGpuModel)
+    def _per_thread_model_must_not_be_constructed(*, threads: int = 2) -> _FakeEmbeddingModel:
+        raise AssertionError("a GPU scan must not build per-thread CPU models either")
+
+    monkeypatch.setattr(indexer_module, "try_gpu_embedding_model", _tracking_try_gpu_embedding_model)
     monkeypatch.setattr(indexer_module, "get_embedding_model", _shared_singleton_must_not_be_used)
+    monkeypatch.setattr(indexer_module, "EmbeddingModel", _per_thread_model_must_not_be_constructed)
 
     workspace_indexer = WorkspaceIndexer(tmp_path)
     try:
         stats = workspace_indexer.run_foreground_scan(num_threads=4, use_gpu=True)
 
         assert stats.files_indexed == 12
-        # Exactly one GPU model, built once up front -- not one per worker thread the way the
-        # CPU per-thread-model path builds them, since a GPU is one physical device.
-        assert constructions == [{"threads": 2, "use_gpu": True}]
+        # try_gpu_embedding_model() called exactly once, up front -- not once per worker thread
+        # the way the CPU per-thread-model path builds its models, since a GPU is one physical
+        # device.
+        assert call_count == 1
     finally:
         workspace_indexer.close()
 
 
-def test_run_foreground_scan_use_gpu_raises_when_directml_unavailable(
+def test_run_foreground_scan_falls_back_to_cpu_when_gpu_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "a.py").write_text("def fn(): return 1\n")
+    monkeypatch.setattr(indexer_module, "try_gpu_embedding_model", lambda **kwargs: None)
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=True)
+        assert stats.files_indexed == 1  # falls back to CPU silently rather than raising
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_no_gpu_skips_the_gpu_attempt_entirely(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "a.py").write_text("def fn(): return 1\n")
 
-    def _raise_without_directml(*, threads: int = 2, use_gpu: bool = False) -> _FakeEmbeddingModel:
-        if use_gpu:
-            raise RuntimeError("GPU embedding requested but ... DmlExecutionProvider ...")
-        return _FakeEmbeddingModel(threads=threads, use_gpu=use_gpu)
+    def _gpu_attempt_must_not_happen(**kwargs: object) -> _FakeEmbeddingModel:
+        raise AssertionError("use_gpu=False must not even try try_gpu_embedding_model()")
 
-    monkeypatch.setattr(indexer_module, "EmbeddingModel", _raise_without_directml)
+    monkeypatch.setattr(indexer_module, "try_gpu_embedding_model", _gpu_attempt_must_not_happen)
 
     workspace_indexer = WorkspaceIndexer(tmp_path)
     try:
-        with pytest.raises(RuntimeError, match="DmlExecutionProvider"):
-            workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=True)
-        # Nothing got indexed -- the GPU model is built before the workspace is even walked.
-        assert workspace_indexer._store.file_records() == {}
+        stats = workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=False)
+        assert stats.files_indexed == 1
     finally:
         workspace_indexer.close()
 

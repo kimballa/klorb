@@ -39,7 +39,8 @@
       "Bash(npx eslint *)",
       "Bash(which chainlink *)",
       "Read(//home/aaron/.cargo/bin/**)",
-      "Bash(npx @vscode/vsce ls)"
+      "Bash(npx @vscode/vsce ls)",
+      "Bash(venv/bin/pip list *)"
     ]
   },
   "hooks": {

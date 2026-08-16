@@ -1,0 +1,8 @@
+# © Copyright 2026 Aaron Kimball
+#
+# GPU (CUDA) embedding dependencies, resolved separately from pyproject.toml so the standard
+# runtime/dev requirements files stay installable on every platform (onnxruntime-gpu ships no
+# macOS wheel). Compiled to nvidia-requirements.txt by `make sync_deps`; installed by
+# bin/install-cuda-nvidia.sh on Linux/Windows. See
+# docs/adrs/00196-gpu-embedding-uses-cuda-not-directml.md.
+onnxruntime-gpu[cuda,cudnn] >= 1.28.0, < 2.0.0

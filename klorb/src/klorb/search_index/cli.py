@@ -57,9 +57,9 @@ def build_scan_parser() -> argparse.ArgumentParser:
         help="Treat every file as dirty and rebuild the index from scratch.",
     )
     parser.add_argument(
-        "--gpu", action="store_true", default=False,
-        help="Embed on GPU via CUDA instead of CPU. Requires onnxruntime-gpu (and matching "
-        "installed (not a default klorb dependency); fails with an explanatory error otherwise.",
+        "--gpu", dest="gpu", action=argparse.BooleanOptionalAction, default=True,
+        help="Embed on GPU via CUDA when available, falling back to CPU otherwise. Defaults to "
+        "on; use --no-gpu to force CPU-only embedding.",
     )
     return parser
 
@@ -148,13 +148,8 @@ def run_search_cli(argv: list[str]) -> int:
 
 def run_scan_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index scan`) and synchronously scan the
-    workspace, indexing every dirty file (`WorkspaceIndexer.run_foreground_scan`). `--threads`/
-    `-j` defaults to `os.cpu_count()`; `--rebuild` clears the index first so every file is
-    treated as dirty; `--gpu` embeds on CUDA instead of CPU (see `build_scan_parser`). A
-    Ctrl-C mid-scan returns 0, leaving the index however far the scan got -- see
-    `run_foreground_scan`'s own docstring for how it unwinds promptly rather than draining its
-    whole backlog first. Returns 1 if the embedding model isn't installed, another process
-    already owns the workspace's index, or `--gpu` was given but CUDA isn't available.
+    workspace, indexing every dirty file (`WorkspaceIndexer.run_foreground_scan`). Returns 1 if the
+    embedding model isn't installed or another process already owns the workspace's index.
     """
     parser = build_scan_parser()
     args = parser.parse_args(argv)

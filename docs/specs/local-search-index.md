@@ -69,6 +69,39 @@ than left at its default (the machine's full physical core count) -- this model 
 `WorkspaceIndexer`'s background thread, and an indexer that saturates every core to build its first
 index is a poor definition of "background work."
 
+### GPU (CUDA on Linux/Windows, Core ML on macOS)
+
+`embedding._gpu_provider_for_platform()` picks the execution provider `EmbeddingModel(use_gpu=
+True)` requests, by platform: `CUDAExecutionProvider` on Linux/Windows, `CoreMLExecutionProvider`
+on macOS, `None` (GPU unsupported) elsewhere. Core ML ships in the default `onnxruntime` PyPI
+wheel, so macOS needs no extra install step. CUDA needs `onnxruntime-gpu` and matching NVIDIA
+runtime packages, which are **not** default klorb dependencies (`onnxruntime-gpu` ships no macOS
+wheel, so it can't be one without breaking installation there) -- `klorb/nvidia-requirements.in`
+(compiled to `nvidia-requirements.txt` by `make sync_deps`) and `bin/install-cuda-nvidia.sh`
+install them into `klorb/venv` on demand. See
+docs/adrs/00196-gpu-embedding-uses-cuda-not-directml.md (why CUDA over DirectML, the CUDA-13-era
+`nvidia-*` package renaming, the `ctypes.CDLL` preload needed because `LD_LIBRARY_PATH` set from
+within an already-running process doesn't affect `dlopen()`) and
+docs/adrs/00197-gpu-nvidia-deps-installed-via-script-not-pyproject-default.md (why the install
+script over a default dependency, and the Core ML addition).
+
+`embedding.cuda_available()`/`embedding.coreml_available()` check whether the corresponding
+provider is compiled into the installed `onnxruntime` build (a capability check, not proof it
+can actually load). `embedding.try_gpu_embedding_model()` is the shared "prefer GPU, fall back to
+CPU silently" policy: it returns `None` (logged at debug level) rather than raising if this
+platform has no GPU provider, it isn't available, or it fails to actually load, since most
+environments (no GPU at all, or GPU deps not installed) hit this normally, not as an error. Both
+`get_embedding_model()` (the shared singleton `WorkspaceIndexer`'s background scan and
+`hybrid_search`'s query embedding use) and `WorkspaceIndexer.run_foreground_scan()` (`klorb index
+scan`, default `use_gpu=True`, `--no-gpu` to force CPU) go through it, so GPU is klorb's default
+embedding path everywhere, not just the foreground CLI scan. `EmbeddingModel(use_gpu=True)`
+itself is the stricter low-level primitive `try_gpu_embedding_model()` wraps: it raises
+`RuntimeError` if this platform's GPU provider isn't available or fails to load, rather than
+falling back -- checked by inspecting the constructed session's own `get_providers()` (`self.
+_model.model.model.get_providers()`, the only way to see this: neither fastembed nor onnxruntime
+raise when a requested provider silently falls back to CPU, and fastembed's own fallback warning
+is hardcoded to CUDA specifically, so it never fires for a failed Core ML load).
+
 ## Storage and ranking
 
 `klorb.search_index.store.SearchIndexStore` owns one `pysqlite3` (a self-contained SQLite build with
@@ -192,23 +225,29 @@ sub-main functions in `klorb.search_index.cli`:
   shape directly; otherwise each file's block is pretty-printed with its score. If no process
   currently owns the workspace's index, this claims ownership and runs a full scan synchronously
   first, per `hybrid_search()`'s own contract.
-* **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`) — calls
-  `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
-  scan: it walks the workspace once, (re)indexes every dirty file, and returns before exiting
-  rather than continuing on a background thread. `--rebuild` clears the store first
-  (`SearchIndexStore.clear()`) so every file is treated as dirty. Multi-threaded scanning fans the
-  per-file read/chunk/embed work across `num_threads` worker threads:
-  * Each `TreeSitterChunker` keeps a lazily-constructed `Parser` per thread (`threading.local()`)
-    rather than one shared instance, since a `Parser` isn't safe for concurrent use, so chunking
-    genuinely parallelizes rather than serializing behind a lock.
-  * Each worker thread also gets its own `EmbeddingModel(threads=1)` (also `threading.local()`,
-    built once per thread and reused for every file that thread processes) instead of sharing
-    `get_embedding_model()`'s cached singleton. That singleton's session is capped at
-    `EMBEDDING_THREADS` (2) for the *background* scan's sake (see "Embeddings" above); every
-    worker thread funneling through the same capped session would bottleneck there regardless of
-    `num_threads`, since onnxruntime doesn't grow a session's own thread pool to serve concurrent
-    `Run()` calls faster. A single-threaded scan (`num_threads=1`, the default when `-j 1`) keeps
+* **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`; `--gpu`/`--no-gpu`, default
+  on) — calls `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s
+  background scan: it walks the workspace once, (re)indexes every dirty file, and returns before
+  exiting rather than continuing on a background thread. `--rebuild` clears the store first
+  (`SearchIndexStore.clear()`) so every file is treated as dirty. Every `TreeSitterChunker` keeps
+  a lazily-constructed `Parser` per thread (`threading.local()`) rather than one shared instance,
+  since a `Parser` isn't safe for concurrent use, so chunking genuinely parallelizes across
+  `num_threads` rather than serializing behind a lock.
+
+  Embedding-model strategy depends on GPU:
+  * **GPU (default, when available)** — `try_gpu_embedding_model()` (see "GPU (CUDA)" above) is
+    called once, up front; if it succeeds, that one `EmbeddingModel` is shared by every worker
+    thread regardless of `num_threads` -- a GPU is one physical device, so per-thread models
+    would only multiply VRAM and session-creation cost. `--no-gpu` skips the attempt entirely.
+  * **CPU (`--no-gpu`, or GPU unavailable)** — when `num_threads > 1`, each worker thread instead
+    gets its own `EmbeddingModel(threads=1)` (also `threading.local()`, built once per thread and
+    reused for every file that thread processes) instead of sharing `get_embedding_model()`'s
+    cached singleton. That singleton's session is capped at `EMBEDDING_THREADS` (2) for the
+    *background* scan's sake; every worker thread funneling through the same capped session would
+    bottleneck there regardless of `num_threads`, since onnxruntime doesn't grow a session's own
+    thread pool to serve concurrent `Run()` calls faster. A single-threaded scan (`-j 1`) keeps
     using the shared singleton instead, since there's no contention to avoid.
+
   A `KeyboardInterrupt` mid-scan drops every not-yet-started file immediately instead of draining
   the whole backlog, so it only waits on the files already in flight (up to `num_threads`) before
   returning — see `run_foreground_scan`'s own docstring. Raises if another process already owns

@@ -56,6 +56,23 @@ OpenRouter API key.
 The `cloud_setup` process will have also created a file in `$HOME/.config/klorb` for your
 local settings, which you can modify. If this file does not exist, run `bin/klorb init`.
 
+### GPU-accelerated embedding (Linux/Windows)
+
+klorb's local semantic search index (`klorb index scan`, the background workspace indexer, and
+`hybrid_search`) uses GPU embedding by default when it's available, falling back to CPU otherwise.
+On macOS, GPU acceleration (Core ML) comes from the default `onnxruntime` package installed above,
+with nothing extra to do.
+
+On Linux or Windows (including WSL2), GPU acceleration needs `onnxruntime-gpu` and matching NVIDIA
+CUDA/cuDNN runtime packages, which aren't part of the default install. Install them with:
+
+```bash
+./bin/install-cuda-nvidia.sh
+```
+
+Run this after `make install_dev_deps`/`make install_deps` (or re-run it any time afterward -- it's
+idempotent). Requires an NVIDIA GPU reachable from the environment (`nvidia-smi` should work).
+
 ## Running
 
 Run `bin/klorb` to start the terminal UI.
