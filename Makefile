@@ -25,6 +25,11 @@ cloud_setup:
 	$(APT_GET) update -qq || true
 	$(APT_GET) -y --fix-missing install bubblewrap curl git-lfs
 	./bin/install_rust.sh
+	# Ensure git-lfs is enabled, and if this is the first time it's enabled,
+	# pull files from git-lfs content server since they may not have been cloned
+	# with the underlying git repository.
+	git lfs install
+	git lfs pull
 	$(NPM) install -g markdownlint-cli2
 	$(MAKE) -C klorb PYTHON=$(PYTHON) venv install_dev_deps init
 	$(MAKE) -C vscode-plugin install_dev_deps

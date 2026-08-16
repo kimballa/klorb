@@ -20,6 +20,15 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
+* The Session instances across all unit tests should be initialized thru the make_session_config()
+  factory fixture. Once all sites are migrated, we can use this to enforce default values for testing
+  that are distinct from the true defaults. For example, setting the enable_workspace_indexer to
+  False, so we don't have to do something tricky to enforce that across tests, like we do today. (we
+  currently use a tmpdir for where it thinks the model should be, so it can't load it.)
+  * Once migrated, find other places where we're using a tmpdir-hiding trick, or a monkeypatch'd
+    function, to override default behavior; if we can satisfy the same overrides just by enforcing
+    a non-default setting value, let's just do that instead.
+
 ### Feature backlog
 
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
