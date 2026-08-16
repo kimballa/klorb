@@ -51,8 +51,7 @@ takes a `Session` only for type-checking. `load_secrets_baseline()` loads an opt
 workspaces).
 
 `semantic_search_core.py` (`SemanticSearchCore`, `HybridSearchable`) is the shared mechanic
-behind `SemanticSearch`/`SearchMemories`'s semantic-hit handling. Cycle-free for the same reason
-`search_core.py` is.
+behind `SemanticSearch`/`SearchMemories`'s semantic-hit handling.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore

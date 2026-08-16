@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`WorkspaceIndexer`: owns one workspace's search index, covering the `workspace`,
-`memories-workspace`, and `memories-global` catalogs. See docs/specs/local-search-index.md.
+"""`WorkspaceIndexer`: owns one workspace's search index, covering all catalogs. See
+docs/specs/local-search-index.md.
 """
 
 import hashlib
@@ -41,8 +41,8 @@ _ALWAYS_SKIP_DIR_NAMES = frozenset({".git", ".svn", ".cvs", ".hg",
                                     "venv", ".venv",
                                     "node_modules", KLORB_PROJECT_DIR_NAME})
 
-_GLOBAL_MEMORIES_VIRTUAL_DIRNAME = "global-memories"
-"""Synthetic path segment standing in for `KLORB_DATA_DIR/memories/` in `Chunk.source_path` and
+_GLOBAL_MEMORIES_VIRTUAL_DIRNAME = f"{KLORB_PROJECT_DIR_NAME}/global-memories"
+"""Synthetic virtual path standing in for `KLORB_DATA_DIR/memories/` in `Chunk.source_path` and
 the `files` table's bookkeeping key, since that directory isn't nested under any workspace root.
 Kept under a `.klorb`-prefixed virtual path so it can never collide with a real `workspace`
 catalog path, since `_walk_indexable_files` always skips `.klorb`."""
@@ -152,7 +152,7 @@ def _global_memory_entries() -> list[tuple[Path, str]]:
     """Every global memory file, paired with a synthetic `.klorb`-rooted path."""
     memories_dir = get_klorb_data_dir() / MEMORIES_DIRNAME
     return [
-        (abs_path, f"{KLORB_PROJECT_DIR_NAME}/{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}")
+        (abs_path, f"{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}")
         for abs_path in _flat_memory_files(memories_dir)
     ]
 
@@ -528,8 +528,9 @@ class WorkspaceIndexer:
         observer = Observer()
         observer.schedule(_ChangeHandler(self), str(self._workspace_root), recursive=True)
         if self._index_memories:
-            # `KLORB_DATA_DIR/memories/` isn't created eagerly, but watchdog requires the watched
-            # directory to exist, so the indexer creates it itself.
+            # `KLORB_DATA_DIR/memories/` needs its own explicit watch, so it must exist before
+            # scheduling. `.klorb/memories/` needs no such handling: it's a subdirectory of the
+            # workspace root, which is already watched recursively above.
             self._global_memories_dir.mkdir(parents=True, exist_ok=True)
             observer.schedule(_ChangeHandler(self), str(self._global_memories_dir), recursive=False)
         observer.start()
@@ -558,7 +559,7 @@ class WorkspaceIndexer:
 
     def _reindex_changed_path(self, abs_path: Path) -> None:
         if self._index_memories and abs_path.parent == self._global_memories_dir:
-            rel_path = f"{KLORB_PROJECT_DIR_NAME}/{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}"
+            rel_path = f"{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}"
             self._reindex_changed_memory_path(abs_path, rel_path, MEMORIES_GLOBAL_CATALOG)
             return
         try:

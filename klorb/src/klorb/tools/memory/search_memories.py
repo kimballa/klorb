@@ -91,10 +91,9 @@ class SearchMemoriesTool(Tool):
     def description(self) -> str:
         return (
             "Searches memory files for lines containing any of the given search strings, each "
-            "matched as a literal, case-insensitive substring (not a regular expression) -- "
-            "equivalent to `grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's "
-            "content -- plus a handful of high-confidence semantic hits by meaning rather than "
-            "exact wording, when a memory search index is available. Results are grouped by "
+            "matched as a literal, case-insensitive substring, equivalent to "
+            "`grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's content, plus "
+            "high-confidence semantic hits. Results are grouped by "
             "file under 'results'; each entry's 'lines' are strings like '*42|matched text', "
             "where the leading '*' marks a matching line and the number is its 1-based line "
             "number; a semantic hit additionally carries a 'score'. A file's own filename is "

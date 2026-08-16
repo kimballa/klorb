@@ -113,10 +113,9 @@ def _render_search_results(query: str, entries: list[dict[str, Any]]) -> str:
 
 def run_search_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index search`) and print the `workspace`
-    catalog's top matches for `query` to stdout, in the same result shape the `SemanticSearch`
-    tool returns. If no process currently owns the workspace's index, this call claims ownership
-    and runs a full scan synchronously before searching. Returns 0 on success, 1 if the embedding
-    model isn't installed.
+    catalog's top matches for `query` to stdout. If no process currently owns the workspace's
+    index, this call claims ownership and runs a full scan synchronously before searching.
+    Returns 0 on success, 1 if the embedding model isn't installed.
     """
     parser = build_search_parser()
     args = parser.parse_args(argv)
@@ -149,7 +148,7 @@ def run_scan_cli(argv: list[str]) -> int:
     `workspace` and `memories-workspace` catalogs, indexing every dirty file
     (`WorkspaceIndexer.run_foreground_scan`). `--threads`/`-j` defaults to `os.cpu_count()`;
     `--rebuild` clears the index first so every file is treated as dirty; `--gpu` embeds on CUDA
-    instead of CPU. A Ctrl-C mid-scan returns 0, leaving the index however far the scan got.
+    instead of CPU. A Ctrl-C mid-scan returns 130, leaving the index however far the scan got.
     Returns 1 if the embedding model isn't installed, another process already owns the
     workspace's index, or `--gpu` was given but CUDA isn't available.
     """
@@ -171,7 +170,7 @@ def run_scan_cli(argv: list[str]) -> int:
         return 1
     except KeyboardInterrupt:
         print("Scan interrupted; index left partially updated.", file=sys.stderr)
-        return 0
+        return 130
     finally:
         indexer.close()
 

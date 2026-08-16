@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`MarkdownChunker`: splits a markdown file into one chunk per heading-delimited section, or, for a
 section too large to be one useful chunk, one chunk per blank-line-delimited paragraph within it.
-Shared by the workspace catalog's docs and the memories catalogs alike -- see
-docs/specs/local-search-index.md.
 """
 
 import re
