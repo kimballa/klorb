@@ -355,7 +355,7 @@ class SessionCoreMixin(SessionBase):
         from klorb.search_index.indexer import WorkspaceIndexer
         try:
             indexer = WorkspaceIndexer(
-                config.workspace.path, use_gpu=config.search_workspace_index_gpu_enabled)
+                config.workspace.path, use_gpu=config.search_indexer_gpu_enabled)
         except OSError:
             logger.warning("Could not construct workspace search index.", exc_info=True)
             return None

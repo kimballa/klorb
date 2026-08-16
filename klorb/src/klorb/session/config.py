@@ -130,7 +130,7 @@ class SessionConfig(BaseModel):
     search_workspace_index_enabled: bool = True
     """Whether `Session` builds a local hybrid (BM25 + vector KNN) search index for the workspace.
     """
-    search_workspace_index_gpu_enabled: bool = True
+    search_indexer_gpu_enabled: bool = True
     """Whether the background workspace search indexer may embed on GPU; false forces CPU-only
     embedding for it."""
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)

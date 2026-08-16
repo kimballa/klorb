@@ -61,7 +61,7 @@ def build_scan_parser(*, default_gpu: bool = True) -> argparse.ArgumentParser:
     parser.add_argument(
         "--gpu", dest="gpu", action=argparse.BooleanOptionalAction, default=default_gpu,
         help="Embed on GPU via CUDA when available, falling back to CPU otherwise. Defaults to "
-        "the search.workspaceIndex.gpuEnabled config value; pass --gpu/--no-gpu to override.",
+        "the search.indexer.gpuEnabled config value; pass --gpu/--no-gpu to override.",
     )
     return parser
 
@@ -161,7 +161,7 @@ def run_scan_cli(argv: list[str]) -> int:
     workspace = _resolve_workspace()
     process_config = load_process_config(cwd=cwd, workspace=workspace)
     parser = build_scan_parser(
-        default_gpu=process_config.session.search_workspace_index_gpu_enabled)
+        default_gpu=process_config.session.search_indexer_gpu_enabled)
     args = parser.parse_args(argv)
 
     if not embedding_model_available():

@@ -150,7 +150,7 @@ def test_run_scan_cli_gpu_default_reflects_config_false(tmp_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps({
         "schema": {"name": "klorb-config", "version": "1.0.0"},
-        "sessionDefaults": {"search.workspaceIndex.gpuEnabled": False},
+        "sessionDefaults": {"search.indexer.gpuEnabled": False},
     }))
     fake_indexer = MagicMock()
     fake_indexer.run_foreground_scan.return_value = ScanStats(
@@ -167,7 +167,7 @@ def test_run_scan_cli_explicit_gpu_flag_overrides_config_default(tmp_path: Path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps({
         "schema": {"name": "klorb-config", "version": "1.0.0"},
-        "sessionDefaults": {"search.workspaceIndex.gpuEnabled": False},
+        "sessionDefaults": {"search.indexer.gpuEnabled": False},
     }))
     fake_indexer = MagicMock()
     fake_indexer.run_foreground_scan.return_value = ScanStats(
