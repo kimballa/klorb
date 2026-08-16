@@ -80,7 +80,7 @@ class TreeSitterChunker(Chunker):
             self._local.parser = parser
         return parser
 
-    def chunk(self, source_path: str, text: str) -> list[Chunk]:
+    def chunk(self, source_path: str, text: str, catalog: str = CATALOG) -> list[Chunk]:
         source = text.encode("utf-8")
         tree = self._parser().parse(source)
         root = tree.root_node
@@ -91,24 +91,27 @@ class TreeSitterChunker(Chunker):
 
         def flush_leftover() -> None:
             if leftover_run:
-                chunks.append(self._toplevel_chunk(leftover_run, source_path, source))
+                chunks.append(self._toplevel_chunk(leftover_run, source_path, source, catalog))
                 leftover_run.clear()
 
         for child in root.named_children:
             effective = _effective_node(child, self._spec)
             if effective.type in self._spec.class_types:
                 flush_leftover()
-                chunks.append(self._class_chunk(child, effective, source_path, source))
-                chunks.extend(self._method_chunks(effective, source_path, source))
+                chunks.append(self._class_chunk(child, effective, source_path, source, catalog))
+                chunks.extend(self._method_chunks(effective, source_path, source, catalog))
             elif effective.type in self._spec.function_types:
                 flush_leftover()
-                chunks.append(self._toplevel_chunk([child], source_path, source, kind="function"))
+                chunks.append(self._toplevel_chunk(
+                    [child], source_path, source, catalog, kind="function"))
             else:
                 leftover_run.append(child)
         flush_leftover()
         return chunks
 
-    def _class_chunk(self, outer: Node, class_node: Node, source_path: str, source: bytes) -> Chunk:
+    def _class_chunk(
+        self, outer: Node, class_node: Node, source_path: str, source: bytes, catalog: str,
+    ) -> Chunk:
         header = _signature_text(outer, class_node, self._spec.class_body_field, source)
         body = class_node.child_by_field_name(self._spec.class_body_field)
         pieces = [header]
@@ -122,10 +125,12 @@ class TreeSitterChunker(Chunker):
                     pieces.append(_node_text(member, source))
         start_line, end_line = _line_span(outer)
         return Chunk.create(
-            catalog=CATALOG, source_path=source_path, kind="class",
+            catalog=catalog, source_path=source_path, kind="class",
             start_line=start_line, end_line=end_line, text="\n".join(pieces))
 
-    def _method_chunks(self, class_node: Node, source_path: str, source: bytes) -> list[Chunk]:
+    def _method_chunks(
+        self, class_node: Node, source_path: str, source: bytes, catalog: str,
+    ) -> list[Chunk]:
         body = class_node.child_by_field_name(self._spec.class_body_field)
         if body is None:
             return []
@@ -134,16 +139,17 @@ class TreeSitterChunker(Chunker):
             if _effective_node(member, self._spec).type in self._spec.method_types:
                 start_line, end_line = _line_span(member)
                 methods.append(Chunk.create(
-                    catalog=CATALOG, source_path=source_path, kind="method",
+                    catalog=catalog, source_path=source_path, kind="method",
                     start_line=start_line, end_line=end_line, text=_node_text(member, source)))
         return methods
 
     def _toplevel_chunk(
-        self, nodes: list[Node], source_path: str, source: bytes, *, kind: ChunkKind = "toplevel",
+        self, nodes: list[Node], source_path: str, source: bytes, catalog: str,
+        *, kind: ChunkKind = "toplevel",
     ) -> Chunk:
         start_line = nodes[0].start_point.row + 1
         end_line = nodes[-1].end_point.row + 1
         chunk_text = source[nodes[0].start_byte:nodes[-1].end_byte].decode("utf-8", errors="replace")
         return Chunk.create(
-            catalog=CATALOG, source_path=source_path, kind=kind,
+            catalog=catalog, source_path=source_path, kind=kind,
             start_line=start_line, end_line=end_line, text=chunk_text)

@@ -3,17 +3,23 @@
 ## Summary
 
 `klorb.search_index` is a local, SQLite-backed hybrid (BM25 lexical + vector KNN) search index over
-one workspace's filesystem — source code (Python, TypeScript/TSX) and markdown (`docs/`, ADRs,
-specs, `TODO.md`, `CLAUDE.md`/`AGENTS.md`, READMEs). It backs `SemanticSearch`
-(see `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md`). Embeddings run
-fully locally via a bundled ONNX model (`fastembed`); no network call is ever made at index or query
-time. Tools/Skills/Memories catalogs are anticipated follow-up work reusing this same
+several catalogs: the `workspace` catalog (source code, docs, and markdown across a trusted
+workspace's filesystem, backing `SemanticSearch` — see
+docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md) and the
+`memories-global`/`memories-workspace` catalogs (each namespace's memory `.md` files, backing
+`SearchMemories`'s semantic hits — see "Memories catalogs" below and docs/specs/memories.md).
+Embeddings run fully locally via a bundled ONNX model (`fastembed`); no network call is ever made
+at index or query time. A Skills catalog is anticipated follow-up work reusing this same
 chunk/embed/store/rank pipeline — not built yet.
 
 ## Chunking
 
 `klorb.search_index.chunkers.router.ChunkerRouter` dispatches each file to a structural or
-markdown chunker (by extension) plus the windowed chunker, unconditionally:
+markdown chunker (by extension) plus the windowed chunker, unconditionally. Every chunker's
+`chunk()` (and `ChunkerRouter.chunk_file()`) takes a `catalog` argument, defaulting to the
+`workspace` catalog, that's stamped onto every `Chunk` it produces -- the memories catalogs pass
+their own catalog explicitly (see "Memories catalogs" below); nothing else about chunking differs
+per catalog.
 
 * **`.py`** — `chunkers.code_python.PythonChunker`: one chunk per class (a synthesized synopsis —
   header, docstring, field assignments, and method *signatures* only, no bodies), one chunk per
@@ -27,8 +33,8 @@ markdown chunker (by extension) plus the windowed chunker, unconditionally:
   assignments get no special synopsis treatment — they fall into the leftover-statement grouping.
 * **`.md`/`.markdown`** — `chunkers.markdown.MarkdownChunker`: one chunk per ATX-heading-delimited
   section; a section larger than `MAX_SECTION_TOKENS` (400) splits further into one chunk per
-  blank-line-delimited paragraph. Shared verbatim by the anticipated Skills/Memories catalogs, since
-  a skill/memory body is itself markdown.
+  blank-line-delimited paragraph. Shared verbatim by the memories catalogs, since a memory body is
+  itself markdown, and by the anticipated Skills catalog.
 * **Every file** (including ones with no structural/markdown chunker) — `chunkers.windowed.
   WindowedChunker`: a fixed-size (60 lines, 10-line overlap) sliding window over raw lines,
   independent of any structural boundary — a fallback recall net for content that doesn't parse
@@ -144,6 +150,43 @@ scan, the background filesystem watcher, and cross-process ownership.
   reindexes (or deletes, if the path no longer exists or gitignore now excludes it) each changed path
   once a 1-second-quiet debounce window settles.
 
+## Memories catalogs: `MemoryCatalogIndexer`
+
+`klorb.search_index.memory_indexer.MemoryCatalogIndexer` is the same shape as `WorkspaceIndexer`
+(initial scan, background watcher, lockfile-based ownership) scoped to one memory namespace's
+flat, `.md`-only directory instead of a whole recursive workspace tree — no gitignore filtering,
+no recursion, no multi-threaded foreground scan. Each instance owns its own
+`SearchIndexStore` at `${index_dir}/{catalog}.db` and owner lock at `${index_dir}/{catalog}.lock`,
+so the `memories-workspace` catalog's store never shares a database file (or an owner lock, or a
+KNN candidate pool) with the `workspace` catalog's, even though both can live under the same
+workspace's `.klorb/index/` directory.
+
+Two catalogs, two independently-lifecycled indexers:
+
+* **`memories-global`** — indexes `KLORB_DATA_DIR/memories/` (every workspace's shared global
+  memories), stored at `KLORB_DATA_DIR/index/memories-global.db`. Reached via
+  `klorb.search_index.memory_indexer.get_global_memory_indexer()`, a process-wide singleton
+  (constructed and `start()`-ed lazily on first call, like `get_embedding_model()`/
+  `get_chunker_router()`) rather than a per-`Session` object — global memories apply across every
+  workspace, so one process-wide indexer covers every session in the process regardless of which
+  workspace it's rooted in. Runs independent of any workspace's trust: gated only on
+  `SessionConfig.search_memories_index_enabled` (checked by each tool call site, since the
+  singleton itself has no `Session` to read config from) and `embedding_model_available()`.
+* **`memories-workspace`** — indexes `${workspace_root}/.klorb/memories/` (this workspace's own
+  memories), stored at `${workspace_root}/.klorb/index/memories-workspace.db`. Built once per root
+  session as `Session.workspace_memory_indexer`
+  (`SessionCoreMixin._create_workspace_memory_indexer`), shared with subagents via the `parent`
+  chain exactly like `workspace_indexer`. Construction short-circuits to `None` unless
+  `search_memories_index_enabled` is `true`, `SessionConfig.workspace.trusted` is `true` (the same
+  gate `workspace_indexer`/`memories`/`skills` apply), and `embedding_model_available()` is
+  `true` — so workspace memories are only ever indexed once the workspace is trusted, the same
+  condition that already makes `.klorb/memories/` writable and searchable at all.
+
+`namespace_for_catalog(catalog)` resolves a `Chunk.catalog` value back to its memory namespace
+(`"global"`/`"workspace"`) — used by `SearchMemories` to label a semantic hit. Each catalog's
+`Chunk.source_path` is the memory file's bare filename (memory namespaces are flat, so this is
+unambiguous), not a workspace-root-relative path.
+
 ## Session integration
 
 `Session` builds a `WorkspaceIndexer` once per **root session** (never per subagent — a second
@@ -169,16 +212,36 @@ feature itself construct or assign a `WorkspaceIndexer` directly instead of goin
 `WorkspaceIndexer.close()` is registered as a root-session teardown subject
 (`_WORKSPACE_INDEXER_TEARDOWN_SUBJECT`), added to `_INFRASTRUCTURE_TEARDOWN_SUBJECTS` so
 `reset_session()`/`/clear` never tears it down mid-process — a `/clear` keeps the same workspace, so
-there's nothing to rebuild.
+there's nothing to rebuild. `Session.workspace_memory_indexer` (the `memories-workspace` catalog's
+`MemoryCatalogIndexer`) is built and torn down the same way, under its own
+`_WORKSPACE_MEMORY_INDEXER_TEARDOWN_SUBJECT` — see "Memories catalogs" above. The
+`memories-global` catalog's indexer is a process-wide singleton instead (`get_global_memory_indexer()`),
+so it isn't tied to any one session's teardown.
 
-## `SemanticSearch` integration
+## `SemanticSearch`/`SearchMemories` integration
 
-See `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md` for the full
-design and rationale. In short: `klorb.tools.semantic_search.SemanticSearchTool` runs each of its
-`queries` through `WorkspaceIndexer.hybrid_search()`, merges hits by chunk id (keeping the highest
-score), and returns up to `top_k` (default 25) chunk-level hits scoped by the same `path`/`file_glob`
-`Grep` uses for its own walk. Raises `ToolCallError` if `context.session.workspace_indexer` is
-`None`.
+`klorb.tools.util.semantic_search_core.SemanticSearchCore` is the mechanic both tools share:
+`merged_hits()` runs a list of queries through one or more `HybridSearchable` indexers (anything
+with a `hybrid_search(query_text, limit)` method — `WorkspaceIndexer` and `MemoryCatalogIndexer`
+both qualify), deduplicating by chunk id and keeping each chunk's highest score, with an optional
+minimum-score floor; `render_chunk_lines()` re-reads a chunk's source file fresh and renders its
+line span in the shared dense-line format, secret-redacted and truncated to the caller's line
+length.
+
+See `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md` for
+`SemanticSearch`'s full design and rationale. In short: `klorb.tools.semantic_search.
+SemanticSearchTool` calls `merged_hits()` against `context.session.workspace_indexer` and returns
+up to `top_k` (default 25) chunk-level hits scoped by the same `path`/`file_glob` `Grep` uses for
+its own walk. Raises `ToolCallError` if `context.session.workspace_indexer` is `None`.
+
+`klorb.tools.memory.search_memories.SearchMemoriesTool` calls `merged_hits()` against whichever of
+`get_global_memory_indexer()`/`context.session.workspace_memory_indexer` are available for the
+requested `namespace` (see docs/specs/memories.md), with a minimum-score floor
+(`SEMANTIC_MIN_SCORE`, equivalent to ranking in the top 3 of at least one of the lexical/vector
+lists) and a small cap (`SEMANTIC_TOP_K`, 5) appropriate for a collection that isn't expected to
+hold many memory files. Unlike `SemanticSearch`, an unavailable index is never an error — the hits
+it would have added are simply omitted, since `SearchMemories`'s literal keyword search already
+covers the case.
 
 ## CLI: `klorb index`
 
@@ -224,18 +287,24 @@ sub-main functions in `klorb.search_index.cli`:
 All three actions resolve the workspace root via `TrustManager().resolve_workspace(cwd)` but,
 unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
 an explicit `klorb index` invocation is itself the user's authorization, the same treatment
-`klorb init` gets.
+`klorb init` gets. `klorb index` only ever operates on the `workspace` catalog's
+`WorkspaceIndexer` — it has no equivalent action for the memories catalogs' `MemoryCatalogIndexer`s.
 
 ## Configuration
 
 * `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `true`, backing
   `SessionConfig.search_workspace_index_enabled`.
+* `sessionDefaults.search.memoriesIndex.enabled` — `bool`, default `true`, backing
+  `SessionConfig.search_memories_index_enabled` — see "Memories catalogs" above.
 
 ## Out of scope
 
-* **Tools, Skills, Memories catalogs.** `chunk.py`/`embedding.py`/`store.py`/`ranking.py` are
-  catalog-agnostic; each anticipated catalog needs only its own chunker (Skills/Memories reuse
-  `chunkers.markdown.MarkdownChunker` directly) and a thin `Search*` integration. Not built yet.
+* **A Tools/Skills catalog.** `chunk.py`/`embedding.py`/`store.py`/`ranking.py` are
+  catalog-agnostic; each anticipated catalog needs only its own chunker (Skills reuses
+  `chunkers.markdown.MarkdownChunker` directly, like the memories catalogs already do) and a thin
+  `Search*` integration. Not built yet.
+* **A `klorb index` equivalent for the memories catalogs.** There's no CLI access to
+  `MemoryCatalogIndexer`'s `search`/`scan`/`stats` independent of an agent session.
 * **A shared daemon.** Each klorb process opens the workspace's SQLite file directly; there is no
   subprocess/socket-RPC indexing service. Revisit if cross-process write contention on
   `.klorb/index/*.db` turns out to matter in practice — the owner-lock design already bounds it to at

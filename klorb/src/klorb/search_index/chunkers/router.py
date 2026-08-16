@@ -4,7 +4,7 @@ plus the windowed chunker unconditionally, per docs/specs/local-search-index.md.
 """
 
 from klorb.search_index.chunk import Chunk
-from klorb.search_index.chunkers.base import Chunker
+from klorb.search_index.chunkers.base import CATALOG, Chunker
 from klorb.search_index.chunkers.code_python import PythonChunker
 from klorb.search_index.chunkers.code_typescript import TsxChunker, TypeScriptChunker
 from klorb.search_index.chunkers.markdown import MarkdownChunker
@@ -29,13 +29,13 @@ class ChunkerRouter:
         self._extension_chunkers = _EXTENSION_CHUNKERS
         self._windowed_chunker = WindowedChunker()
 
-    def chunk_file(self, source_path: str, text: str) -> list[Chunk]:
+    def chunk_file(self, source_path: str, text: str, catalog: str = CATALOG) -> list[Chunk]:
         chunks: list[Chunk] = []
         extension = _extension_of(source_path)
         matched = self._extension_chunkers.get(extension)
         if matched is not None:
-            chunks.extend(matched.chunk(source_path, text))
-        chunks.extend(self._windowed_chunker.chunk(source_path, text))
+            chunks.extend(matched.chunk(source_path, text, catalog))
+        chunks.extend(self._windowed_chunker.chunk(source_path, text, catalog))
         return chunks
 
 

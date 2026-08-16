@@ -49,6 +49,10 @@ content before it reaches a model — see docs/specs/secret-redaction.md. Like `
 takes a `Session` only for type-checking. `load_secrets_baseline()` loads an optional
 `.klorb/secrets-baseline.json` allowlist for known false positives (only for trusted
 workspaces).
+
+`semantic_search_core.py` (`SemanticSearchCore`, `HybridSearchable`) is the shared mechanic
+behind `SemanticSearch`/`SearchMemories`'s semantic-hit handling. Cycle-free for the same reason
+`search_core.py` is.
 """
 
 from klorb.tools.util.create_file_core import CreateFileCore
@@ -80,6 +84,7 @@ from klorb.tools.util.secret_redaction import (
     get_or_create_secret_redactor,
     load_secrets_baseline,
 )
+from klorb.tools.util.semantic_search_core import HybridSearchable, SemanticSearchCore
 from klorb.tools.util.spill import SpillDir
 
 __all__ = [
@@ -89,12 +94,14 @@ __all__ = [
     "DiffLine",
     "EditFileCore",
     "FullFileView",
+    "HybridSearchable",
     "LineRangeEdit",
     "READ_PREVIEW_MAX_LINES",
     "ReadFileCore",
     "SECRET_DETECTION_PLUGINS",
     "SECRET_DETECTION_SCAN_LOCK",
     "SecretRedactor",
+    "SemanticSearchCore",
     "SpillDir",
     "VALID_OUTPUT_STYLES",
     "build_diff_hunks",

@@ -31,9 +31,6 @@
 
 ### Feature backlog
 
-* namespace arg should be optional in SearchMemories.
-  ... it should also use semantic search.
-
 * embedding should also use gpu in background-scanner mode.
 
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
@@ -136,10 +133,10 @@
 
 * Context auto-compaction
 
-* Vector database indexing of skills and memories for fuzzier search of both (see
-  docs/specs/local-search-index.md's "Out of scope" -- the codebase/markdown catalog is already
-  built; `chunk.py`/`embedding.py`/`store.py`/`ranking.py` are catalog-agnostic, so each of these
-  needs only its own chunker plus a thin `Search*` integration).
+* Vector database indexing of skills for fuzzier search (see docs/specs/local-search-index.md's
+  "Out of scope" -- the workspace and memories catalogs are already built; `chunk.py`/
+  `embedding.py`/`store.py`/`ranking.py` are catalog-agnostic, so this needs only its own chunker
+  plus a thin `Search*` integration).
 
 * Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
   to remove all the extraneous stuff it adds. (see docs/specs/chainlink-task-tracking.md)

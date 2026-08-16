@@ -95,16 +95,30 @@ over that namespace's other memory files rather than a place to record full deta
   subdirectories.
 * `SearchMemoriesTool` takes `queries: list[str]` — matched as a literal, case-insensitive
   substring (never a regular expression), the same `klorb.tools.util.search_core` construction
-  `GrepTool`/`SearchScratchpadTool` use — and always searches every accessible namespace; there
-  is no `namespace` argument to narrow it, matching `ListMemories`' own "always both" shape. Each
-  matching file is reported once in `results` as `{namespace, filename, lines}`, where `lines` is
-  a flat list of the shared dense-format strings (`"*42|matched text"`, a leading `*`/space match
-  marker plus 1-based line number); there is no surrounding context (only the matching lines are
-  listed). A file's own `filename` is also a search subject: a query matching `filename` returns
-  that file even if none of its lines do, listing its first non-blank line as a single unmatched
-  (` `-prefixed) line; a file matched by both its filename and real content is reported once,
-  using the real content matches. `match_count` counts individual matching lines, plus one for
-  each filename-only hit (see the ADR `grep-search-tools-share-dense-line-core.md`).
+  `GrepTool`/`SearchScratchpadTool` use — plus an optional `namespace` (`"global"`/`"workspace"`/
+  `"all"`, default `"all"`) narrowing which namespace is searched; unlike `ListMemories`, this one
+  doesn't always cover both. Each matching file is reported once in `results` as `{namespace,
+  filename, lines}`, where `lines` is a flat list of the shared dense-format strings
+  (`"*42|matched text"`, a leading `*`/space match marker plus 1-based line number); there is no
+  surrounding context for a literal match (only the matching lines are listed). A file's own
+  `filename` is also a search subject: a query matching `filename` returns that file even if none
+  of its lines do, listing its first non-blank line as a single unmatched (` `-prefixed) line; a
+  file matched by both its filename and real content is reported once, using the real content
+  matches. `match_count` counts individual matching lines, plus one for each filename-only hit
+  (see the ADR `grep-search-tools-share-dense-line-core.md`).
+* On top of the literal search above, `SearchMemoriesTool` folds in up to `SEMANTIC_TOP_K` (5)
+  semantic hits — chunks related to any query by meaning rather than exact wording — from
+  whichever of the requested namespace's `memories-global`/`memories-workspace` search indexes
+  (see docs/specs/local-search-index.md's "Memories catalogs") are currently available, via the
+  same `klorb.tools.util.semantic_search_core.SemanticSearchCore` `SemanticSearch` uses. Only a
+  hit scoring at least `SEMANTIC_MIN_SCORE` (equivalent to ranking in the top 3 of at least one of
+  the fused lexical/vector lists — a high bar, appropriate since a session isn't expected to
+  accumulate many memory files) surfaces; a semantic entry carries an additional `score` field and
+  lists its matched chunk's line span (all lines marked). A file already reported via a literal
+  match is never duplicated as a separate semantic entry. Unlike `SemanticSearch`, an unavailable
+  index (feature disabled, embedding model not installed, or the relevant `MemoryCatalogIndexer`
+  hasn't been built for this session) is never an error — the semantic hits it would have added
+  are simply omitted, since the literal search above always still runs.
 * **Untrusted-workspace gating**: `workspace` memories are inaccessible in an untrusted
   workspace (see `klorb.workspace.Workspace.trusted`). `ListMemories`/`SearchMemories` report
   the `workspace` namespace as empty (or skip it entirely during iteration) rather than

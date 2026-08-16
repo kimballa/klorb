@@ -140,6 +140,14 @@ def _isolate_embedding_model_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         "klorb.search_index.embedding.get_klorb_data_dir", lambda: tmp_path / "embedding-model-dir")
 
 
+@pytest.fixture(autouse=True)
+def _reset_global_memory_indexer() -> None:
+    """Reset the process-wide `memories-global` catalog `MemoryCatalogIndexer` singleton between
+    tests, so one test's construction never leaks into the next."""
+    from klorb.search_index.memory_indexer import reset_global_memory_indexer_for_testing
+    reset_global_memory_indexer_for_testing()
+
+
 @pytest.fixture
 def make_session_config(tmp_path: Path) -> Callable[..., SessionConfig]:
     """Factory for a `SessionConfig` rooted at this test's own `tmp_path`, so a test that needs a
