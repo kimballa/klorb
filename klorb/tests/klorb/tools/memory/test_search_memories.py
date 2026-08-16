@@ -11,7 +11,6 @@ from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSP
 from klorb.search_index.chunk import Chunk
 from klorb.session import Session, SessionConfig
 from klorb.tools.memory import common as memory_common_module
-from klorb.tools.memory import search_memories as search_memories_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.search_memories import SearchMemoriesTool
 from klorb.tools.setup_context import ToolSetupContext
@@ -55,22 +54,22 @@ def _write(context: ToolSetupContext, namespace: Namespace, filename: str, conte
 
 
 class _FakeMemoryIndexer:
-    """A stand-in for `klorb.search_index.memory_indexer.MemoryCatalogIndexer` that returns a
-    fixed set of `(Chunk, score)` hits regardless of query text."""
+    """A stand-in for `klorb.search_index.indexer.WorkspaceIndexer` that returns a fixed set of
+    `(Chunk, score)` hits, filtered to the requested catalog, regardless of query text."""
 
     def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
         self._hits = hits
 
     def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
-        return self._hits[:limit]
+        return [(chunk, score) for chunk, score in self._hits if chunk.catalog == catalog][:limit]
 
 
 def _semantic_chunk(namespace: Namespace, filename: str, start_line: int, end_line: int) -> Chunk:
-    """A `Chunk` matching how `WorkspaceIndexer`/`MemoryCatalogIndexer` would actually have
-    indexed `filename`: workspace-root-relative for the `workspace` namespace (it shares
-    `WorkspaceIndexer` with the `workspace` catalog), bare for the `global` namespace."""
+    """A `Chunk` matching how `WorkspaceIndexer` would actually have indexed `filename`: both
+    catalogs use a `.klorb`-rooted `source_path` (real for `workspace`, synthetic for `global`),
+    since both share `WorkspaceIndexer`."""
     if namespace == "global":
-        catalog, source_path = MEMORIES_GLOBAL_CATALOG, filename
+        catalog, source_path = MEMORIES_GLOBAL_CATALOG, f".klorb/global-memories/{filename}"
     else:
         catalog, source_path = MEMORIES_WORKSPACE_CATALOG, f".klorb/memories/{filename}"
     return Chunk.create(
@@ -362,14 +361,15 @@ def test_namespace_filter_workspace_in_untrusted_workspace_yields_no_results(
 def test_semantic_only_hit_from_global_index_is_included(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
-    monkeypatch.setattr(
-        search_memories_module, "get_global_memory_indexer",
-        lambda: _FakeMemoryIndexer([(chunk, 0.5)]))
-
-    result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    finally:
+        session.close()
 
     hit = next(r for r in result["results"] if r["filename"] == "notes.md")
     assert hit["namespace"] == "global"
@@ -380,14 +380,15 @@ def test_semantic_only_hit_from_global_index_is_included(
 def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\nMATCH here\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
-    monkeypatch.setattr(
-        search_memories_module, "get_global_memory_indexer",
-        lambda: _FakeMemoryIndexer([(chunk, 0.5)]))
-
-    result = SearchMemoriesTool(context).apply({"queries": ["MATCH"]})
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["MATCH"]})
+    finally:
+        session.close()
 
     matching = [r for r in result["results"] if r["filename"] == "notes.md"]
     assert len(matching) == 1
@@ -397,37 +398,16 @@ def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
 def test_semantic_hits_respect_the_namespace_filter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\nsome unrelated content\n")
-
-    def _raise_if_called() -> _FakeMemoryIndexer:
-        raise AssertionError("the global indexer should not be consulted for namespace=workspace")
-
-    monkeypatch.setattr(search_memories_module, "get_global_memory_indexer", _raise_if_called)
-
-    result = SearchMemoriesTool(context).apply(
-        {"queries": ["unrelated"], "namespace": "workspace"})
-
-    assert result["results"] == []
-
-
-def test_semantic_hits_disabled_by_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
-    workspace_root = tmp_path / "workspace"
-    workspace_root.mkdir(exist_ok=True)
-    context = ToolSetupContext(
-        process_config=ProcessConfig(),
-        session_config=SessionConfig(
-            workspace=Workspace(path=workspace_root), search_memories_index_enabled=False))
-    _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
-    monkeypatch.setattr(
-        search_memories_module, "get_global_memory_indexer",
-        lambda: _FakeMemoryIndexer([(chunk, 0.5)]))
-
-    result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply(
+            {"queries": ["unrelated"], "namespace": "workspace"})
+    finally:
+        session.close()
 
     assert result["results"] == []
 
@@ -435,14 +415,15 @@ def test_semantic_hits_disabled_by_config(
 def test_semantic_hit_below_min_score_is_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
-    monkeypatch.setattr(
-        search_memories_module, "get_global_memory_indexer",
-        lambda: _FakeMemoryIndexer([(chunk, 0.0001)]))
-
-    result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.0001)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    finally:
+        session.close()
 
     assert result["results"] == []
 
@@ -468,15 +449,16 @@ def test_semantic_hit_from_workspace_index_is_included(
 def test_semantic_hit_included_in_list_files_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
-    monkeypatch.setattr(
-        search_memories_module, "get_global_memory_indexer",
-        lambda: _FakeMemoryIndexer([(chunk, 0.5)]))
-
-    result = SearchMemoriesTool(context).apply(
-        {"queries": ["unrelated literal phrase"], "outputStyle": "ListFiles"})
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply(
+            {"queries": ["unrelated literal phrase"], "outputStyle": "ListFiles"})
+    finally:
+        session.close()
 
     assert result["files"] == ["global/notes.md"]
 

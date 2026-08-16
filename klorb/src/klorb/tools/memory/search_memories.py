@@ -15,7 +15,6 @@ from klorb.search_index.catalogs import (
     namespace_for_catalog,
 )
 from klorb.search_index.chunk import Chunk
-from klorb.search_index.memory_indexer import get_global_memory_indexer
 from klorb.search_index.ranking import DEFAULT_RRF_K
 from klorb.tools.memory.common import Namespace, memory_namespace_dir, workspace_namespace_accessible
 from klorb.tools.setup_context import ToolSetupContext
@@ -58,11 +57,10 @@ def _validate_namespace_filter(raw: Any) -> str:
     return cast(str, raw)
 
 
-def _semantic_hit_filename(namespace: str, chunk: Chunk) -> str:
-    """A semantic hit's bare filename. A `memories-workspace` chunk's `source_path` is
-    workspace-root-relative (`.klorb/memories/<filename>.md`); a `memories-global` chunk's is
-    already bare."""
-    return Path(chunk.source_path).name if namespace == "workspace" else chunk.source_path
+def _semantic_hit_filename(chunk: Chunk) -> str:
+    """A semantic hit's bare filename. Both catalogs' `source_path` are multi-segment `.klorb`
+    -rooted paths; only the final segment is the actual memory filename."""
+    return Path(chunk.source_path).name
 
 
 class SearchMemoriesTool(Tool):
@@ -166,7 +164,7 @@ class SearchMemoriesTool(Tool):
             for namespace in namespaces:
                 list_files.extend(self._list_files_namespace(namespace, compiled))
             for hit_namespace, chunk, _score in self._semantic_hits(namespaces, queries):
-                entry = f"{hit_namespace}/{_semantic_hit_filename(hit_namespace, chunk)}"
+                entry = f"{hit_namespace}/{_semantic_hit_filename(chunk)}"
                 if entry not in list_files:
                     list_files.append(entry)
             # Count matches (each filename string is one hit).
@@ -184,7 +182,7 @@ class SearchMemoriesTool(Tool):
 
         already_reported = {(result["namespace"], result["filename"]) for result in results}
         for hit_namespace, chunk, score in self._semantic_hits(namespaces, queries):
-            filename = _semantic_hit_filename(hit_namespace, chunk)
+            filename = _semantic_hit_filename(chunk)
             if (hit_namespace, filename) in already_reported:
                 continue
             abs_path = self._resolve_semantic_hit_path(hit_namespace, chunk)
@@ -220,19 +218,17 @@ class SearchMemoriesTool(Tool):
         self, namespaces: Sequence[Namespace], queries: list[str],
     ) -> list[tuple[str, Chunk, float]]:
         """Up to `SEMANTIC_TOP_K` `(namespace, chunk, score)` hits, scoring at least
-        `SEMANTIC_MIN_SCORE`, from whichever of `namespaces`' memory catalog indexes are
-        currently available. The `memories-global` catalog is additionally gated on
-        `search_memories_index_enabled`; the `memories-workspace` catalog shares
-        `session.workspace_indexer`, inheriting whatever gating left it `None`."""
+        `SEMANTIC_MIN_SCORE`, from whichever of `namespaces`' catalogs `session.workspace_indexer`
+        (shared by both the `memories-workspace` and `memories-global` catalogs) currently
+        covers."""
+        indexer = self.context.session.workspace_indexer if self.context.session is not None else None
+        if indexer is None:
+            return []
         indexers: list[tuple[HybridSearchable, str]] = []
-        if "global" in namespaces and self.context.session_config.search_memories_index_enabled:
-            global_indexer = get_global_memory_indexer()
-            if global_indexer is not None:
-                indexers.append((global_indexer, MEMORIES_GLOBAL_CATALOG))
-        if "workspace" in namespaces and self.context.session is not None:
-            workspace_indexer = self.context.session.workspace_indexer
-            if workspace_indexer is not None:
-                indexers.append((workspace_indexer, MEMORIES_WORKSPACE_CATALOG))
+        if "global" in namespaces:
+            indexers.append((indexer, MEMORIES_GLOBAL_CATALOG))
+        if "workspace" in namespaces:
+            indexers.append((indexer, MEMORIES_WORKSPACE_CATALOG))
         if not indexers:
             return []
         hits = self._core.merged_hits(
@@ -244,11 +240,11 @@ class SearchMemoriesTool(Tool):
 
     def _resolve_semantic_hit_path(self, namespace: str, chunk: Chunk) -> Path:
         """The on-disk path a semantic hit's `chunk` was indexed from. A `memories-workspace`
-        chunk's `source_path` is workspace-root-relative; a `memories-global` chunk's is a bare
-        filename relative to the global memories directory."""
+        chunk's `source_path` is workspace-root-relative and real; a `memories-global` chunk's is
+        a synthetic path standing in for a file under the global memories directory."""
         if namespace == "workspace":
             return self.context.session_config.workspace.path.resolve() / chunk.source_path
-        return memory_namespace_dir(self.context, cast(Namespace, namespace)) / chunk.source_path
+        return memory_namespace_dir(self.context, cast(Namespace, namespace)) / _semantic_hit_filename(chunk)
 
     def _search_namespace(
         self, namespace: Namespace, compiled: re.Pattern[str],

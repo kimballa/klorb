@@ -84,8 +84,9 @@ mode, `synchronous=NORMAL` — each commit's fsync is deferred to the next WAL c
 paid immediately, trading a small durability window (an OS crash or power loss, not an application
 crash, can roll back the most recent transactions) for much cheaper per-file commits during a scan).
 A single store can hold more than one catalog's chunks — `WorkspaceIndexer`'s own
-`${workspace_root}/.klorb/index/workspace.db` holds both the `workspace` and `memories-workspace`
-catalogs — since every query that matters at multi-catalog scale is scoped to one `catalog` (see
+`${workspace_root}/.klorb/index/workspace.db` holds the `workspace`, `memories-workspace`, and
+`memories-global` catalogs, all three — since every query that matters at multi-catalog scale is
+scoped to one `catalog` (see
 docs/adrs/00196-memories-catalogs-share-search-index-storage-scoped-by-catalog-partition-key.md):
 
 * **`chunks`** — plain metadata table, one row per `Chunk`.
@@ -123,10 +124,13 @@ once per file.
 ## Indexing: `WorkspaceIndexer`
 
 `klorb.search_index.indexer.WorkspaceIndexer` owns one workspace's index end to end: the initial
-scan, the background filesystem watcher, and cross-process ownership, covering both the
-`workspace` catalog (the recursive, gitignore-aware tree walk below) and the `memories-workspace`
-catalog (`${workspace_root}/.klorb/memories/`, a flat `.md`-only directory the tree walk otherwise
-skips as part of `.klorb`) — one indexer, one store, one owner lock, one thread pool for both.
+scan, the background filesystem watcher, and cross-process ownership, covering all three
+catalogs — `workspace` (the recursive, gitignore-aware tree walk below), `memories-workspace`
+(`${workspace_root}/.klorb/memories/`, a flat `.md`-only directory the tree walk otherwise skips as
+part of `.klorb`), and `memories-global` (`KLORB_DATA_DIR/memories/`, outside the workspace root
+entirely) — one indexer, one store, one owner lock, one thread pool for all three. `index_memories`
+(a constructor flag, `True` by default, threaded from `SessionConfig.
+search_memories_index_enabled`) turns the latter two off without affecting the `workspace` catalog.
 
 * **Cross-process ownership.** A TUI session and a vscode-plugin ACP session both open on the same
   workspace is the normal case, not an edge case — two unrelated indexer threads racing to reindex
@@ -150,48 +154,42 @@ skips as part of `.klorb`) — one indexer, one store, one owner lock, one threa
   same gitignore-aware filtering `klorb.tui.workspace_file_index.WorkspaceFileIndex` uses for its own
   `@`-mention index), skipping `.git`/`.klorb` unconditionally, symlinks, and any file over
   `MAX_INDEXED_FILE_BYTES` (500KB) or that fails to decode as UTF-8 (the same silent-skip `Grep` gives
-  an undecodable file), then separately walks `.klorb/memories/` (flat, `.md`-only, no gitignore,
-  no recursion) for the `memories-workspace` catalog. Both walks share one `existing`/`seen`
-  bookkeeping pass so a file removed from either is cleaned up the same way. A file whose mtime
-  matches its stored `FileIndexRecord.last_modified_ts` is skipped without being read or hashed.
-  Otherwise its whole-content hash is compared against the stored `content_hash`: an unchanged hash
-  (e.g. a `git checkout` that only bumps mtimes) just refreshes the stored mtime, while a changed
-  hash rechunks and re-embeds it. A previously-indexed path no longer seen is deleted.
+  an undecodable file), then (when `index_memories`) separately walks `.klorb/memories/` and
+  `KLORB_DATA_DIR/memories/` (each flat, `.md`-only, no gitignore, no recursion). All three walks
+  share one `existing`/`seen` bookkeeping pass so a file removed from any of them is cleaned up the
+  same way. A file whose mtime matches its stored `FileIndexRecord.last_modified_ts` is skipped
+  without being read or hashed. Otherwise its whole-content hash is compared against the stored
+  `content_hash`: an unchanged hash (e.g. a `git checkout` that only bumps mtimes) just refreshes
+  the stored mtime, while a changed hash rechunks and re-embeds it. A previously-indexed path no
+  longer seen is deleted.
 * **The watcher** — a `watchdog` `Observer` + debounce-`Timer`, the same idiom
   `klorb.hooks.fs_events.FileSystemWatcher`/`klorb.tui.workspace_file_index.WorkspaceFileIndex` use —
-  is scheduled recursively on the whole workspace root, so it already receives events for
-  `.klorb/memories/*` too; `_reindex_changed_path` special-cases a direct child of
-  `.klorb/memories/` into the `memories-workspace` catalog before falling back to the ordinary
-  `.klorb`-skip check for everything else under `.klorb`. Reindexes (or deletes, if the path no
-  longer exists or gitignore now excludes it) each changed path once a 1-second-quiet debounce
-  window settles.
+  is scheduled recursively on the whole workspace root (so it already receives events for
+  `.klorb/memories/*` too) plus, when `index_memories`, non-recursively on `KLORB_DATA_DIR/memories/`
+  directly (created eagerly if missing, since `watchdog.Observer.schedule` requires the watched
+  directory to already exist). `_reindex_changed_path` special-cases a direct child of either
+  memories directory into its catalog before falling back to the ordinary `.klorb`-skip check for
+  everything else under `.klorb`. Reindexes (or deletes, if the path no longer exists or gitignore
+  now excludes it) each changed path once a 1-second-quiet debounce window settles.
 
-A `workspace` catalog chunk's `Chunk.source_path` is workspace-root-relative
-(`docs/README.md`); a `memories-workspace` chunk's is too (`.klorb/memories/notes.md`), since
-both share `WorkspaceIndexer`'s own walk.
+A `workspace` catalog chunk's `Chunk.source_path` is workspace-root-relative (`docs/README.md`); a
+`memories-workspace` chunk's is too (`.klorb/memories/notes.md`), since both are real paths under
+`workspace_root`. A `memories-global` chunk's `source_path` is a *synthetic*
+`.klorb`-rooted path (`.klorb/global-memories/notes.md`) standing in for a file that's really under
+`KLORB_DATA_DIR/memories/`, not the workspace at all — chosen specifically so it can never collide
+with a real `workspace`-catalog path in the shared `files`/`chunks` bookkeeping (`_walk_indexable_
+files` always skips `.klorb`, so no real workspace file ever produces a `.klorb`-rooted
+`source_path`). `namespace_for_catalog(catalog)` (`klorb.search_index.catalogs`) resolves a
+`Chunk.catalog` value back to its memory namespace (`"global"`/`"workspace"`), used by
+`SearchMemories` to label a semantic hit.
 
-## The `memories-global` catalog: `MemoryCatalogIndexer`
-
-`klorb.search_index.memory_indexer.MemoryCatalogIndexer` is the same shape as `WorkspaceIndexer`
-(initial scan, background watcher, lockfile-based ownership) scoped to one flat, `.md`-only
-directory instead of a whole recursive workspace tree — no gitignore filtering, no recursion, no
-multi-threaded foreground scan. It backs only the `memories-global` catalog, indexing
-`KLORB_DATA_DIR/memories/` (every workspace's shared global memories) into its own store at
-`KLORB_DATA_DIR/index/memories-global.db`.
-
-Global memories apply across every workspace, so this is a process-wide singleton
-(`klorb.search_index.memory_indexer.get_global_memory_indexer()`, constructed and `start()`-ed
-lazily on first call, like `get_embedding_model()`/`get_chunker_router()`) rather than a
-per-`Session` object — one indexer covers every session in the process regardless of which
-workspace it's rooted in. It runs independent of any workspace's trust: gated only on
-`SessionConfig.search_memories_index_enabled` (checked by each tool call site, since the singleton
-itself has no `Session` to read config from) and `embedding_model_available()`. Its `Chunk.
-source_path` is a bare filename relative to `KLORB_DATA_DIR/memories/`, since that directory isn't
-nested under any workspace root.
-
-`namespace_for_catalog(catalog)` (`klorb.search_index.catalogs`) resolves a `Chunk.catalog` value
-back to its memory namespace (`"global"`/`"workspace"`), used by `SearchMemories` to label a
-semantic hit.
+Global memories are indexed redundantly into every trusted workspace's own store rather than
+shared across workspaces or klorb processes — see
+docs/adrs/00196-memories-catalogs-share-search-index-storage-scoped-by-catalog-partition-key.md
+for why. This ties `memories-global`'s searchability to the same trust gate as everything else
+`WorkspaceIndexer` touches: an untrusted workspace has no semantic search over global memories
+either, even though reading/writing them directly (`ReadMemory`/`CreateMemory`/...) is never
+gated by workspace trust.
 
 ## Session integration
 
@@ -218,18 +216,17 @@ feature itself construct or assign a `WorkspaceIndexer` directly instead of goin
 `WorkspaceIndexer.close()` is registered as a root-session teardown subject
 (`_WORKSPACE_INDEXER_TEARDOWN_SUBJECT`), added to `_INFRASTRUCTURE_TEARDOWN_SUBJECTS` so
 `reset_session()`/`/clear` never tears it down mid-process — a `/clear` keeps the same workspace, so
-there's nothing to rebuild. The `memories-global` catalog's indexer is a process-wide singleton
-instead (`get_global_memory_indexer()`), so it isn't tied to any one session's teardown at all.
+there's nothing to rebuild. All three catalogs share this single teardown, since they share the one
+`WorkspaceIndexer` instance.
 
 ## `SemanticSearch`/`SearchMemories` integration
 
 `klorb.tools.util.semantic_search_core.SemanticSearchCore` is the mechanic both tools share:
 `merged_hits()` runs a list of queries through one or more `(HybridSearchable, catalog)` pairs
-(anything with a `hybrid_search(query_text, limit, catalog)` method — `WorkspaceIndexer` and
-`MemoryCatalogIndexer` both qualify), deduplicating by chunk id and keeping each chunk's highest
-score, with an optional minimum-score floor; `render_chunk_lines()` re-reads a chunk's source file
-fresh and renders its line span in the shared dense-line format, secret-redacted and truncated to
-the caller's line length.
+(anything with a `hybrid_search(query_text, limit, catalog)` method — `WorkspaceIndexer` qualifies),
+deduplicating by chunk id and keeping each chunk's highest score, with an optional minimum-score
+floor; `render_chunk_lines()` re-reads a chunk's source file fresh and renders its line span in the
+shared dense-line format, secret-redacted and truncated to the caller's line length.
 
 See `docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md` for
 `SemanticSearch`'s full design and rationale. In short: `klorb.tools.semantic_search.
@@ -238,17 +235,16 @@ CATALOG)]` and returns up to `top_k` (default 25) chunk-level hits scoped by the
 `path`/`file_glob` `Grep` uses for its own walk. Raises `ToolCallError` if
 `context.session.workspace_indexer` is `None`.
 
-`klorb.tools.memory.search_memories.SearchMemoriesTool` calls `merged_hits()` against whichever of
-`(get_global_memory_indexer(), MEMORIES_GLOBAL_CATALOG)`/`(context.session.workspace_indexer,
-MEMORIES_WORKSPACE_CATALOG)` are available for the requested `namespace` (see
-docs/specs/memories.md), with a minimum-score floor (`SEMANTIC_MIN_SCORE`, equivalent to ranking in
-the top 3 of at least one of the lexical/vector lists) and a small cap (`SEMANTIC_TOP_K`, 5)
-appropriate for a collection that isn't expected to hold many memory files. Unlike
-`SemanticSearch`, an unavailable index is never an error: the hits it would have added are simply
-omitted, since `SearchMemories`'s literal keyword search always still runs. A semantic hit's
-on-disk path is resolved per namespace — workspace-root-relative for `workspace`, relative to
-`KLORB_DATA_DIR/memories/` for `global` — matching each catalog's own `Chunk.source_path`
-convention.
+`klorb.tools.memory.search_memories.SearchMemoriesTool` calls `merged_hits()` against
+`context.session.workspace_indexer` paired with whichever of `MEMORIES_GLOBAL_CATALOG`/
+`MEMORIES_WORKSPACE_CATALOG` the requested `namespace` covers (see docs/specs/memories.md), with a
+minimum-score floor (`SEMANTIC_MIN_SCORE`, equivalent to ranking in the top 3 of at least one of
+the lexical/vector lists) and a small cap (`SEMANTIC_TOP_K`, 5) appropriate for a collection that
+isn't expected to hold many memory files. Unlike `SemanticSearch`, an unavailable index is never an
+error: the hits it would have added are simply omitted, since `SearchMemories`'s literal keyword
+search always still runs. A semantic hit's on-disk path is resolved per namespace —
+workspace-root-relative for `workspace`, relative to `KLORB_DATA_DIR/memories/` (stripping the
+synthetic `source_path` prefix) for `global`.
 
 ## CLI: `klorb index`
 
@@ -264,11 +260,11 @@ sub-main functions in `klorb.search_index.cli`:
   ownership and runs a full scan synchronously first, per `hybrid_search()`'s own contract.
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`) — calls
   `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
-  scan: it walks the workspace tree and `.klorb/memories/` once, (re)indexes every dirty file in
-  either the `workspace` or `memories-workspace` catalog, and returns before exiting rather than
+  scan: it walks the workspace tree, `.klorb/memories/`, and `KLORB_DATA_DIR/memories/` once,
+  (re)indexes every dirty file across all three catalogs, and returns before exiting rather than
   continuing on a background thread. `--rebuild` clears the store first (`SearchIndexStore.
-  clear()`) so every file (both catalogs) is treated as dirty. Multi-threaded scanning fans the
-  per-file read/chunk/embed work — across both catalogs together — across `num_threads` worker
+  clear()`) so every file (all three catalogs) is treated as dirty. Multi-threaded scanning fans
+  the per-file read/chunk/embed work — across every catalog together — across `num_threads` worker
   threads:
   * Each `TreeSitterChunker` keeps a lazily-constructed `Parser` per thread (`threading.local()`)
     rather than one shared instance, since a `Parser` isn't safe for concurrent use, so chunking
@@ -296,17 +292,18 @@ sub-main functions in `klorb.search_index.cli`:
 All three actions resolve the workspace root via `TrustManager().resolve_workspace(cwd)` but,
 unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
 an explicit `klorb index` invocation is itself the user's authorization, the same treatment
-`klorb init` gets. `klorb index` operates on `WorkspaceIndexer` (the `workspace` and
-`memories-workspace` catalogs); it has no equivalent action for the `memories-global` catalog's
-`MemoryCatalogIndexer`.
+`klorb init` gets. `scan`/`stats` cover all three catalogs (they operate on `WorkspaceIndexer`/its
+store directly); `search` only ever queries the `workspace` catalog.
 
 ## Configuration
 
 * `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `true`, backing
-  `SessionConfig.search_workspace_index_enabled`. Also gates the `memories-workspace` catalog,
-  since it shares `WorkspaceIndexer` with `workspace`.
+  `SessionConfig.search_workspace_index_enabled`.
 * `sessionDefaults.search.memoriesIndex.enabled` — `bool`, default `true`, backing
-  `SessionConfig.search_memories_index_enabled`. Governs only the `memories-global` catalog.
+  `SessionConfig.search_memories_index_enabled`, threaded into `WorkspaceIndexer`'s
+  `index_memories` constructor flag. Gates the `memories-workspace`/`memories-global` catalogs
+  together; moot unless `search_workspace_index_enabled` is also on and the workspace is trusted,
+  since all three catalogs share one `WorkspaceIndexer`.
 
 ## Out of scope
 
@@ -314,8 +311,6 @@ an explicit `klorb index` invocation is itself the user's authorization, the sam
   catalog-agnostic; each anticipated catalog needs only its own chunker (Skills reuses
   `chunkers.markdown.MarkdownChunker` directly, like the memories catalogs already do) and a thin
   `Search*` integration. Not built yet.
-* **A `klorb index` equivalent for the `memories-global` catalog.** There's no CLI access to
-  `MemoryCatalogIndexer`'s `search`/`scan`/`stats` independent of an agent session.
 * **A shared daemon.** Each klorb process opens the workspace's SQLite file directly; there is no
   subprocess/socket-RPC indexing service. Revisit if cross-process write contention on
   `.klorb/index/*.db` turns out to matter in practice — the owner-lock design already bounds it to at

@@ -342,7 +342,9 @@ class SessionCoreMixin(SessionBase):
     def _create_workspace_indexer(config: SessionConfig) -> "WorkspaceIndexer | None":
         """Construct and `start()` a `WorkspaceIndexer` for `config.workspace.path`, or return
         `None` if `search_workspace_index_enabled` is off, the workspace is untrusted, the bundled
-        embedding model isn't installed (`klorb init` never ran), or construction itself fails."""
+        embedding model isn't installed (`klorb init` never ran), or construction itself fails.
+        `index_memories` (from `search_memories_index_enabled`) governs whether the indexer also
+        covers the `memories-workspace`/`memories-global` catalogs."""
         if not config.search_workspace_index_enabled or not config.workspace.trusted:
             return None
         from klorb.search_index.embedding import embedding_model_available
@@ -354,7 +356,8 @@ class SessionCoreMixin(SessionBase):
             return None
         from klorb.search_index.indexer import WorkspaceIndexer
         try:
-            indexer = WorkspaceIndexer(config.workspace.path)
+            indexer = WorkspaceIndexer(
+                config.workspace.path, index_memories=config.search_memories_index_enabled)
         except OSError:
             logger.warning("Could not construct workspace search index.", exc_info=True)
             return None

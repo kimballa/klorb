@@ -1,13 +1,13 @@
 # © Copyright 2026 Aaron Kimball
-"""`WorkspaceIndexer`: owns one workspace's search index, covering the `workspace` and
-`memories-workspace` catalogs. See docs/specs/local-search-index.md.
+"""`WorkspaceIndexer`: owns one workspace's search index, covering the `workspace`,
+`memories-workspace`, and `memories-global` catalogs. See docs/specs/local-search-index.md.
 """
 
 import hashlib
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,8 +17,9 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from klorb.lockfile import Lockfile, create_lockfile
+from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace_klorb_dir
-from klorb.search_index.catalogs import MEMORIES_WORKSPACE_CATALOG
+from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.base import CATALOG
 from klorb.search_index.chunkers.router import get_chunker_router
@@ -39,6 +40,12 @@ DEFAULT_SEARCH_LIMIT = 20
 _ALWAYS_SKIP_DIR_NAMES = frozenset({".git", ".svn", ".cvs", ".hg",
                                     "venv", ".venv",
                                     "node_modules", KLORB_PROJECT_DIR_NAME})
+
+_GLOBAL_MEMORIES_VIRTUAL_DIRNAME = "global-memories"
+"""Synthetic path segment standing in for `KLORB_DATA_DIR/memories/` in `Chunk.source_path` and
+the `files` table's bookkeeping key, since that directory isn't nested under any workspace root.
+Kept under a `.klorb`-prefixed virtual path so it can never collide with a real `workspace`
+catalog path, since `_walk_indexable_files` always skips `.klorb`."""
 
 
 @dataclass
@@ -114,17 +121,39 @@ def _walk_indexable_files(root: Path, gitignore: GitignoreFilter) -> Iterator[Pa
             yield entry
 
 
-def _walk_workspace_memory_files(workspace_root: Path) -> list[Path]:
-    """Every `.md`, non-dotfile file directly in `workspace_root`'s `.klorb/memories/`. A flat
-    directory, so this never recurses and ignores gitignore."""
-    memories_dir = workspace_klorb_dir(workspace_root) / MEMORIES_DIRNAME
+def _flat_memory_files(namespace_dir: Path) -> list[Path]:
+    """Every `.md`, non-dotfile file directly in `namespace_dir`. A flat directory, so this never
+    recurses and ignores gitignore."""
     try:
-        entries = sorted(memories_dir.iterdir(), key=lambda entry: entry.name)
+        entries = sorted(namespace_dir.iterdir(), key=lambda entry: entry.name)
     except OSError:
         return []
     return [
         entry for entry in entries
         if entry.is_file() and entry.suffix == ".md" and not entry.name.startswith(".")
+    ]
+
+
+def _workspace_file_entries(root: Path, gitignore: GitignoreFilter) -> Iterator[tuple[Path, str]]:
+    for abs_path in _walk_indexable_files(root, gitignore):
+        yield abs_path, abs_path.relative_to(root).as_posix()
+
+
+def _workspace_memory_entries(workspace_root: Path) -> list[tuple[Path, str]]:
+    """Every `.klorb/memories/` file, paired with its real workspace-root-relative path."""
+    memories_dir = workspace_klorb_dir(workspace_root) / MEMORIES_DIRNAME
+    return [
+        (abs_path, f"{KLORB_PROJECT_DIR_NAME}/{MEMORIES_DIRNAME}/{abs_path.name}")
+        for abs_path in _flat_memory_files(memories_dir)
+    ]
+
+
+def _global_memory_entries() -> list[tuple[Path, str]]:
+    """Every global memory file, paired with a synthetic `.klorb`-rooted path."""
+    memories_dir = get_klorb_data_dir() / MEMORIES_DIRNAME
+    return [
+        (abs_path, f"{KLORB_PROJECT_DIR_NAME}/{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}")
+        for abs_path in _flat_memory_files(memories_dir)
     ]
 
 
@@ -139,15 +168,14 @@ class _DirtyFile:
 
 
 def _collect_dirty(
-    paths: Iterator[Path] | list[Path], workspace_root: Path, catalog: str,
+    entries: Iterable[tuple[Path, str]], catalog: str,
     existing: dict[str, FileIndexRecord], seen: set[str],
 ) -> list[_DirtyFile]:
-    """Filter `paths` (all belonging to `catalog`) down to the ones whose mtime changed since
-    `existing`, recording every path's `rel_path` into `seen` along the way regardless of
+    """Filter `entries` (all belonging to `catalog`) down to the ones whose mtime changed since
+    `existing`, recording every entry's `rel_path` into `seen` along the way regardless of
     dirtiness."""
     dirty = []
-    for abs_path in paths:
-        rel_path = abs_path.relative_to(workspace_root).as_posix()
+    for abs_path, rel_path in entries:
         seen.add(rel_path)
         try:
             mtime = abs_path.stat().st_mtime
@@ -168,8 +196,10 @@ class WorkspaceIndexer:
     ownership and runs a catch-up scan.
     """
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(self, workspace_root: Path, *, index_memories: bool = True) -> None:
         self._workspace_root = workspace_root.resolve()
+        self._index_memories = index_memories
+        self._global_memories_dir = (get_klorb_data_dir() / MEMORIES_DIRNAME).resolve(strict=False)
         index_dir = workspace_klorb_dir(self._workspace_root) / INDEX_DIR_NAME
         index_dir.mkdir(parents=True, exist_ok=True)
         self._store = SearchIndexStore(index_dir / DB_FILENAME)
@@ -302,12 +332,14 @@ class WorkspaceIndexer:
         existing = self._store.file_records()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
         seen: set[str] = set()
-        dirty: list[_DirtyFile] = []
-        for paths, catalog in (
-            (_walk_indexable_files(self._workspace_root, gitignore), CATALOG),
-            (_walk_workspace_memory_files(self._workspace_root), MEMORIES_WORKSPACE_CATALOG),
-        ):
-            dirty.extend(_collect_dirty(paths, self._workspace_root, catalog, existing, seen))
+        dirty: list[_DirtyFile] = _collect_dirty(
+            _workspace_file_entries(self._workspace_root, gitignore), CATALOG, existing, seen)
+        if self._index_memories:
+            dirty.extend(_collect_dirty(
+                _workspace_memory_entries(self._workspace_root), MEMORIES_WORKSPACE_CATALOG,
+                existing, seen))
+            dirty.extend(_collect_dirty(
+                _global_memory_entries(), MEMORIES_GLOBAL_CATALOG, existing, seen))
 
         files_indexed = 0
         chunks_indexed = 0
@@ -416,17 +448,20 @@ class WorkspaceIndexer:
         existing = self._store.file_records()
         seen: set[str] = set()
         gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
-        for paths, catalog in (
-            (_walk_indexable_files(self._workspace_root, gitignore), CATALOG),
-            (_walk_workspace_memory_files(self._workspace_root), MEMORIES_WORKSPACE_CATALOG),
-        ):
-            for abs_path in paths:
+        sources: list[tuple[Iterable[tuple[Path, str]], str]] = [
+            (_workspace_file_entries(self._workspace_root, gitignore), CATALOG),
+        ]
+        if self._index_memories:
+            sources.append(
+                (_workspace_memory_entries(self._workspace_root), MEMORIES_WORKSPACE_CATALOG))
+            sources.append((_global_memory_entries(), MEMORIES_GLOBAL_CATALOG))
+        for entries, catalog in sources:
+            for abs_path, rel_path in entries:
                 if self._closing_event.is_set():
                     logger.debug(
                         "Initial scan of %s interrupted by close() after %d file(s).",
                         self._workspace_root, len(seen))
                     return
-                rel_path = abs_path.relative_to(self._workspace_root).as_posix()
                 seen.add(rel_path)
                 self._scan_one_file(rel_path, abs_path, catalog, existing, write_lock)
         stale_paths = set(existing) - seen
@@ -492,6 +527,11 @@ class WorkspaceIndexer:
             return
         observer = Observer()
         observer.schedule(_ChangeHandler(self), str(self._workspace_root), recursive=True)
+        if self._index_memories:
+            # `KLORB_DATA_DIR/memories/` isn't created eagerly, but watchdog requires the watched
+            # directory to exist, so the indexer creates it itself.
+            self._global_memories_dir.mkdir(parents=True, exist_ok=True)
+            observer.schedule(_ChangeHandler(self), str(self._global_memories_dir), recursive=False)
         observer.start()
         self._observer = observer
         logger.debug("Search index watcher started for %s.", self._workspace_root)
@@ -517,13 +557,19 @@ class WorkspaceIndexer:
             self._reindex_changed_path(abs_path)
 
     def _reindex_changed_path(self, abs_path: Path) -> None:
+        if self._index_memories and abs_path.parent == self._global_memories_dir:
+            rel_path = f"{KLORB_PROJECT_DIR_NAME}/{_GLOBAL_MEMORIES_VIRTUAL_DIRNAME}/{abs_path.name}"
+            self._reindex_changed_memory_path(abs_path, rel_path, MEMORIES_GLOBAL_CATALOG)
+            return
         try:
             relative = abs_path.relative_to(self._workspace_root)
         except ValueError:
             return
         parts = relative.parts
-        if len(parts) == 3 and parts[0] == KLORB_PROJECT_DIR_NAME and parts[1] == MEMORIES_DIRNAME:
-            self._reindex_changed_memory_path(abs_path, relative.as_posix())
+        if (self._index_memories and len(parts) == 3
+                and parts[0] == KLORB_PROJECT_DIR_NAME and parts[1] == MEMORIES_DIRNAME):
+            self._reindex_changed_memory_path(
+                abs_path, relative.as_posix(), MEMORIES_WORKSPACE_CATALOG)
             return
         if any(part in _ALWAYS_SKIP_DIR_NAMES for part in parts[:-1]):
             return
@@ -543,9 +589,9 @@ class WorkspaceIndexer:
             return
         self._reindex_file(rel_path, text, _file_hash(text), mtime, catalog=CATALOG)
 
-    def _reindex_changed_memory_path(self, abs_path: Path, rel_path: str) -> None:
-        """Reindex or delete a changed path directly under `.klorb/memories/`, the flat namespace
-        `_walk_workspace_memory_files` also covers."""
+    def _reindex_changed_memory_path(self, abs_path: Path, rel_path: str, catalog: str) -> None:
+        """Reindex or delete a changed path in a flat memory namespace (`.klorb/memories/` or
+        `KLORB_DATA_DIR/memories/`)."""
         if abs_path.name.startswith(".") or abs_path.suffix != ".md":
             return
         text = _read_text(abs_path) if abs_path.is_file() else None
@@ -557,7 +603,7 @@ class WorkspaceIndexer:
         except OSError:
             self._store.delete_for_path(rel_path)
             return
-        self._reindex_file(rel_path, text, _file_hash(text), mtime, catalog=MEMORIES_WORKSPACE_CATALOG)
+        self._reindex_file(rel_path, text, _file_hash(text), mtime, catalog=catalog)
 
 
 class _ChangeHandler(FileSystemEventHandler):
