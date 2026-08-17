@@ -9,7 +9,7 @@ behind, a registered wake handler to enqueue-and-wake, or
 docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md)
 -- see `klorb.tests.klorb.hooks.test_fs_events` for `FileSystemWatcher`'s own filesystem-level
 behavior."""
-
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -35,8 +35,10 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-def _process_config(workspace_root: Path, **events: Any) -> ProcessConfig:
-    session = SessionConfig(
+def _process_config(
+    workspace_root: Path, make_session_config: Callable[..., SessionConfig], **events: Any,
+) -> ProcessConfig:
+    session = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
         write_dirs=DirRules(allow=[workspace_root]))
@@ -90,11 +92,11 @@ def _install_fake_watcher(monkeypatch: pytest.MonkeyPatch) -> list[_FakeWatcher]
 
 
 def test_fire_session_start_hook_starts_the_fs_watcher_when_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_watcher(monkeypatch)
     entry = FileSystemModifiedEventConfig(watch=".", action=HookConfig(type="chat", prompt="x"))
-    process_config = _process_config(tmp_path, FileSystemModified=[entry])
+    process_config = _process_config(tmp_path, make_session_config, FileSystemModified=[entry])
     session = Session(process_config.session, process_config=process_config)
     try:
         session.fire_session_start_hook("NewSession")
@@ -108,10 +110,10 @@ def test_fire_session_start_hook_starts_the_fs_watcher_when_configured(
 
 
 def test_fire_session_start_hook_does_not_start_a_watcher_with_no_entries_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_watcher(monkeypatch)
-    process_config = _process_config(tmp_path)
+    process_config = _process_config(tmp_path, make_session_config)
     session = Session(process_config.session, process_config=process_config)
     try:
         session.fire_session_start_hook("NewSession")
@@ -121,11 +123,11 @@ def test_fire_session_start_hook_does_not_start_a_watcher_with_no_entries_config
 
 
 def test_fire_session_start_hook_does_not_start_a_watcher_for_a_subagent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_watcher(monkeypatch)
     entry = FileSystemModifiedEventConfig(watch=".", action=HookConfig(type="chat", prompt="x"))
-    process_config = _process_config(tmp_path, FileSystemModified=[entry])
+    process_config = _process_config(tmp_path, make_session_config, FileSystemModified=[entry])
     root = Session(process_config.session, process_config=process_config)
     child = Session(process_config.session.model_copy(), process_config=process_config, parent=root)
     try:
@@ -139,14 +141,16 @@ def test_fire_session_start_hook_does_not_start_a_watcher_for_a_subagent(
 # --- _dispatch_fs_modified_event ---
 
 
-def test_dispatch_fs_modified_event_delivers_the_actions_message(tmp_path: Path) -> None:
+def test_dispatch_fs_modified_event_delivers_the_actions_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Delivered via `deliver_event_message`'s "a turn is already in flight" branch -- the only
     one that can render anywhere without a live host (see "Available events" in
     docs/specs/hooks-and-events.md); the idle branch raises instead, covered separately by
     `test_deliver_event_message_raises_when_idle`."""
     entry = FileSystemModifiedEventConfig(
         watch=".", action=HookConfig(type="bash", shell='echo \'{"message": "fs changed"}\''))
-    process_config = _process_config(tmp_path, FileSystemModified=[entry])
+    process_config = _process_config(tmp_path, make_session_config, FileSystemModified=[entry])
     provider = MagicMock()
     session = Session(process_config.session, provider=provider, process_config=process_config)
     session._current_turn_handlers = TurnEventHandlers()
@@ -165,8 +169,10 @@ def test_dispatch_fs_modified_event_delivers_the_actions_message(tmp_path: Path)
 # --- fire_workspace_trust_changed_hook ---
 
 
-def test_fire_workspace_trust_changed_hook_delivers_the_actions_message(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, WorkspaceTrustChanged=[
+def test_fire_workspace_trust_changed_hook_delivers_the_actions_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, WorkspaceTrustChanged=[
         WorkspaceTrustChangedEventConfig(action=HookConfig(type="chat", prompt="trust changed")),
     ])
     provider = MagicMock()
@@ -183,8 +189,10 @@ def test_fire_workspace_trust_changed_hook_delivers_the_actions_message(tmp_path
     assert drained == [QueuedMessage(message_text="trust changed", origin="event")]
 
 
-def test_fire_workspace_trust_changed_hook_is_a_noop_with_no_entries_configured(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path)
+def test_fire_workspace_trust_changed_hook_is_a_noop_with_no_entries_configured(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config)
     provider = MagicMock()
     session = Session(process_config.session, provider=provider, process_config=process_config)
     try:
@@ -194,8 +202,10 @@ def test_fire_workspace_trust_changed_hook_is_a_noop_with_no_entries_configured(
     provider.send_prompt.assert_not_called()
 
 
-def test_fire_workspace_trust_changed_hook_is_a_noop_for_a_subagent(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, WorkspaceTrustChanged=[
+def test_fire_workspace_trust_changed_hook_is_a_noop_for_a_subagent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, WorkspaceTrustChanged=[
         WorkspaceTrustChangedEventConfig(action=HookConfig(type="chat", prompt="trust changed")),
     ])
     provider = MagicMock()
@@ -212,12 +222,12 @@ def test_fire_workspace_trust_changed_hook_is_a_noop_for_a_subagent(tmp_path: Pa
 
 
 def test_fire_workspace_trust_changed_hook_reset_session_resets_and_wakes_the_host(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `reset_session` result wipes the conversation in place (same `id`) and delivers its
     `message` via `deliver_event_message` like an ordinary event message -- which, while idle,
     means enqueuing and pinging the registered wake handler (see `Session._deliver_or_reset_event`)."""
-    process_config = _process_config(tmp_path, WorkspaceTrustChanged=[
+    process_config = _process_config(tmp_path, make_session_config, WorkspaceTrustChanged=[
         WorkspaceTrustChangedEventConfig(
             action=HookConfig(
                 type="bash",
@@ -246,12 +256,15 @@ def test_fire_workspace_trust_changed_hook_reset_session_resets_and_wakes_the_ho
 # --- deliver_event_message ---
 
 
-def test_deliver_event_message_raises_when_idle(tmp_path: Path) -> None:
+def test_deliver_event_message_raises_when_idle(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """No turn in flight and no registered wake handler means no host (TUI/ACP/headless) is
     around to render the message anywhere -- raises `ChainedHookMessageUndeliverableError`
     rather than dispatching it invisibly."""
     provider = MagicMock()
-    session = Session(SessionConfig(workspace=Workspace(path=tmp_path, trusted=True)), provider=provider)
+    session = Session(make_session_config(workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider)
 
     with pytest.raises(ChainedHookMessageUndeliverableError):
         session.deliver_event_message("something happened")
@@ -259,12 +272,15 @@ def test_deliver_event_message_raises_when_idle(tmp_path: Path) -> None:
     provider.send_prompt.assert_not_called()
 
 
-def test_deliver_event_message_wakes_a_registered_host_when_idle(tmp_path: Path) -> None:
+def test_deliver_event_message_wakes_a_registered_host_when_idle(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A registered wake handler (see `Session.register_wake_handler`) lets an idle session
     enqueue instead of raising -- the "push-and-wake-up" mechanism the no-handler case above
     still falls back to raising without."""
     provider = MagicMock()
-    session = Session(SessionConfig(workspace=Workspace(path=tmp_path, trusted=True)), provider=provider)
+    session = Session(make_session_config(workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider)
     woken: list[bool] = []
     session.register_wake_handler(lambda: woken.append(True))
 
@@ -276,9 +292,12 @@ def test_deliver_event_message_wakes_a_registered_host_when_idle(tmp_path: Path)
     assert drained == [QueuedMessage(message_text="something happened", origin="event")]
 
 
-def test_deliver_event_message_queues_verbatim_when_a_turn_is_in_flight(tmp_path: Path) -> None:
+def test_deliver_event_message_queues_verbatim_when_a_turn_is_in_flight(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
-    session = Session(SessionConfig(workspace=Workspace(path=tmp_path, trusted=True)), provider=provider)
+    session = Session(make_session_config(workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider)
     session._current_turn_handlers = TurnEventHandlers()
 
     session.deliver_event_message("something happened")

@@ -6,8 +6,8 @@ entries) rather than a
 fixture, since these are exactly the entries CreateSubagent consults in production. See
 docs/specs/subagents.md.
 """
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -36,12 +36,13 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _operator_context(
-    tmp_path: Path, *, max_concurrent: int = 4, max_active: int = 16, max_depth: int = 2,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], *,
+    max_concurrent: int = 4, max_active: int = 16, max_depth: int = 2,
 ) -> ToolSetupContext:
     process_config = ProcessConfig(
         subagents_max_concurrent_per_parent=max_concurrent,
         subagents_max_active_total=max_active, subagents_max_depth=max_depth)
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator")
     grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
     session_config.skill_rules = grants.skill_rules
     session = Session(
@@ -51,12 +52,13 @@ def _operator_context(
 
 
 def _no_child_roles_context(
-    tmp_path: Path, *, max_concurrent: int = 4, max_active: int = 16, max_depth: int = 2,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], *,
+    max_concurrent: int = 4, max_active: int = 16, max_depth: int = 2,
 ) -> ToolSetupContext:
     process_config = ProcessConfig(
         subagents_max_concurrent_per_parent=max_concurrent,
         subagents_max_active_total=max_active, subagents_max_depth=max_depth)
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator")
     grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
     session_config.skill_rules = grants.skill_rules
     session = Session(
@@ -65,8 +67,10 @@ def _no_child_roles_context(
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 
-def test_rejects_when_depth_would_exceed_max_depth(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, max_depth=1)
+def test_rejects_when_depth_would_exceed_max_depth(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config, max_depth=1)
     assert context.session is not None
     context.session.depth = 1  # simulate this session already being one hop below the root
 
@@ -76,14 +80,16 @@ def test_rejects_when_depth_would_exceed_max_depth(tmp_path: Path) -> None:
     assert "depth" in str(exc_info.value)
 
 
-def test_rejects_when_callers_own_role_disallows_subagents(tmp_path: Path) -> None:
+def test_rejects_when_callers_own_role_disallows_subagents(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A caller whose own `role_name` has no `agents.json` entry at all -- e.g. a typo, or a role
     retired from the file -- is rejected the same way a role with `allow_subagents: false` would
     be (both hit `caller_definition is None or not caller_definition.allow_subagents`); both
     packaged roles (operator, explorer) currently have `allow_subagents: true`, so an unknown role
     name is what exercises this branch against the real file."""
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="no_such_role", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="no_such_role", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     session = Session(
         session_config, provider=MagicMock(), process_config=process_config, tool_registry=tool_registry)
@@ -94,8 +100,8 @@ def test_rejects_when_callers_own_role_disallows_subagents(tmp_path: Path) -> No
         plan_subagent_creation(context, "explorer", None, None)
 
 
-def test_rejects_unknown_role(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_rejects_unknown_role(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
         plan_subagent_creation(context, "no_such_role", None, None)
@@ -103,34 +109,40 @@ def test_rejects_unknown_role(tmp_path: Path) -> None:
     assert "explorer" in str(exc_info.value)
 
 
-def test_operator_cannot_launch_another_operator(tmp_path: Path) -> None:
+def test_operator_cannot_launch_another_operator(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """operator's own agents.json entry names `restrict_to.subagent_roles: ["explorer",
     "reviewer", "planner", "implementer"]`. `_operator_context` builds its root session via
     `compute_root_session_grants`, the same path every real root `Session` construction site
     uses, so `effective_subagent_roles` is already `{"explorer", "implementer", "planner",
     "reviewer"}` by the time `plan_subagent_creation` reads it -- not "every role agents.json
     defines" -- so a root operator session can't spawn another operator."""
-    context = _operator_context(tmp_path)
+    context = _operator_context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
         plan_subagent_creation(context, "operator", None, None)
     assert "['explorer', 'implementer', 'planner', 'reviewer']" in str(exc_info.value)
 
 
-def test_informed_cannot_launch_subagents_when_empty_roles_list(tmp_path: Path) -> None:
+def test_informed_cannot_launch_subagents_when_empty_roles_list(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """When the agent's allowed subagent roles list is the empty list, it is explicitly
     told in the CreateSubagent error message that it may not create subagents.
     """
-    context = _no_child_roles_context(tmp_path)
+    context = _no_child_roles_context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="may not create subagents") as exc_info:
         plan_subagent_creation(context, "explorer", None, None)
     assert "may not create subagents" in str(exc_info.value)
 
 
-def test_rejects_role_outside_the_callers_own_effective_subagent_roles(tmp_path: Path) -> None:
+def test_rejects_role_outside_the_callers_own_effective_subagent_roles(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     # Simulate this "operator" session being itself a subagent that was narrowed, at its own
     # creation, to only ever launch "explorer" -- never a fresh agents.json lookup of what
@@ -146,16 +158,20 @@ def test_rejects_role_outside_the_callers_own_effective_subagent_roles(tmp_path:
     assert "['explorer']" in str(exc_info.value)
 
 
-def test_rejects_when_concurrent_per_parent_limit_already_reached(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, max_concurrent=0)
+def test_rejects_when_concurrent_per_parent_limit_already_reached(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config, max_concurrent=0)
 
     with pytest.raises(ToolCallError, match="Call WaitForSubagent") as exc_info:
         plan_subagent_creation(context, "explorer", None, None)
     assert exc_info.value.category == "transient"
 
 
-def test_rejects_when_active_total_limit_already_reached(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, max_active=0)
+def test_rejects_when_active_total_limit_already_reached(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config, max_active=0)
 
     with pytest.raises(ToolCallError, match="Call WaitForSubagent") as exc_info:
         plan_subagent_creation(context, "explorer", None, None)
@@ -163,15 +179,15 @@ def test_rejects_when_active_total_limit_already_reached(tmp_path: Path) -> None
 
 
 def test_finished_but_undelivered_subagent_does_not_count_toward_concurrent_limit(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A subagent session is never destroyed once it finishes its turn -- it sits dormant,
     possibly still undelivered, until MessageSubagent resumes it. That dormant backlog must not
     itself block creating a new subagent under a tight maxConcurrentPerParent -- only a turn
     that's actually running should occupy a slot."""
-    context = _operator_context(tmp_path, max_concurrent=1)
+    context = _operator_context(tmp_path, make_session_config, max_concurrent=1)
     assert context.session is not None
-    child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=context.session)
+    child = Session(make_session_config(role_name="explorer"), provider=MagicMock(), parent=context.session)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="earlier task")
@@ -183,8 +199,10 @@ def test_finished_but_undelivered_subagent_does_not_count_toward_concurrent_limi
     assert plan.session_config.role_name == "explorer"
 
 
-def test_no_session_is_constructed_when_a_check_fails(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, max_depth=0)
+def test_no_session_is_constructed_when_a_check_fails(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config, max_depth=0)
     assert context.session is not None
     context.session.depth = 0
 
@@ -194,8 +212,10 @@ def test_no_session_is_constructed_when_a_check_fails(tmp_path: Path) -> None:
     assert context.session.subagent_tracker.handles() == []
 
 
-def test_explorer_plan_excludes_subagent_management_tools(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_explorer_plan_excludes_subagent_management_tools(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     plan = plan_subagent_creation(context, "explorer", None, None)
 
@@ -206,8 +226,10 @@ def test_explorer_plan_excludes_subagent_management_tools(tmp_path: Path) -> Non
     assert "EditFile" not in plan.tool_classes
 
 
-def test_explorer_plan_session_config_carries_the_explorer_role(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_explorer_plan_session_config_carries_the_explorer_role(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     plan = plan_subagent_creation(context, "explorer", None, None)
 
@@ -215,8 +237,10 @@ def test_explorer_plan_session_config_carries_the_explorer_role(tmp_path: Path) 
     assert plan.role_definition.default_model == "xiaomi/mimo-v2.5"
 
 
-def test_allowed_tools_override_replaces_the_roles_own_list(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_allowed_tools_override_replaces_the_roles_own_list(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     plan = plan_subagent_creation(context, "explorer", ["FindFile", "SearchSkills"], None)
 
@@ -227,8 +251,10 @@ def test_allowed_tools_override_replaces_the_roles_own_list(tmp_path: Path) -> N
     assert set(plan.tool_classes) == {"FindFile", "SearchSkills"}
 
 
-def test_allowed_tools_override_still_respects_enforce_readonly_tools(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_allowed_tools_override_still_respects_enforce_readonly_tools(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     # "Bash" is not read-only; explorer's own enforce_readonly_tools=True isn't touched by the
     # allowed_tools override (only the "tools" field is), so it's still clamped out.
@@ -237,8 +263,10 @@ def test_allowed_tools_override_still_respects_enforce_readonly_tools(tmp_path: 
     assert set(plan.tool_classes) == {"FindFile"}
 
 
-def test_allowed_tools_override_still_cannot_exceed_the_parents_own_tool_set(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path)
+def test_allowed_tools_override_still_cannot_exceed_the_parents_own_tool_set(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
 
     plan = plan_subagent_creation(context, "explorer", ["FindFile", "NoSuchTool"], None)
 
@@ -246,9 +274,9 @@ def test_allowed_tools_override_still_cannot_exceed_the_parents_own_tool_set(tmp
 
 
 def test_subagent_roles_are_the_explorer_roles_own_restriction_intersected_with_the_parents(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    context = _operator_context(tmp_path)
+    context = _operator_context(tmp_path, make_session_config)
 
     plan = plan_subagent_creation(context, "explorer", None, None)
 
@@ -260,15 +288,17 @@ def test_subagent_roles_are_the_explorer_roles_own_restriction_intersected_with_
     assert plan.effective_subagent_roles == {"explorer"}
 
 
-def test_dispatch_direct_message_enqueues_into_a_running_turn(tmp_path: Path) -> None:
+def test_dispatch_direct_message_enqueues_into_a_running_turn(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A human messaging a still-running subagent just enqueues into its current turn -- it does
     not start a second, competing one, and (per SubagentHandle's own docstring) never touches
     `parent_interested` on the handle that turn was originally dispatched under."""
     provider = _FakeProvider()
     process_config = ProcessConfig()
-    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
                      provider=provider, process_config=process_config)
-    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     never_finishes = threading.Event()
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
@@ -289,13 +319,13 @@ def test_dispatch_direct_message_enqueues_into_a_running_turn(tmp_path: Path) ->
 
 
 def test_dispatch_direct_message_starts_a_fresh_uninterested_turn_on_a_dormant_subagent(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     provider = _FakeProvider(reply_text="direct reply")
     process_config = ProcessConfig()
-    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
                      provider=provider, process_config=process_config)
-    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     dormant_handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="task", state="finished", output="earlier output")
@@ -313,20 +343,20 @@ def test_dispatch_direct_message_starts_a_fresh_uninterested_turn_on_a_dormant_s
 
 
 def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the_concurrent_limit(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     provider = _FakeProvider()
     process_config = ProcessConfig(subagents_max_concurrent_per_parent=1)
-    parent = Session(SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path)),
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
                      provider=provider, process_config=process_config)
     never_finishes = threading.Event()
-    running_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    running_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     running_handle = SubagentHandle(
         session=running_child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
         cancel_event=threading.Event(), role="explorer", title="first")
     parent.subagent_tracker.register(running_handle)
     running_handle.thread.start()
-    dormant_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=parent)
+    dormant_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     dormant_handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
         cancel_event=threading.Event(), role="explorer", title="second", state="finished",
@@ -345,21 +375,24 @@ def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the
 
 
 def _subagent_session_pair(
-    tmp_path: Path, provider: _FakeProvider, hooks: dict[str, list[HookConfig]],
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], provider: _FakeProvider,
+    hooks: dict[str, list[HookConfig]],
 ) -> tuple[Session, Session]:
     process_config = ProcessConfig(hooks=hooks)
     parent = Session(
-        SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
         provider=provider, process_config=process_config)
     child = Session(
-        SessionConfig(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
+        make_session_config(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
         provider=provider, process_config=process_config, parent=parent)
     return parent, child
 
 
-def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(tmp_path: Path) -> None:
+def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, provider, {
+    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"message": "rewritten task"}\'')],
     })
 
@@ -371,9 +404,11 @@ def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(t
     assert user_message.content.endswith("rewritten task")
 
 
-def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(tmp_path: Path) -> None:
+def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    parent, child = _subagent_session_pair(tmp_path, provider, {
+    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"success": false}\'')],
     })
 
@@ -384,10 +419,12 @@ def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(tmp_path
     assert handle.output == "(Subagent blocked by onSubagentStart hook policy.)"
 
 
-def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(tmp_path: Path) -> None:
+def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     marker = tmp_path / "marker"
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, provider, {
+    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentTurnEnd": [HookConfig(type="bash", shell=f'touch "{marker}"; echo \'{{}}\'')],
     })
 
@@ -398,14 +435,14 @@ def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(tmp_
 
 
 def test_dispatch_subagent_turn_chains_via_onsubagentturnend_until_the_cap_trips(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `chat` handler's `onSubagentTurnEnd` continuation is delivered via
     `Session._deliver_chained_hook_message`, exactly like the root session's own `onAgentTurnEnd`
     chaining -- `_run_subagent_turn`'s own loop (`klorb.agents.policy`) is the "host" that drains
     and resubmits it, since nothing else runs a subagent session's turns."""
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, provider, {
+    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
 

@@ -25,12 +25,15 @@ from klorb.tools.registry import ToolRegistry
 from klorb.workspace import TrustManager
 
 
-def _add_subagent(root: Session, role: str = "explorer", title: str = "find the bug") -> SubagentHandle:
+def _add_subagent(
+    root: Session, make_session_config: Callable[..., SessionConfig],
+    role: str = "explorer", title: str = "find the bug",
+) -> SubagentHandle:
     # `session_name=title` mirrors `CreateSubagentTool` pre-setting the child `Session`'s name
     # from `CreateSubagent`'s `session_title` argument -- see docs/specs/subagents.md's
     # "Subagent session model" section.
     child = Session(
-        SessionConfig(role_name=role), provider=MagicMock(), parent=root, session_name=title)
+        make_session_config(role_name=role), provider=MagicMock(), parent=root, session_name=title)
     # Started immediately (and left to finish on its own) so `cascade_close_subagents`'s
     # `thread.join()` -- run whenever the harness closes the root session at teardown -- has an
     # already-started thread to join rather than raising on a thread that never ran.
@@ -49,15 +52,18 @@ def _message(content: str, role: MessageRole = "assistant", num_tokens: int = 1)
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture: `await make_harness(provider=...)` returns a running `AcpHarness`
     wired to an isolated `TrustManager` (so no test touches the real `KLORB_DATA_DIR`), closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
 
-    async def _make(provider: ApiProvider | None = None) -> AcpHarness:
+    async def _make(
+        provider: ApiProvider | None = None
+    ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
-        harness = await build_acp_harness(ProcessConfig(), provider=provider, trust_manager=trust_manager)
+        harness = await build_acp_harness(ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 
@@ -112,13 +118,13 @@ async def test_subagent_tree_reports_only_the_root_by_default(
 
 
 async def test_subagent_tree_includes_a_registered_subagent(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root, role="explorer", title="find the bug")
+    handle = _add_subagent(root, make_session_config, role="explorer", title="find the bug")
 
     result = await harness.client.ext_method("klorb/subagentTree", {"sessionId": session_id})
 
@@ -133,13 +139,13 @@ async def test_subagent_tree_includes_a_registered_subagent(
 
 
 async def test_subagent_tree_reports_aborted_output(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
     handle.state = "finished"
     handle.output = f"partial output\n\n{SUBAGENT_ABORTED_MARKER}"
 
@@ -151,13 +157,13 @@ async def test_subagent_tree_reports_aborted_output(
 
 
 async def test_subagent_transcript_returns_replayed_entries_and_state(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
     handle.session.load_messages([
         _message("look into the bug", role="user"),
         _message("found it", role="assistant"),
@@ -186,13 +192,13 @@ async def test_subagent_transcript_unknown_id_is_a_json_rpc_error(
 
 
 async def test_subagent_cancel_sets_the_handles_cancel_event(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
     assert not handle.cancel_event.is_set()
 
     result = await harness.client.ext_method(
@@ -226,13 +232,13 @@ async def test_subagent_prompt_unknown_id_is_a_json_rpc_error(
 
 
 async def test_subagent_prompt_missing_text_is_a_json_rpc_error(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
 
     with pytest.raises(acp.RequestError):
         await harness.client.ext_method(
@@ -241,13 +247,13 @@ async def test_subagent_prompt_missing_text_is_a_json_rpc_error(
 
 
 async def test_subagent_prompt_enqueues_into_a_running_subagent(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
     assert handle.state == "running"
 
     result = await harness.client.ext_method(
@@ -262,7 +268,7 @@ async def test_subagent_prompt_enqueues_into_a_running_subagent(
 
 
 async def test_subagent_prompt_starts_a_fresh_uninterested_turn_on_a_dormant_subagent(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     # Unlike `_add_subagent` (built with its own throwaway `MagicMock()` provider and no tool
     # registry, since the other tests in this file only ever inspect a dormant handle, never
@@ -273,7 +279,7 @@ async def test_subagent_prompt_starts_a_fresh_uninterested_turn_on_a_dormant_sub
     session_id = await _new_session(harness, tmp_path)
     root = harness.server.agent.session
     assert root is not None
-    child_config = SessionConfig(role_name="explorer")
+    child_config = make_session_config(role_name="explorer")
     child = Session(
         child_config, provider=provider, parent=root, session_name="find the bug",
         tool_registry=ToolRegistry.discover_tools(ProcessConfig(), child_config))
@@ -296,14 +302,14 @@ async def test_subagent_prompt_starts_a_fresh_uninterested_turn_on_a_dormant_sub
 
 
 async def test_subagent_prompt_raises_json_rpc_error_when_concurrency_limit_exceeded(
-    make_harness: Callable[..., Any], tmp_path: Path,
+    make_harness: Callable[..., Any], tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     harness = await make_harness(provider=MagicMock())
     session_id = await _new_session(harness, tmp_path)
     harness.server.agent._process_config.subagents_max_concurrent_per_parent = 0
     root = harness.server.agent.session
     assert root is not None
-    handle = _add_subagent(root)
+    handle = _add_subagent(root, make_session_config)
     handle.state = "finished"
     handle.output = "earlier output"
 

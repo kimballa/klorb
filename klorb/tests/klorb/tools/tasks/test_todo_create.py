@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.tasks.todo_create."""
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,10 +22,12 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _context(tmp_path: Path, role_name: str = "operator") -> ToolSetupContext:
+def _context(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], role_name: str = "operator"
+) -> ToolSetupContext:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
     session = Session(config=config)
     return ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
 
@@ -49,8 +51,10 @@ def _child_context(parent_context: ToolSetupContext) -> ToolSetupContext:
 
 
 @requires_chainlink
-def test_creates_and_returns_full_issue_detail(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_creates_and_returns_full_issue_detail(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     result = TodoCreateTool(context).apply({
         "title": "Write the spec", "description": "details", "priority": "high",
@@ -63,16 +67,18 @@ def test_creates_and_returns_full_issue_detail(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_missing_title_raises(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_missing_title_raises(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    context = _context(tmp_path, make_session_config)
 
     with pytest.raises(ValueError, match="title"):
         TodoCreateTool(context).apply({})
 
 
 @requires_chainlink
-def test_blocked_by_records_dependency(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_blocked_by_records_dependency(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     blocker = TodoCreateTool(context).apply({"title": "Blocker task"})
 
     blocked = TodoCreateTool(context).apply({
@@ -83,8 +89,10 @@ def test_blocked_by_records_dependency(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_blocks_issues_records_the_reverse_dependency(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_blocks_issues_records_the_reverse_dependency(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     dependent = TodoCreateTool(context).apply({"title": "Dependent task"})
 
     new_issue = TodoCreateTool(context).apply({
@@ -96,8 +104,10 @@ def test_blocks_issues_records_the_reverse_dependency(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_blocks_current_issue_requires_a_current_task(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_blocks_current_issue_requires_a_current_task(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     with pytest.raises(ValueError, match="no current tracked task"):
         TodoCreateTool(context).apply({"title": "New task", "blocks_current_issue": True})
@@ -107,8 +117,10 @@ def test_blocks_current_issue_requires_a_current_task(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_invalid_priority_rejected_before_creating_anything(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_invalid_priority_rejected_before_creating_anything(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     with pytest.raises(ValueError, match="priority must be one of"):
         TodoCreateTool(context).apply({"title": "New task", "priority": "urgent"})
@@ -118,9 +130,9 @@ def test_invalid_priority_rejected_before_creating_anything(tmp_path: Path) -> N
 
 @requires_chainlink
 def test_failed_dependency_recording_closes_the_new_issue_with_an_explanatory_comment(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    context = _context(tmp_path)
+    context = _context(tmp_path, make_session_config)
 
     with pytest.raises(Exception, match="not found"):
         TodoCreateTool(context).apply({"title": "New task", "blocked_by": [999999]})
@@ -132,8 +144,10 @@ def test_failed_dependency_recording_closes_the_new_issue_with_an_explanatory_co
 
 
 @requires_chainlink
-def test_blocks_current_issue_blocks_the_tracked_task(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_blocks_current_issue_blocks_the_tracked_task(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     TodoCreateTool(context).apply({"title": "Current task"})
     TodoNextTool(context).apply({})
     assert context.session is not None
@@ -149,8 +163,10 @@ def test_blocks_current_issue_blocks_the_tracked_task(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_auto_activates_as_current_task_when_none_is_set(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_auto_activates_as_current_task_when_none_is_set(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
 
     result = TodoCreateTool(context).apply({"title": "New task"})
@@ -160,8 +176,10 @@ def test_auto_activates_as_current_task_when_none_is_set(tmp_path: Path) -> None
 
 
 @requires_chainlink
-def test_auto_activation_skipped_when_a_current_task_already_exists(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_auto_activation_skipped_when_a_current_task_already_exists(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
     first = TodoCreateTool(context).apply({"title": "First"})
     assert context.session.cur_chainlink_task_id == first["id"]
@@ -173,8 +191,10 @@ def test_auto_activation_skipped_when_a_current_task_already_exists(tmp_path: Pa
 
 
 @requires_chainlink
-def test_activate_true_forces_activation_over_an_existing_current_task(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_activate_true_forces_activation_over_an_existing_current_task(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
     first = TodoCreateTool(context).apply({"title": "First"})
     assert context.session.cur_chainlink_task_id == first["id"]
@@ -186,8 +206,10 @@ def test_activate_true_forces_activation_over_an_existing_current_task(tmp_path:
 
 
 @requires_chainlink
-def test_activate_false_suppresses_auto_activation(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_activate_false_suppresses_auto_activation(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
 
     result = TodoCreateTool(context).apply({"title": "New task", "activate": False})
@@ -197,8 +219,10 @@ def test_activate_false_suppresses_auto_activation(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_auto_activation_skipped_when_the_new_task_is_not_ready(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_auto_activation_skipped_when_the_new_task_is_not_ready(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
     blocker = TodoCreateTool(context).apply({"title": "Blocker", "activate": False})
     assert context.session.cur_chainlink_task_id is None
@@ -212,8 +236,10 @@ def test_auto_activation_skipped_when_the_new_task_is_not_ready(tmp_path: Path) 
 
 
 @requires_chainlink
-def test_assign_to_defaults_to_self_label(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_assign_to_defaults_to_self_label(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
 
     result = TodoCreateTool(context).apply({"title": "New task"})
@@ -222,8 +248,10 @@ def test_assign_to_defaults_to_self_label(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_assign_to_all_labels_it_unclaimed(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_assign_to_all_labels_it_unclaimed(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     # activate=False: otherwise auto-activation would immediately claim this (the only, ready)
     # issue for the creating session -- see maybe_activate_task's ALL_LABEL-claiming branch --
@@ -236,11 +264,13 @@ def test_assign_to_all_labels_it_unclaimed(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_assign_to_all_is_claimed_by_auto_activation_when_ready(tmp_path: Path) -> None:
+def test_assign_to_all_is_claimed_by_auto_activation_when_ready(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`maybe_activate_task` claims an `ALL_LABEL` task for this session at the moment it becomes
     the current tracked task -- otherwise it would stay up for grabs for another agent's
     `TodoNext` even while this session already treats it as current."""
-    context = _context(tmp_path)
+    context = _context(tmp_path, make_session_config)
     assert context.session is not None
 
     result = TodoCreateTool(context).apply({"title": "New task", "assign_to": "all"})
@@ -251,8 +281,10 @@ def test_assign_to_all_is_claimed_by_auto_activation_when_ready(tmp_path: Path) 
 
 
 @requires_chainlink
-def test_assign_to_self_without_accepts_tasks_raises(tmp_path: Path) -> None:
-    context = _context(tmp_path, role_name="explorer")
+def test_assign_to_self_without_accepts_tasks_raises(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, role_name="explorer")
 
     with pytest.raises(ToolCallError, match="may not be assigned tasks"):
         TodoCreateTool(context).apply({"title": "New task"})
@@ -261,24 +293,30 @@ def test_assign_to_self_without_accepts_tasks_raises(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_assign_to_another_agent_requires_assigns_tasks_capability(tmp_path: Path) -> None:
-    context = _context(tmp_path, role_name="explorer")
+def test_assign_to_another_agent_requires_assigns_tasks_capability(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, role_name="explorer")
 
     with pytest.raises(ToolCallError, match="may not assign tasks to other agents"):
         TodoCreateTool(context).apply({"title": "New task", "assign_to": "some-other-agent"})
 
 
 @requires_chainlink
-def test_assign_to_unknown_agent_id_raises(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_assign_to_unknown_agent_id_raises(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="No such agent in this group"):
         TodoCreateTool(context).apply({"title": "New task", "assign_to": "no-such-agent"})
 
 
 @requires_chainlink
-def test_assign_to_another_agent_labels_it_for_them(tmp_path: Path) -> None:
-    parent_context = _context(tmp_path)
+def test_assign_to_another_agent_labels_it_for_them(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    parent_context = _context(tmp_path, make_session_config)
     child_context = _child_context(parent_context)
     assert child_context.session is not None
 
@@ -290,8 +328,10 @@ def test_assign_to_another_agent_labels_it_for_them(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_assign_to_another_agent_requires_the_target_to_accept_tasks(tmp_path: Path) -> None:
-    parent_context = _context(tmp_path)
+def test_assign_to_another_agent_requires_the_target_to_accept_tasks(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    parent_context = _context(tmp_path, make_session_config)
     child_context = _child_context(parent_context)
     assert child_context.session is not None
     child_context.session_config.role_name = "explorer"
@@ -303,15 +343,17 @@ def test_assign_to_another_agent_requires_the_target_to_accept_tasks(tmp_path: P
 
 
 @requires_chainlink
-def test_todo_write_is_an_alias_for_todo_create(tmp_path: Path) -> None:
-    tool = TodoCreateTool(_context(tmp_path))
+def test_todo_write_is_an_alias_for_todo_create(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    tool = TodoCreateTool(_context(tmp_path, make_session_config))
 
     assert "TodoWrite" in (tool.aliases() or [])
 
 
 @requires_chainlink
-def test_name_and_parameters(tmp_path: Path) -> None:
-    tool = TodoCreateTool(_context(tmp_path))
+def test_name_and_parameters(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    tool = TodoCreateTool(_context(tmp_path, make_session_config))
 
     assert tool.name() == "TodoCreate"
     assert tool.category() == "TASKS"
@@ -320,8 +362,10 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_summary_on_success_and_failure(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_summary_on_success_and_failure(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     tool = TodoCreateTool(context)
     args = {"title": "Write the spec"}
 

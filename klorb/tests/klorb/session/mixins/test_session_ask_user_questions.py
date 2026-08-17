@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for Session._resolve_ask_user_questions / the AskUserQuestionsRequired branch of
 Session._run_tool_calls."""
-
 import json
+from collections.abc import Callable
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -50,8 +50,10 @@ def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
     )
 
 
-def _session(mock_provider: MagicMock) -> Session:
-    config = SessionConfig(model="some/model")
+def _session(
+    mock_provider: MagicMock, make_session_config: Callable[..., SessionConfig],
+) -> Session:
+    config = make_session_config(model="some/model")
     tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     return Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -72,13 +74,13 @@ def _tool_response_content(session: Session) -> str:
     return json.dumps(envelope["response_body"])
 
 
-def test_no_callback_fails_closed() -> None:
+def test_no_callback_fails_closed(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [_question()])]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
 
     response = session.send_turn("try it")
 
@@ -90,13 +92,13 @@ def test_no_callback_fails_closed() -> None:
     assert "1 question" in _tool_response_content(session)
 
 
-def test_single_question_answered_normally() -> None:
+def test_single_question_answered_normally(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [_question(header="Auth")])]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     on_ask = MagicMock(return_value=AskUserQuestionsAnswer(answer="JWT"))
 
     response = session.send_turn("try it", TurnEventHandlers(on_ask_user_questions=on_ask))
@@ -113,7 +115,9 @@ def test_single_question_answered_normally() -> None:
     assert ctx.total == 1
 
 
-def test_multi_question_cancel_short_circuits_and_echoes_prior_answers() -> None:
+def test_multi_question_cancel_short_circuits_and_echoes_prior_answers(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [
@@ -121,7 +125,7 @@ def test_multi_question_cancel_short_circuits_and_echoes_prior_answers() -> None
         ])]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     on_ask = MagicMock(side_effect=[
         AskUserQuestionsAnswer(answer="JWT"),
         AskUserQuestionsAnswer(cancelled=True),
@@ -136,7 +140,9 @@ def test_multi_question_cancel_short_circuits_and_echoes_prior_answers() -> None
     assert on_ask.call_count == 2  # "Cache" is never asked about
 
 
-def test_recommended_option_is_forwarded_unmodified_and_not_auto_selected() -> None:
+def test_recommended_option_is_forwarded_unmodified_and_not_auto_selected(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     options: list[dict] = [
         {"label": "JWT", "description": "Stateless", "recommended": True},
@@ -146,7 +152,7 @@ def test_recommended_option_is_forwarded_unmodified_and_not_auto_selected() -> N
         _tool_call_reply([_ask_call("call_1", [_question(options=options)])]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     on_ask = MagicMock(return_value=AskUserQuestionsAnswer(answer="Cookie"))
 
     session.send_turn("try it", TurnEventHandlers(on_ask_user_questions=on_ask))

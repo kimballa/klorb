@@ -2,6 +2,7 @@
 """Tests for klorb.tui.mixins.key_actions.KeyActionsMixin."""
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ from tui.conftest import _focused_id, _notice_texts, _session, _wait_until
 
 from klorb.api_provider import ResponseAborted
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.mixins.key_actions import (
@@ -23,14 +25,16 @@ from klorb.tui.mixins.key_actions import (
 from klorb.tui.widgets.prompt_input import PromptInput
 
 
-async def test_on_mount_configures_tiktoken_cache_env() -> None:
+async def test_on_mount_configures_tiktoken_cache_env(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`ReplApp.on_mount()` -- not `klorb.cli.main()` -- points tiktoken at the bundled cache
     for an interactive session, since by then the Textual app is actually running and its
     startup log message routes through the app's log / the session log file instead of
     leaking to raw stderr -- see
     docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md."""
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     with patch("klorb.tui.mixins.key_actions.configure_tiktoken_cache_env") as mock_configure_cache:
@@ -40,9 +44,11 @@ async def test_on_mount_configures_tiktoken_cache_env() -> None:
     mock_configure_cache.assert_called_once_with()
 
 
-async def test_shows_config_missing_notice_when_user_config_file_absent(tmp_path: Path) -> None:
+async def test_shows_config_missing_notice_when_user_config_file_absent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch(
         "klorb.tui.mixins.key_actions.user_config_path", return_value=tmp_path / "does-not-exist.json",
@@ -53,11 +59,13 @@ async def test_shows_config_missing_notice_when_user_config_file_absent(tmp_path
             assert str(notice.content) == CONFIG_MISSING_MESSAGE
 
 
-async def test_omits_config_missing_notice_when_user_config_file_present(tmp_path: Path) -> None:
+async def test_omits_config_missing_notice_when_user_config_file_present(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     config_path = tmp_path / "klorb-config.json"
     config_path.write_text("{}", encoding="utf-8")
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch("klorb.tui.mixins.key_actions.user_config_path", return_value=config_path):
         async with app.run_test():
@@ -65,7 +73,7 @@ async def test_omits_config_missing_notice_when_user_config_file_present(tmp_pat
             assert len(history.query(".notice")) == 0
 
 
-async def test_escape_shows_interrupting_notice() -> None:
+async def test_escape_shows_interrupting_notice(make_session_config: Callable[..., SessionConfig]) -> None:
     """Escape during a streaming turn mounts the `Interrupting…` notice so the user gets
     immediate confirmation the keypress landed — see `ReplApp._note_interrupt_requested`. The
     notice reads `Interrupting…` while the turn is still winding down (the fake turn stays parked
@@ -82,7 +90,7 @@ async def test_escape_shows_interrupting_notice() -> None:
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
@@ -102,7 +110,9 @@ async def test_escape_shows_interrupting_notice() -> None:
         await app.workers.wait_for_complete()
 
 
-async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes() -> None:
+async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Once the interrupted turn has actually wound down (`_finish_turn`), the transient
     `Interrupting…` notice is rewritten in place to `<Interrupted>` — its `interrupting` class
     swapped for `interrupted`, no second notice mounted — see `_resolve_interrupt_notice`."""
@@ -116,7 +126,7 @@ async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes() 
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "hi"
@@ -142,7 +152,9 @@ async def test_interrupting_notice_becomes_interrupted_once_the_turn_finishes() 
         assert str(interrupted.first(Static).render()) == _INTERRUPTED_MESSAGE
 
 
-async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock) -> None:
+async def test_triple_ctrl_c_force_exits_a_stuck_turn(
+    stub_force_exit: MagicMock, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Three Ctrl+C presses in a row, while a turn that ignores its cancel signal never unwinds,
     escalates to `_force_exit` — the escape for a worker that won't unwind. The first interrupts
     (turn stays in flight since it ignores the signal); the second, within the window, only
@@ -160,7 +172,7 @@ async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     try:
         async with app.run_test() as pilot:
@@ -193,26 +205,30 @@ async def test_triple_ctrl_c_force_exits_a_stuck_turn(stub_force_exit: MagicMock
     stub_force_exit.assert_called()
 
 
-async def test_watchdog_enabled_by_default_and_disabled_when_timeout_zero() -> None:
+async def test_watchdog_enabled_by_default_and_disabled_when_timeout_zero(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The liveness watchdog is on by default (`watchdog.timeout` defaults to 10s) and fully off
     when `watchdog.timeout <= 0`."""
-    default_app = ReplApp(session=_session(MagicMock()))
+    default_app = ReplApp(session=_session(MagicMock(), make_session_config))
     assert default_app._watchdog.enabled is True
 
     disabled_config = ProcessConfig(watchdog_timeout_seconds=0)
-    disabled_app = ReplApp(session=_session(MagicMock()), process_config=disabled_config)
+    disabled_app = ReplApp(session=_session(MagicMock(), make_session_config), process_config=disabled_config)
     assert disabled_app._watchdog.enabled is False
     async with disabled_app.run_test():
         # A disabled watchdog never starts a thread even after on_mount.
         assert disabled_app._watchdog._thread is None
 
 
-async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: Path) -> None:
+async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A running shell command disables the input box (enforcing "only one at a time"), and
     Ctrl+C — which otherwise quits the app — kills the in-flight shell command instead.
     """
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     marker = tmp_path / "started"
 
     async with app.run_test() as pilot:
@@ -237,12 +253,12 @@ async def test_shell_command_disables_input_and_ctrl_c_interrupts_it(tmp_path: P
         assert app.is_running
 
 
-async def test_first_idle_ctrl_c_only_warns() -> None:
+async def test_first_idle_ctrl_c_only_warns(make_session_config: Callable[..., SessionConfig]) -> None:
     """A solitary Ctrl+C with nothing selected and nothing running shows the "press again to
     quit" notice rather than quitting immediately — see `ReplApp.action_interrupt`'s `"bare"`
     case and docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C semantics" section."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -255,12 +271,14 @@ async def test_first_idle_ctrl_c_only_warns() -> None:
         assert history is not None
 
 
-async def test_second_idle_ctrl_c_within_window_quits(stub_force_exit: MagicMock) -> None:
+async def test_second_idle_ctrl_c_within_window_quits(
+    stub_force_exit: MagicMock, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A second idle Ctrl+C within the window force-exits (`os._exit`, via `_force_exit`) rather
     than going through the polite `_quit_after_maybe_saving` save-prompt flow — see
     `ReplApp.action_interrupt`."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -275,13 +293,14 @@ async def test_second_idle_ctrl_c_within_window_quits(stub_force_exit: MagicMock
 
 async def test_third_ctrl_c_quits_after_an_interrupt_then_a_warning(
     stub_force_exit: MagicMock,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """When the first Ctrl+C in a rapid streak did something (interrupted a running shell
     command, here), the next idle Ctrl+C only warns rather than quitting immediately — it takes
     a *third* press within the window to force-exit. See `ReplApp.action_interrupt`'s streak
     bookkeeping (`_last_ctrl_c_kind`)."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -306,7 +325,9 @@ async def test_third_ctrl_c_quits_after_an_interrupt_then_a_warning(
         stub_force_exit.assert_called()
 
 
-async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting() -> None:
+async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Ctrl+C with a model turn in flight aborts the turn (like Escape) rather than quitting out
     from under it -- quitting a still-running turn is what used to strand its worker thread and
     hang process shutdown (see `_begin_exit`). The app stays running afterward."""
@@ -320,7 +341,7 @@ async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting() -> No
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -345,12 +366,14 @@ async def test_ctrl_c_aborts_an_in_flight_model_turn_instead_of_quitting() -> No
         app.exit.assert_not_called()
 
 
-async def test_typing_while_history_is_focused_redirects_into_prompt_input() -> None:
+async def test_typing_while_history_is_focused_redirects_into_prompt_input(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A printable keystroke that reaches the App while the (non-editable) history scroll
     is focused should move focus to the message box and land the character there, rather
     than being silently dropped (see `ReplApp.on_key`)."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     async with app.run_test() as pilot:
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -366,11 +389,13 @@ async def test_typing_while_history_is_focused_redirects_into_prompt_input() -> 
         assert prompt_input.text == "hi"
 
 
-async def test_typing_while_history_focused_is_not_redirected_when_input_disabled() -> None:
+async def test_typing_while_history_focused_is_not_redirected_when_input_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """When the prompt input is disabled (e.g. an interaction panel is active), a printable
     keystroke on the history scroll should not be redirected into the (non-accepting) box."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     async with app.run_test() as pilot:
         await pilot.pause()
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)

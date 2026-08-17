@@ -1,11 +1,11 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.session."""
-
 import io
 import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -131,21 +131,21 @@ def test_session_config_defaults() -> None:
     assert config.thinking_effort == "high"
 
 
-def test_session_saves_config() -> None:
-    config = SessionConfig(model="some/model", interactive=False)
+def test_session_saves_config(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config(model="some/model", interactive=False)
     session = Session(config, provider=MagicMock())
 
     assert session.config is config
 
 
-def test_session_role_defaults_to_operator() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_session_role_defaults_to_operator(make_session_config: Callable[..., SessionConfig]) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     assert isinstance(session.role, OperatorRole)
 
 
-def test_session_builds_role_from_config_role_name() -> None:
-    session = Session(SessionConfig(role_name="auditor"), provider=MagicMock())
+def test_session_builds_role_from_config_role_name(make_session_config: Callable[..., SessionConfig]) -> None:
+    session = Session(make_session_config(role_name="auditor"), provider=MagicMock())
 
     assert session.role.name() == "auditor"
 
@@ -158,51 +158,55 @@ def test_generate_session_id_is_unique_across_calls() -> None:
     assert generate_session_id() != generate_session_id()
 
 
-def test_session_generates_id_when_not_given_explicitly() -> None:
-    config = SessionConfig()
+def test_session_generates_id_when_not_given_explicitly(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock())
 
     assert SESSION_ID_RE.match(session.id)
 
 
-def test_session_uses_explicitly_given_id() -> None:
-    config = SessionConfig()
+def test_session_uses_explicitly_given_id(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock(), session_id="my-custom-id")
 
     assert session.id == "my-custom-id"
 
 
-def test_session_root_id_defaults_to_its_own_id() -> None:
-    config = SessionConfig()
+def test_session_root_id_defaults_to_its_own_id(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock(), session_id="my-custom-id")
 
     assert session.root_id == "my-custom-id"
 
 
-def test_session_uses_explicitly_given_root_id() -> None:
-    config = SessionConfig()
+def test_session_uses_explicitly_given_root_id(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
 
     assert session.id == "child-id"
     assert session.root_id == "root-id"
 
 
-def test_get_chainlink_label_returns_group_prefixed_root_id_not_id() -> None:
-    config = SessionConfig()
+def test_get_chainlink_label_returns_group_prefixed_root_id_not_id(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock(), session_id="child-id", root_id="root-id")
 
     assert session.get_chainlink_label() == "group:root-id"
 
 
-def test_set_chainlink_task_defaults_to_none() -> None:
-    config = SessionConfig()
+def test_set_chainlink_task_defaults_to_none(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock())
 
     assert session.cur_chainlink_task_id is None
 
 
-def test_set_chainlink_task_sets_the_given_id() -> None:
-    config = SessionConfig()
+def test_set_chainlink_task_sets_the_given_id(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock())
 
     session.set_chainlink_task(42)
@@ -210,8 +214,10 @@ def test_set_chainlink_task_sets_the_given_id() -> None:
     assert session.cur_chainlink_task_id == 42
 
 
-def test_set_chainlink_task_clears_a_previously_set_id() -> None:
-    config = SessionConfig()
+def test_set_chainlink_task_clears_a_previously_set_id(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config()
     session = Session(config, provider=MagicMock())
     session.set_chainlink_task(42)
 
@@ -220,17 +226,21 @@ def test_set_chainlink_task_clears_a_previously_set_id() -> None:
     assert session.cur_chainlink_task_id is None
 
 
-def test_total_tokens_used_sums_every_messages_client_side_num_tokens() -> None:
+def test_total_tokens_used_sums_every_messages_client_side_num_tokens(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("model reply")
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
+def test_total_tokens_used_grows_live_as_chunks_stream_in(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     seen_totals: list[int] = []
 
@@ -248,7 +258,7 @@ def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
         return _reply("hello there, world")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -258,7 +268,9 @@ def test_total_tokens_used_grows_live_as_chunks_stream_in() -> None:
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_aborted_placeholder_still_counts_its_partial_content() -> None:
+def test_aborted_placeholder_still_counts_its_partial_content(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def aborting_send_prompt(
@@ -271,7 +283,7 @@ def test_aborted_placeholder_still_counts_its_partial_content() -> None:
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = aborting_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(ResponseAborted):
         session.send_turn("hi")
@@ -283,7 +295,9 @@ def test_aborted_placeholder_still_counts_its_partial_content() -> None:
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
+def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `cancel_event` that becomes set while a tool-call round is in flight aborts the turn at
     the next round boundary (`_dispatch_turn`) -- the pending tool call is not dispatched and no
     further provider request is made -- rather than waiting for the provider's own mid-stream
@@ -304,7 +318,7 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
         return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
 
     mock_provider.send_prompt.side_effect = first_round_then_cancel
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -319,13 +333,15 @@ def test_cancel_event_set_mid_turn_aborts_at_the_round_boundary() -> None:
     assert next(m for m in session.messages if m.role == "user").processing_state == "aborted"
 
 
-def test_total_tokens_used_sums_every_message_across_a_multi_round_turn() -> None:
+def test_total_tokens_used_sums_every_message_across_a_multi_round_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3),
         _reply("final answer", num_tokens=4),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -336,13 +352,15 @@ def test_total_tokens_used_sums_every_message_across_a_multi_round_turn() -> Non
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_total_output_tokens_used_sums_completion_tokens_across_rounds() -> None:
+def test_total_output_tokens_used_sums_completion_tokens_across_rounds(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3, prompt_tokens=10),
         _reply("final answer", num_tokens=4, prompt_tokens=20),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -352,7 +370,9 @@ def test_total_output_tokens_used_sums_completion_tokens_across_rounds() -> None
     assert session.total_output_tokens_used() == 3 + 4
 
 
-def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
+def test_total_output_tokens_used_tracks_streaming_estimate(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     seen_outputs: list[int] = []
 
@@ -371,7 +391,7 @@ def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
         return _reply("hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -386,40 +406,48 @@ def test_total_output_tokens_used_tracks_streaming_estimate() -> None:
     )
 
 
-def test_max_context_window_reads_registered_model_capabilities() -> None:
-    config = SessionConfig(model="alpha")
+def test_max_context_window_reads_registered_model_capabilities(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="alpha")
     registry = sample_model_registry()
     session = Session(config, provider=MagicMock(), model_registry=registry)
 
     assert session.max_context_window() == 8_000
 
 
-def test_max_context_window_none_when_model_unregistered() -> None:
-    config = SessionConfig(model="some/unregistered-model")
+def test_max_context_window_none_when_model_unregistered(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/unregistered-model")
     session = Session(config, provider=MagicMock())
 
     assert session.max_context_window() is None
 
 
-def test_active_model_name_falls_back_to_config_model_when_unregistered() -> None:
-    config = SessionConfig(model="some/unregistered-model")
+def test_active_model_name_falls_back_to_config_model_when_unregistered(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/unregistered-model")
     session = Session(config, provider=MagicMock())
 
     assert session.active_model_name() == "some/unregistered-model"
 
 
-def test_active_model_name_invokes_registered_model_name() -> None:
-    config = SessionConfig(model="alpha")
+def test_active_model_name_invokes_registered_model_name(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="alpha")
     registry = sample_model_registry()
     session = Session(config, provider=MagicMock(), model_registry=registry)
 
     assert session.active_model_name() == "alpha"
 
 
-def test_send_turn_sends_prompt_to_active_model() -> None:
+def test_send_turn_sends_prompt_to_active_model(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
 
     response = session.send_turn("hi")
@@ -440,7 +468,7 @@ def test_send_turn_sends_prompt_to_active_model() -> None:
 
 
 def test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """An `@mention`ed file becomes its own `MessageFragment` on the user `Message`, appended
     ahead of a final fragment wrapping the (unmodified) embellished prompt -- see
@@ -448,7 +476,7 @@ def test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content
     (tmp_path / "notes.txt").write_text("line one\n")
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
 
     session.send_turn("check @notes.txt please")
@@ -463,7 +491,9 @@ def test_send_turn_attaches_at_mention_fragments_without_altering_prompt_content
     assert user_message.fragments[1].text == user_message.content
 
 
-def test_send_turn_attaches_at_mentioned_image_as_image_fragment(tmp_path: Path) -> None:
+def test_send_turn_attaches_at_mentioned_image_as_image_fragment(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """An @mentioned file recognized as an image (see klorb.session.mixins.mentions.
     detect_mention_mime_type) is resized/transcoded and attached as an image_url fragment when
     the active model supports vision -- the same pipeline a drag-drop/paste attachment goes
@@ -478,7 +508,7 @@ def test_send_turn_attaches_at_mentioned_image_as_image_fragment(tmp_path: Path)
 
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="vision/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="vision/model", workspace=Workspace(path=tmp_path))
     session = Session(
         config, provider=mock_provider, model_registry=registry, session_id="my-session-id")
 
@@ -493,10 +523,12 @@ def test_send_turn_attaches_at_mentioned_image_as_image_fragment(tmp_path: Path)
     assert image_fragment.source_filename == "shot.png"
 
 
-def test_send_turn_leaves_fragments_none_without_at_mentions() -> None:
+def test_send_turn_leaves_fragments_none_without_at_mentions(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
 
     session.send_turn("hi")
@@ -504,13 +536,15 @@ def test_send_turn_leaves_fragments_none_without_at_mentions() -> None:
     assert session.messages[1].fragments is None
 
 
-def test_send_turn_appends_image_fragments_after_prompt_with_headers() -> None:
+def test_send_turn_appends_image_fragments_after_prompt_with_headers(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Image fragments are appended after the prompt's own text fragment (vendor guidance:
     send text first, then images), each preceded by a header fragment naming its position and
     origin -- see _image_header_text and docs/specs/vision-image-input.md."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
     image_fragment = MessageFragment(
         type="image_url", image_url={"url": "data:image/png;base64,xx"}, mime_type="image/png",
@@ -527,10 +561,12 @@ def test_send_turn_appends_image_fragments_after_prompt_with_headers() -> None:
     assert user_message.fragments[2] is image_fragment
 
 
-def test_send_turn_image_header_notes_clipboard_paste_when_no_filename() -> None:
+def test_send_turn_image_header_notes_clipboard_paste_when_no_filename(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
     image_fragment = MessageFragment(
         type="image_url", image_url={"url": "data:image/png;base64,xx"}, mime_type="image/png")
@@ -542,10 +578,10 @@ def test_send_turn_image_header_notes_clipboard_paste_when_no_filename() -> None
     assert "pasted from clipboard" in fragments[1].text
 
 
-def test_run_one_shot_delegates_to_send_turn() -> None:
+def test_run_one_shot_delegates_to_send_turn(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, session_id="my-session-id")
 
     response = session.run_one_shot("hi")
@@ -562,26 +598,30 @@ def test_run_one_shot_delegates_to_send_turn() -> None:
 # --- session naming: send_turn()'s first-call naming trigger ---
 
 
-def test_session_naming_pending_defaults_true_without_a_session_name() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_session_naming_pending_defaults_true_without_a_session_name(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     assert session.session_naming_pending is True
 
 
-def test_session_naming_pending_false_when_session_name_already_given() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), session_name="Already Named")
+def test_session_naming_pending_false_when_session_name_already_given(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), session_name="Already Named")
 
     assert session.session_naming_pending is False
 
 
 def test_send_turn_runs_naming_classifier_on_first_call_and_sets_title_not_id(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """Session naming runs on a background thread (`SessionCoreMixin._start_session_naming`), so
     the test synchronizes on `on_session_name_changed` firing rather than racing it."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    session = Session(make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name",
         lambda *args, **kwargs: SessionName(title="Fix auth bug"))
@@ -597,10 +637,12 @@ def test_send_turn_runs_naming_classifier_on_first_call_and_sets_title_not_id(
     assert session.session_naming_pending is False
 
 
-def test_send_turn_naming_failure_sets_fallback_title(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_turn_naming_failure_sets_fallback_title(
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    session = Session(make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: None)
     done = threading.Event()
@@ -614,10 +656,12 @@ def test_send_turn_naming_failure_sets_fallback_title(monkeypatch: pytest.Monkey
     assert session.session_naming_pending is False
 
 
-def test_send_turn_does_not_retrigger_naming_on_second_call(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_turn_does_not_retrigger_naming_on_second_call(
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    session = Session(make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     done = threading.Event()
     naming_spy = MagicMock(side_effect=lambda *args, **kwargs: done.set())
     monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", naming_spy)
@@ -629,11 +673,13 @@ def test_send_turn_does_not_retrigger_naming_on_second_call(monkeypatch: pytest.
     naming_spy.assert_called_once()
 
 
-def test_send_turn_skips_naming_when_session_name_already_given(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_turn_skips_naming_when_session_name_already_given(
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     session = Session(
-        SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce",
+        make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce",
         session_name="Already Named")
     naming_spy = MagicMock(return_value=None)
     monkeypatch.setattr("klorb.session.mixins.core.generate_session_name", naming_spy)
@@ -645,13 +691,13 @@ def test_send_turn_skips_naming_when_session_name_already_given(monkeypatch: pyt
 
 
 def test_send_turn_does_not_block_on_a_slow_naming_classifier(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """The classifier runs on its own background thread (`_start_session_naming`), so a slow
     classifier round trip must not delay the turn's own dispatch/response."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    session = Session(make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     classifier_started = threading.Event()
     release_classifier = threading.Event()
 
@@ -672,10 +718,12 @@ def test_send_turn_does_not_block_on_a_slow_naming_classifier(
     release_classifier.set()
 
 
-def test_send_turn_invokes_on_session_name_changed_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_turn_invokes_on_session_name_changed_callback(
+    monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
+    session = Session(make_session_config(), provider=mock_provider, session_id="2026-07-21-18-10-old-nonce")
     name = SessionName(title="Fix auth bug")
     monkeypatch.setattr(
         "klorb.session.mixins.core.generate_session_name", lambda *args, **kwargs: name)
@@ -688,10 +736,12 @@ def test_send_turn_invokes_on_session_name_changed_callback(monkeypatch: pytest.
     spy.assert_called_once_with(name)
 
 
-def test_send_turn_passes_system_prompt_from_registered_model() -> None:
+def test_send_turn_passes_system_prompt_from_registered_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
+    config = make_session_config(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
     registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -702,10 +752,12 @@ def test_send_turn_passes_system_prompt_from_registered_model() -> None:
         "You are Alpha.", "alpha", knowledge_cutoff="2024-01-01")
 
 
-def test_role_prompt_layers_onto_registered_model_prompt() -> None:
+def test_role_prompt_layers_onto_registered_model_prompt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha")  # role_name defaults to "operator"
+    config = make_session_config(model="alpha")  # role_name defaults to "operator"
     registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -717,10 +769,12 @@ def test_role_prompt_layers_onto_registered_model_prompt() -> None:
         "alpha", knowledge_cutoff="2024-01-01")
 
 
-def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> None:
+def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/unregistered-model", role_name=ROLE_WITHOUT_PROMPT_FILES)
+    config = make_session_config(model="some/unregistered-model", role_name=ROLE_WITHOUT_PROMPT_FILES)
     session = Session(config, provider=mock_provider)
 
     session.send_turn("hi")
@@ -730,10 +784,12 @@ def test_unknown_role_on_unregistered_model_falls_back_to_default_prompt() -> No
         DEFAULT_PROMPT or "", "some/unregistered-model")
 
 
-def test_system_message_inserted_before_first_turn_for_registered_model() -> None:
+def test_system_message_inserted_before_first_turn_for_registered_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
+    config = make_session_config(model="alpha", role_name=ROLE_WITHOUT_PROMPT_FILES)
     registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -744,10 +800,12 @@ def test_system_message_inserted_before_first_turn_for_registered_model() -> Non
         "You are Alpha.", "alpha", knowledge_cutoff="2024-01-01")
 
 
-def test_system_message_not_duplicated_across_turns() -> None:
+def test_system_message_not_duplicated_across_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
-    config = SessionConfig(model="alpha")
+    config = make_session_config(model="alpha")
     registry = sample_model_registry()
     session = Session(config, provider=mock_provider, model_registry=registry)
 
@@ -757,10 +815,12 @@ def test_system_message_not_duplicated_across_turns() -> None:
     assert sum(1 for m in session.messages if m.role == "system") == 1
 
 
-def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
+def test_system_message_holds_role_prompt_when_model_unregistered(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/unregistered-model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -769,10 +829,12 @@ def test_system_message_holds_role_prompt_when_model_unregistered() -> None:
         COMPOSED_OPERATOR_PROMPT, "some/unregistered-model")
 
 
-def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
+def test_system_message_inserted_ahead_of_tool_defs_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="alpha")
+    config = make_session_config(model="alpha")
     registry = sample_model_registry()
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider,
@@ -783,11 +845,13 @@ def test_system_message_inserted_ahead_of_tool_defs_message() -> None:
     assert [m.role for m in session.messages] == ["system", "tool_defs", "user", "assistant"]
 
 
-def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> None:
+def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    session = Session(SessionConfig(model="beta"), provider=mock_provider, model_registry=registry)
+    session = Session(make_session_config(model="beta"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -795,11 +859,13 @@ def test_reasoning_defaults_to_high_effort_for_effort_style_thinking_model() -> 
     assert kwargs["reasoning"] == {"effort": "high"}
 
 
-def test_reasoning_respects_configured_effort_level() -> None:
+def test_reasoning_respects_configured_effort_level(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    config = SessionConfig(model="beta", thinking_effort="low")
+    config = make_session_config(model="beta", thinking_effort="low")
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -808,11 +874,13 @@ def test_reasoning_respects_configured_effort_level() -> None:
     assert kwargs["reasoning"] == {"effort": "low"}
 
 
-def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
+def test_reasoning_uses_token_budget_for_tokens_style_thinking_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    session = Session(SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry)
+    session = Session(make_session_config(model="gamma"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -820,13 +888,15 @@ def test_reasoning_uses_token_budget_for_tokens_style_thinking_model() -> None:
     assert kwargs["reasoning"] == {"max_tokens": THINKING_EFFORT_TOKEN_BUDGETS["high"]}
 
 
-def test_reasoning_uses_custom_token_budgets_when_given() -> None:
+def test_reasoning_uses_custom_token_budgets_when_given(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
     custom_budgets: dict[ThinkingEffort, int] = {"low": 1_000, "medium": 2_000, "high": 3_000}
     session = Session(
-        SessionConfig(model="gamma"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="gamma"), provider=mock_provider, model_registry=registry,
         process_config=ProcessConfig(thinking_token_budgets=custom_budgets))
 
     session.send_turn("hi")
@@ -836,11 +906,11 @@ def test_reasoning_uses_custom_token_budgets_when_given() -> None:
     assert session.thinking_token_budgets == custom_budgets
 
 
-def test_reasoning_none_when_thinking_disabled() -> None:
+def test_reasoning_none_when_thinking_disabled(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    config = SessionConfig(model="beta", thinking_enabled=False)
+    config = make_session_config(model="beta", thinking_enabled=False)
     session = Session(config, provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
@@ -849,11 +919,13 @@ def test_reasoning_none_when_thinking_disabled() -> None:
     assert kwargs["reasoning"] is None
 
 
-def test_reasoning_none_when_model_does_not_support_thinking() -> None:
+def test_reasoning_none_when_model_does_not_support_thinking(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    session = Session(SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry)
+    session = Session(make_session_config(model="alpha"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -861,10 +933,10 @@ def test_reasoning_none_when_model_does_not_support_thinking() -> None:
     assert kwargs["reasoning"] is None
 
 
-def test_reasoning_none_when_model_unregistered() -> None:
+def test_reasoning_none_when_model_unregistered(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/unregistered-model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -891,13 +963,15 @@ class _DropReasoningModel(Model):
         return True
 
 
-def test_drop_reasoning_passed_to_provider_when_active_model_declares_it() -> None:
+def test_drop_reasoning_passed_to_provider_when_active_model_declares_it(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
     registry.register(_DropReasoningModel())
     session = Session(
-        SessionConfig(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
+        make_session_config(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -905,11 +979,13 @@ def test_drop_reasoning_passed_to_provider_when_active_model_declares_it() -> No
     assert kwargs["drop_reasoning"] is True
 
 
-def test_drop_reasoning_false_by_default_for_registered_model() -> None:
+def test_drop_reasoning_false_by_default_for_registered_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
-    session = Session(SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry)
+    session = Session(make_session_config(model="alpha"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -917,10 +993,12 @@ def test_drop_reasoning_false_by_default_for_registered_model() -> None:
     assert kwargs["drop_reasoning"] is False
 
 
-def test_drop_reasoning_false_when_model_unregistered() -> None:
+def test_drop_reasoning_false_when_model_unregistered(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(model="some/unregistered-model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/unregistered-model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -928,7 +1006,9 @@ def test_drop_reasoning_false_when_model_unregistered() -> None:
     assert kwargs["drop_reasoning"] is False
 
 
-def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> None:
+def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -946,7 +1026,7 @@ def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> No
     registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)
     registry.register(_DropReasoningModel())
     session = Session(
-        SessionConfig(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
+        make_session_config(model="drops-reasoning"), provider=mock_provider, model_registry=registry)
 
     session.send_turn("hi")
 
@@ -955,7 +1035,9 @@ def test_total_tokens_used_excludes_thinking_when_drop_reasoning_is_true() -> No
         m.num_tokens for m in session.messages if m is not thinking_message)
 
 
-def test_total_tokens_used_includes_thinking_by_default() -> None:
+def test_total_tokens_used_includes_thinking_by_default(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -970,17 +1052,17 @@ def test_total_tokens_used_includes_thinking_by_default() -> None:
         return _reply("hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
-def test_send_turn_sends_full_history_to_provider() -> None:
+def test_send_turn_sends_full_history_to_provider(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1", num_tokens=5, prompt_tokens=10), _reply("r2")]
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("first")
     session.send_turn("second")
@@ -993,10 +1075,12 @@ def test_send_turn_sends_full_history_to_provider() -> None:
     assert second_call_messages[3].content == "second"
 
 
-def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
+def test_user_message_num_tokens_is_its_own_client_side_estimate(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("first")
     session.send_turn("second")
@@ -1008,10 +1092,12 @@ def test_user_message_num_tokens_is_its_own_client_side_estimate() -> None:
     assert user2.num_tokens == estimate_tokens(user2.content)
 
 
-def test_send_turn_marks_user_message_error_and_reraises_on_provider_failure() -> None:
+def test_send_turn_marks_user_message_error_and_reraises_on_provider_failure(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
@@ -1021,10 +1107,12 @@ def test_send_turn_marks_user_message_error_and_reraises_on_provider_failure() -
     assert failed_message.last_error == "boom"
 
 
-def test_retry_last_turn_mutates_same_message_on_success() -> None:
+def test_retry_last_turn_mutates_same_message_on_success(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [RuntimeError("boom"), _reply("recovered")]
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
@@ -1040,14 +1128,18 @@ def test_retry_last_turn_mutates_same_message_on_success() -> None:
     assert user_message.last_error is None
 
 
-def test_retry_last_turn_raises_when_nothing_errored() -> None:
-    session = Session(SessionConfig(model="some/model"), provider=MagicMock())
+def test_retry_last_turn_raises_when_nothing_errored(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(model="some/model"), provider=MagicMock())
 
     with pytest.raises(ValueError, match="No errored turn to retry."):
         session.retry_last_turn()
 
 
-def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
+def test_streaming_chunks_populate_and_finalize_placeholder_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -1062,7 +1154,7 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
         return _reply("Hello", num_tokens=2, prompt_tokens=10)
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -1074,7 +1166,9 @@ def test_streaming_chunks_populate_and_finalize_placeholder_message() -> None:
     assert assistant_message.num_tokens == 2
 
 
-def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
+def test_send_turn_forwards_chunks_to_caller_on_chunk(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -1089,7 +1183,7 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
     spy = MagicMock()
 
     session.send_turn("hi", TurnEventHandlers(on_chunk=spy))
@@ -1097,7 +1191,9 @@ def test_send_turn_forwards_chunks_to_caller_on_chunk() -> None:
     assert [call.args[0] for call in spy.call_args_list] == ["Hel", "lo"]
 
 
-def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_message() -> None:
+def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -1113,7 +1209,7 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
         return _reply("Hello", num_tokens=2, prompt_tokens=10)
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -1130,7 +1226,9 @@ def test_streaming_thinking_chunks_populate_and_finalize_a_separate_placeholder_
     assert assistant_message.content == "Hello"
 
 
-def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> None:
+def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -1145,7 +1243,7 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
     spy = MagicMock()
 
     session.send_turn("hi", TurnEventHandlers(on_thinking_chunk=spy))
@@ -1153,7 +1251,9 @@ def test_send_turn_forwards_thinking_chunks_to_caller_on_thinking_chunk() -> Non
     assert [call.args[0] for call in spy.call_args_list] == ["Let ", "me think."]
 
 
-def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> None:
+def test_mid_stream_failure_marks_user_and_partial_assistant_message_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
@@ -1166,7 +1266,7 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
         raise RuntimeError("boom")
 
     mock_provider.send_prompt.side_effect = failing_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
@@ -1179,7 +1279,9 @@ def test_mid_stream_failure_marks_user_and_partial_assistant_message_error() -> 
     assert assistant_message.streaming_content == ["partial"]
 
 
-def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
+def test_mid_stream_failure_marks_thinking_placeholder_error_too(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
@@ -1192,7 +1294,7 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
         raise RuntimeError("boom")
 
     mock_provider.send_prompt.side_effect = failing_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
@@ -1204,10 +1306,12 @@ def test_mid_stream_failure_marks_thinking_placeholder_error_too() -> None:
     assert thinking_message.streaming_content == ["partial thought"]
 
 
-def test_abort_before_any_chunk_marks_user_message_aborted_not_removed() -> None:
+def test_abort_before_any_chunk_marks_user_message_aborted_not_removed(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = ResponseAborted()
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(ResponseAborted):
         session.send_turn("hi")
@@ -1219,7 +1323,9 @@ def test_abort_before_any_chunk_marks_user_message_aborted_not_removed() -> None
         user_message.content)
 
 
-def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None:
+def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def aborting_send_prompt(
@@ -1234,7 +1340,7 @@ def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = aborting_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(ResponseAborted):
         session.send_turn("hi")
@@ -1249,7 +1355,9 @@ def test_abort_mid_stream_keeps_partial_assistant_and_thinking_content() -> None
     assert assistant_message.streaming_content is None
 
 
-def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() -> None:
+def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     calls_made = 0
 
@@ -1265,7 +1373,7 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1289,7 +1397,9 @@ def test_abort_after_a_completed_tool_call_round_keeps_that_rounds_messages() ->
     assert user_message.num_tokens == estimate_tokens(user_message.content)
 
 
-def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> None:
+def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def failing_send_prompt(
@@ -1302,7 +1412,7 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
         raise RuntimeError("boom")
 
     mock_provider.send_prompt.side_effect = failing_send_prompt
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     with pytest.raises(RuntimeError):
         session.send_turn("hi")
@@ -1320,10 +1430,10 @@ def test_retry_last_turn_discards_partial_assistant_fragment_and_recovers() -> N
     assert session.messages[2].content == "recovered"
 
 
-def test_no_tools_offered_when_tool_registry_unset() -> None:
+def test_no_tools_offered_when_tool_registry_unset(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
@@ -1331,10 +1441,12 @@ def test_no_tools_offered_when_tool_registry_unset() -> None:
     assert kwargs["tools"] is None
 
 
-def test_tool_definitions_offered_to_provider_when_tool_registry_set() -> None:
+def test_tool_definitions_offered_to_provider_when_tool_registry_set(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1345,10 +1457,12 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set() -> None:
         "echo", "add", "ask_permission", "ask_multi_permission"}
 
 
-def test_tool_defs_message_inserted_before_first_turn() -> None:
+def test_tool_defs_message_inserted_before_first_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1358,10 +1472,12 @@ def test_tool_defs_message_inserted_before_first_turn() -> None:
     assert [m.role for m in session.messages] == ["system", "tool_defs", "user", "assistant"]
 
 
-def test_tool_defs_message_not_duplicated_across_turns() -> None:
+def test_tool_defs_message_not_duplicated_across_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1371,23 +1487,27 @@ def test_tool_defs_message_not_duplicated_across_turns() -> None:
     assert sum(1 for m in session.messages if m.role == "tool_defs") == 1
 
 
-def test_no_tool_defs_message_when_tool_registry_unset() -> None:
+def test_no_tool_defs_message_when_tool_registry_unset(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = Session(SessionConfig(model="some/model"), provider=mock_provider)
+    session = Session(make_session_config(model="some/model"), provider=mock_provider)
 
     session.send_turn("hi")
 
     assert all(m.role != "tool_defs" for m in session.messages)
 
 
-def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
+def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
         _reply("final answer", num_tokens=4, prompt_tokens=20),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1412,13 +1532,15 @@ def test_tool_call_round_trip_dispatches_tool_and_returns_final_reply() -> None:
     assert mock_provider.send_prompt.call_count == 2
 
 
-def test_tool_call_round_trip_forwards_tool_calls_to_second_request() -> None:
+def test_tool_call_round_trip_forwards_tool_calls_to_second_request(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1429,13 +1551,13 @@ def test_tool_call_round_trip_forwards_tool_calls_to_second_request() -> None:
         "system", "tool_defs", "user", "tool_use", "tool_response"]
 
 
-def test_unknown_tool_call_reports_error_to_model() -> None:
+def test_unknown_tool_call_reports_error_to_model(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1450,13 +1572,15 @@ def test_unknown_tool_call_reports_error_to_model() -> None:
     assert envelope["error_category"] == "validation"
 
 
-def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() -> None:
+def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),  # missing closing brace
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1474,7 +1598,9 @@ def test_malformed_json_tool_call_reports_error_to_model_instead_of_raising() ->
     assert user_message.processing_state == "complete"
 
 
-def test_malformed_json_tool_call_removed_from_tool_use_message() -> None:
+def test_malformed_json_tool_call_removed_from_tool_use_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A tool call with invalid JSON arguments is has its arguments reset to `{}`
     so the malformed data doesn't get sent to the API on subsequent turns (which would
     cause a 400 Bad Request error due to the invalid JSON)."""
@@ -1483,7 +1609,7 @@ def test_malformed_json_tool_call_removed_from_tool_use_message() -> None:
         _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),  # missing closing brace
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1498,7 +1624,9 @@ def test_malformed_json_tool_call_removed_from_tool_use_message() -> None:
     assert tool_use_message.tool_calls[0].arguments == "{}"
 
 
-def test_malformed_json_among_valid_tool_calls_removes_only_the_bad_one() -> None:
+def test_malformed_json_among_valid_tool_calls_removes_only_the_bad_one(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """When a batch of tool calls contains a mix of valid and invalid JSON, only the
     invalid one is removed from the tool_use message's tool_calls list."""
     mock_provider = MagicMock()
@@ -1509,7 +1637,7 @@ def test_malformed_json_among_valid_tool_calls_removes_only_the_bad_one() -> Non
         ]),
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1531,13 +1659,15 @@ def test_malformed_json_among_valid_tool_calls_removes_only_the_bad_one() -> Non
     assert len(tool_response_messages) == 2
 
 
-def test_on_tool_call_fires_with_raw_arguments_for_malformed_json() -> None:
+def test_on_tool_call_fires_with_raw_arguments_for_malformed_json(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"')]),
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     events: list[ToolCallEvent] = []
@@ -1553,10 +1683,12 @@ def test_on_tool_call_fires_with_raw_arguments_for_malformed_json() -> None:
     assert "Invalid JSON" in events[0].error
 
 
-def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
+def test_round_limit_exceeded_raises_and_marks_user_message_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1_000)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=1_000)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1569,10 +1701,10 @@ def test_round_limit_exceeded_raises_and_marks_user_message_error() -> None:
     assert str(MAX_TOOL_CALL_ROUNDS) in (user_message.last_error or "")
 
 
-def test_per_turn_tool_call_limit_defaults() -> None:
+def test_per_turn_tool_call_limit_defaults(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1585,10 +1717,10 @@ def test_per_turn_tool_call_limit_defaults() -> None:
     assert user_message.processing_state == "error"
 
 
-def test_per_turn_tool_call_limit_is_configurable() -> None:
+def test_per_turn_tool_call_limit_is_configurable(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=2)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=2)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1599,7 +1731,9 @@ def test_per_turn_tool_call_limit_is_configurable() -> None:
     assert len(tool_response_messages) == 2
 
 
-def test_per_turn_tool_call_limit_resets_between_turns() -> None:
+def test_per_turn_tool_call_limit_resets_between_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
@@ -1607,7 +1741,7 @@ def test_per_turn_tool_call_limit_resets_between_turns() -> None:
         _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
         _reply("second done"),
     ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1618,7 +1752,9 @@ def test_per_turn_tool_call_limit_resets_between_turns() -> None:
     assert response2 == "second done"
 
 
-def test_approving_turn_limit_increase_doubles_it_and_continues() -> None:
+def test_approving_turn_limit_increase_doubles_it_and_continues(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "a"}')]),
@@ -1626,7 +1762,7 @@ def test_approving_turn_limit_increase_doubles_it_and_continues() -> None:
         _tool_call_reply([("call_3", "echo", '{"message": "c"}')]),
         _reply("finally done"),
     ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_limit_reached = MagicMock(return_value=True)
@@ -1642,10 +1778,10 @@ def test_approving_turn_limit_increase_doubles_it_and_continues() -> None:
     assert "reaching its configured limit" in on_limit_reached.call_args_list[0].args[0]
 
 
-def test_declining_turn_limit_increase_raises() -> None:
+def test_declining_turn_limit_increase_raises(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_limit_reached = MagicMock(return_value=False)
@@ -1657,10 +1793,10 @@ def test_declining_turn_limit_increase_raises() -> None:
     assert config.max_tool_calls_per_turn == 1  # unchanged
 
 
-def test_no_callback_declines_without_asking() -> None:
+def test_no_callback_declines_without_asking(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=1)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=1)
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1673,13 +1809,15 @@ def test_no_callback_declines_without_asking() -> None:
 # --- on_tool_call ---
 
 
-def test_on_tool_call_fires_once_per_successful_call() -> None:
+def test_on_tool_call_fires_once_per_successful_call(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_tool_call = MagicMock()
@@ -1695,13 +1833,15 @@ def test_on_tool_call_fires_once_per_successful_call() -> None:
     assert event.error is None
 
 
-def test_on_tool_call_fires_with_error_for_unknown_tool_name() -> None:
+def test_on_tool_call_fires_with_error_for_unknown_tool_name(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
         _reply("recovered"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_tool_call = MagicMock()
@@ -1716,14 +1856,14 @@ def test_on_tool_call_fires_with_error_for_unknown_tool_name() -> None:
 
 
 def test_log_tool_calls_disabled_by_default_writes_no_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1733,14 +1873,14 @@ def test_log_tool_calls_disabled_by_default_writes_no_file(
 
 
 def test_log_tool_calls_enabled_via_process_config_writes_request_and_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi there"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(
         config, provider=mock_provider, tool_registry=tool_registry,
@@ -1761,7 +1901,7 @@ def test_log_tool_calls_enabled_via_process_config_writes_request_and_response(
 
 
 def test_log_tool_calls_separates_entries_with_a_blank_line(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
@@ -1770,7 +1910,7 @@ def test_log_tool_calls_separates_entries_with_a_blank_line(
         _tool_call_reply([("call_2", "echo", '{"message": "b"}')]),
         _reply("second done"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(
         config, provider=mock_provider, tool_registry=tool_registry,
@@ -1786,7 +1926,7 @@ def test_log_tool_calls_separates_entries_with_a_blank_line(
 
 
 def test_log_tool_calls_enabled_via_env_var_with_no_process_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     monkeypatch.setenv("LOG_TOOL_CALLS", "true")
     mock_provider = MagicMock()
@@ -1794,7 +1934,7 @@ def test_log_tool_calls_enabled_via_env_var_with_no_process_config(
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     tool_registry = _sample_tool_registry(config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
 
@@ -1803,14 +1943,16 @@ def test_log_tool_calls_enabled_via_env_var_with_no_process_config(
     assert (tmp_path / "tool-calls.log").exists()
 
 
-def test_on_tool_call_fires_with_retried_result_after_permission_grant(tmp_path: Path) -> None:
+def test_on_tool_call_fires_with_retried_result_after_permission_grant(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_tool_call = MagicMock()
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
@@ -1824,14 +1966,16 @@ def test_on_tool_call_fires_with_retried_result_after_permission_grant(tmp_path:
     assert event.error is None
 
 
-def test_on_tool_call_fires_with_error_for_a_denied_permission_ask(tmp_path: Path) -> None:
+def test_on_tool_call_fires_with_error_for_a_denied_permission_ask(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_tool_call = MagicMock()
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
@@ -1880,14 +2024,16 @@ def _tool_response_content(session: Session) -> str:
     return body if isinstance(body, str) else json.dumps(body)
 
 
-def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) -> None:
+def test_permission_ask_headless_fails_closed_like_a_generic_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
 
     response = session.send_turn("try it")
@@ -1896,8 +2042,8 @@ def test_permission_ask_headless_fails_closed_like_a_generic_error(tmp_path: Pat
     assert _tool_response_content(session) == f"Error: Permission requires confirmation: access {target}"
 
 
-def test_set_permission_framework_updates_config() -> None:
-    config = SessionConfig(model="some/model")
+def test_set_permission_framework_updates_config(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
 
     session.set_permission_framework("auto")
@@ -1905,8 +2051,10 @@ def test_set_permission_framework_updates_config() -> None:
     assert session.config.permission_framework == "auto"
 
 
-def test_set_permission_framework_rejects_an_invalid_value() -> None:
-    config = SessionConfig(model="some/model")
+def test_set_permission_framework_rejects_an_invalid_value(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
 
     with pytest.raises(ValueError, match="not-a-real-mode"):
@@ -1916,10 +2064,12 @@ def test_set_permission_framework_rejects_an_invalid_value() -> None:
     assert session._pending_permission_framework_interjection is None
 
 
-def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -> None:
+def test_set_permission_framework_queues_interjection_prepended_to_next_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.set_permission_framework("auto")
@@ -1935,10 +2085,12 @@ def test_set_permission_framework_queues_interjection_prepended_to_next_turn() -
     assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
-def test_send_turn_with_no_pending_change_leaves_prompt_untouched() -> None:
+def test_send_turn_with_no_pending_change_leaves_prompt_untouched(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.send_turn("do the thing")
@@ -1947,10 +2099,12 @@ def test_send_turn_with_no_pending_change_leaves_prompt_untouched() -> None:
     assert user_messages[0].content.endswith("do the thing")
 
 
-def test_multiple_permission_framework_changes_collapse_to_final_interjection() -> None:
+def test_multiple_permission_framework_changes_collapse_to_final_interjection(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.set_permission_framework("auto")
@@ -1968,10 +2122,10 @@ def test_multiple_permission_framework_changes_collapse_to_final_interjection() 
     assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
-def test_pending_interjection_applied_exactly_once() -> None:
+def test_pending_interjection_applied_exactly_once(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.set_permission_framework("auto")
@@ -1982,10 +2136,12 @@ def test_pending_interjection_applied_exactly_once() -> None:
     assert user_messages[1].content.endswith("second turn")
 
 
-def test_standing_interjection_appears_while_provider_returns_a_message() -> None:
+def test_standing_interjection_appears_while_provider_returns_a_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.register_standing_interjection("SessionTerminal", lambda: "still open")
@@ -1997,10 +2153,12 @@ def test_standing_interjection_appears_while_provider_returns_a_message() -> Non
     assert user_messages[1].content.endswith("second turn")
 
 
-def test_standing_interjection_stops_once_provider_returns_none() -> None:
+def test_standing_interjection_stops_once_provider_returns_none(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("first"), _reply("second")]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     live = {"alive": True}
@@ -2015,10 +2173,12 @@ def test_standing_interjection_stops_once_provider_returns_none() -> None:
     assert user_messages[1].content.endswith("second turn")
 
 
-def test_reregistering_standing_interjection_overwrites_not_accumulates() -> None:
+def test_reregistering_standing_interjection_overwrites_not_accumulates(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.register_standing_interjection("SessionTerminal", lambda: "first version")
@@ -2031,10 +2191,12 @@ def test_reregistering_standing_interjection_overwrites_not_accumulates() -> Non
     assert "first version" not in user_messages[0].content
 
 
-def test_standing_interjection_coexists_with_one_shot_permission_framework_interjection() -> None:
+def test_standing_interjection_coexists_with_one_shot_permission_framework_interjection(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider)
 
     session.set_permission_framework("auto")
@@ -2054,8 +2216,10 @@ def test_standing_interjection_coexists_with_one_shot_permission_framework_inter
     assert user_messages[0].content.endswith(expected.split("\n")[-1])
 
 
-def test_close_invokes_registered_teardown_callbacks() -> None:
-    config = SessionConfig(model="some/model")
+def test_close_invokes_registered_teardown_callbacks(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
     calls: list[str] = []
 
@@ -2065,8 +2229,8 @@ def test_close_invokes_registered_teardown_callbacks() -> None:
     assert calls == ["bash"]
 
 
-def test_close_is_idempotent() -> None:
-    config = SessionConfig(model="some/model")
+def test_close_is_idempotent(make_session_config: Callable[..., SessionConfig]) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
     calls: list[str] = []
 
@@ -2077,8 +2241,10 @@ def test_close_is_idempotent() -> None:
     assert calls == ["bash"]
 
 
-def test_reregistering_teardown_overwrites_not_accumulates() -> None:
-    config = SessionConfig(model="some/model")
+def test_reregistering_teardown_overwrites_not_accumulates(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
     calls: list[str] = []
 
@@ -2089,8 +2255,10 @@ def test_reregistering_teardown_overwrites_not_accumulates() -> None:
     assert calls == ["second"]
 
 
-def test_deliver_notice_calls_the_registered_handler() -> None:
-    config = SessionConfig(model="some/model")
+def test_deliver_notice_calls_the_registered_handler(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
     notices: list[str] = []
 
@@ -2100,15 +2268,19 @@ def test_deliver_notice_calls_the_registered_handler() -> None:
     assert notices == ["hook fired"]
 
 
-def test_deliver_notice_is_a_noop_without_a_registered_handler() -> None:
-    config = SessionConfig(model="some/model")
+def test_deliver_notice_is_a_noop_without_a_registered_handler(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
 
     session.deliver_notice("nobody listening")
 
 
-def test_reregistering_notice_handler_overwrites_not_accumulates() -> None:
-    config = SessionConfig(model="some/model")
+def test_reregistering_notice_handler_overwrites_not_accumulates(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock())
     calls: list[str] = []
 
@@ -2119,9 +2291,11 @@ def test_reregistering_notice_handler_overwrites_not_accumulates() -> None:
     assert calls == ["second:hi"]
 
 
-def test_close_cascades_into_a_live_subagent_and_relays_its_note() -> None:
-    parent = Session(SessionConfig(), provider=MagicMock())
-    child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=parent)
+def test_close_cascades_into_a_live_subagent_and_relays_its_note(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    child = Session(make_session_config(role_name="explorer"), provider=MagicMock(), parent=parent)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="task")
@@ -2134,8 +2308,10 @@ def test_close_cascades_into_a_live_subagent_and_relays_its_note() -> None:
     assert "done" in parent.messages[-1].content
 
 
-def test_append_system_note_adds_a_complete_user_message() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_append_system_note_adds_a_complete_user_message(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     session.append_system_note("some note")
 
@@ -2144,17 +2320,21 @@ def test_append_system_note_adds_a_complete_user_message() -> None:
     assert session.messages[-1].processing_state == "complete"
 
 
-def test_current_turn_handlers_is_none_outside_a_turn() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_current_turn_handlers_is_none_outside_a_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     assert session.current_turn_handlers() is None
 
 
-def test_send_turn_with_resolve_mentions_false_leaves_at_mentions_literal(tmp_path: Path) -> None:
+def test_send_turn_with_resolve_mentions_false_leaves_at_mentions_literal(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "f.txt").write_text("secret contents")
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [_reply("ok")]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = Session(config, provider=mock_provider, process_config=ProcessConfig())
 
     session.send_turn("look at @f.txt", resolve_mentions=False)
@@ -2166,7 +2346,9 @@ def test_send_turn_with_resolve_mentions_false_leaves_at_mentions_literal(tmp_pa
     assert user_messages[-1].content.endswith("look at @f.txt")
 
 
-def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_path: Path) -> None:
+def test_permission_framework_deny_fails_closed_even_with_a_callback_given(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`permission_framework="deny"` fails closed unconditionally -- it must not invoke
     `on_permission_ask` even if a caller supplied one."""
     target = tmp_path / "f.txt"
@@ -2175,7 +2357,7 @@ def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_p
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     config.permission_framework = "deny"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
@@ -2187,7 +2369,9 @@ def test_permission_framework_deny_fails_closed_even_with_a_callback_given(tmp_p
     on_permission_ask.assert_not_called()
 
 
-def test_permission_framework_auto_approves_without_any_callback(tmp_path: Path) -> None:
+def test_permission_framework_auto_approves_without_any_callback(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`permission_framework="auto"` auto-approves via a synthesized "session"-scope grant,
     without ever invoking `on_permission_ask` (none is even given here)."""
     target = tmp_path / "f.txt"
@@ -2196,7 +2380,7 @@ def test_permission_framework_auto_approves_without_any_callback(tmp_path: Path)
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     config.permission_framework = "auto"
     process_config = ProcessConfig()
     session = _session_with_ask_tool(config, mock_provider, process_config)
@@ -2210,7 +2394,9 @@ def test_permission_framework_auto_approves_without_any_callback(tmp_path: Path)
     assert process_config.session.read_dirs == DirRules()
 
 
-def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_path: Path) -> None:
+def test_permission_framework_auto_ignores_an_on_permission_ask_callback(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Even if a caller supplies `on_permission_ask`, `permission_framework="auto"` never
     invokes it -- the auto-approval is unconditional."""
     target = tmp_path / "f.txt"
@@ -2219,7 +2405,7 @@ def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_pat
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     config.permission_framework = "auto"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
@@ -2231,14 +2417,16 @@ def test_permission_framework_auto_ignores_an_on_permission_ask_callback(tmp_pat
     on_permission_ask.assert_not_called()
 
 
-def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path: Path) -> None:
+def test_permission_ask_once_retries_with_override_and_persists_nothing(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
@@ -2256,13 +2444,15 @@ def test_permission_ask_once_retries_with_override_and_persists_nothing(tmp_path
     assert config.write_dirs == DirRules()
 
 
-def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_path: Path) -> None:
+def test_permission_ask_once_retry_failure_falls_through_to_generic_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """If the retried call still fails even with the override applied, the result is an
     ordinary "Error: ..." tool_response -- never a second ask. Exercises
     Session._retry_after_permission_decision directly, via a mocked ToolRegistry, since
     provoking this from AskPermissionTool itself would require an artificial path mismatch."""
     target = tmp_path / "f.txt"
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
 
     mock_tool = MagicMock()
     mock_tool.apply.side_effect = ValueError("still broken")
@@ -2284,7 +2474,9 @@ def test_permission_ask_once_retry_failure_falls_through_to_generic_error(tmp_pa
         "ask_permission", permission_override=PermissionOverride(paths=frozenset({target})))
 
 
-def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path: Path) -> None:
+def test_permission_ask_session_scope_retries_after_applying_the_grant(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`Session` applies the "session"-scope grant itself (via
     `klorb.permissions.grant.apply_permission_grant`) once `on_permission_ask` returns the
     decision -- `on_permission_ask` itself doesn't need to touch `config` at all."""
@@ -2294,7 +2486,7 @@ def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path:
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     process_config = ProcessConfig()
     session = _session_with_ask_tool(config, mock_provider, process_config)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope="session"))
@@ -2309,7 +2501,7 @@ def test_permission_ask_session_scope_retries_after_applying_the_grant(tmp_path:
 
 
 def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """`Session` applies and persists the "workspace"/"homedir" grant itself too, the same way
     as "session" scope -- this only pins that `Session` actually calls
@@ -2327,7 +2519,7 @@ def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
             _tool_call_reply([_ask_permission_call("call_1", target)]),
             _reply("done"),
         ]
-        config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+        config = make_session_config(model="some/model")
         process_config = ProcessConfig()
         session = _session_with_ask_tool(config, mock_provider, process_config)
         on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope=scope))
@@ -2342,7 +2534,7 @@ def test_permission_ask_workspace_and_homedir_scope_persist_the_grant(
 
 
 def test_permission_ask_workspace_scope_without_process_config_skips_the_ripple(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `Session` constructed with no `ProcessConfig` (`process_config=None`) has no
     process-wide template to ripple a "workspace"/"homedir" grant into --
@@ -2355,7 +2547,7 @@ def test_permission_ask_workspace_scope_without_process_config_skips_the_ripple(
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)  # no process_config
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow", scope="workspace"))
 
@@ -2367,14 +2559,16 @@ def test_permission_ask_workspace_scope_without_process_config_skips_the_ripple(
     assert (tmp_path / ".klorb" / "klorb-config.json").is_file()
 
 
-def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
+def test_permission_ask_deny_denies_without_any_retry(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="deny"))
 
@@ -2388,14 +2582,16 @@ def test_permission_ask_deny_denies_without_any_retry(tmp_path: Path) -> None:
     assert mock_provider.send_prompt.call_count == 2
 
 
-def test_permission_ask_other_includes_free_text_in_denial(tmp_path: Path) -> None:
+def test_permission_ask_other_includes_free_text_in_denial(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(
         return_value=PermissionDecision(action="deny", other_text="use /tmp instead"))
@@ -2407,14 +2603,16 @@ def test_permission_ask_other_includes_free_text_in_denial(tmp_path: Path) -> No
     assert "Permission denied" in content
 
 
-def test_retry_last_turn_threads_on_permission_ask(tmp_path: Path) -> None:
+def test_retry_last_turn_threads_on_permission_ask(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         RuntimeError("transient failure"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
     callbacks = TurnEventHandlers(on_permission_ask=on_permission_ask)
@@ -2439,14 +2637,16 @@ def _ask_multi_permission_call(id_: str, paths: list[Path]) -> tuple[str, str, s
     return id_, "ask_multi_permission", json.dumps({"paths": [str(p) for p in paths]})
 
 
-def test_multi_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) -> None:
+def test_multi_ask_headless_fails_closed_like_a_generic_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
 
     response = session.send_turn("try it")
@@ -2456,7 +2656,7 @@ def test_multi_ask_headless_fails_closed_like_a_generic_error(tmp_path: Path) ->
 
 
 def test_multi_ask_asks_about_every_item_in_order_and_retries_once_all_approved(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     targets = [tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "c.txt"]
     mock_provider = MagicMock()
@@ -2464,7 +2664,7 @@ def test_multi_ask_asks_about_every_item_in_order_and_retries_once_all_approved(
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
 
@@ -2480,14 +2680,16 @@ def test_multi_ask_asks_about_every_item_in_order_and_retries_once_all_approved(
     assert asked_paths == targets
 
 
-def test_multi_ask_stops_at_the_first_denial_and_never_asks_about_the_rest(tmp_path: Path) -> None:
+def test_multi_ask_stops_at_the_first_denial_and_never_asks_about_the_rest(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     targets = [tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "c.txt"]
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(side_effect=[
         PermissionDecision(action="allow"),
@@ -2503,14 +2705,16 @@ def test_multi_ask_stops_at_the_first_denial_and_never_asks_about_the_rest(tmp_p
     assert config.write_dirs == DirRules()  # nothing was granted, not even the first, approved item
 
 
-def test_multi_ask_permission_framework_auto_approves_every_item(tmp_path: Path) -> None:
+def test_multi_ask_permission_framework_auto_approves_every_item(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     config.permission_framework = "auto"
     session = _session_with_ask_tool(config, mock_provider)
 
@@ -2520,14 +2724,16 @@ def test_multi_ask_permission_framework_auto_approves_every_item(tmp_path: Path)
     assert _tool_response_content(session) == "granted:" + ",".join(str(p) for p in targets)
 
 
-def test_multi_ask_permission_framework_deny_fails_closed_without_asking(tmp_path: Path) -> None:
+def test_multi_ask_permission_framework_deny_fails_closed_without_asking(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     targets = [tmp_path / "a.txt", tmp_path / "b.txt"]
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_multi_permission_call("call_1", targets)]),
         _reply("done"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     config.permission_framework = "deny"
     session = _session_with_ask_tool(config, mock_provider)
     on_permission_ask = MagicMock(return_value=PermissionDecision(action="allow"))
@@ -2539,13 +2745,15 @@ def test_multi_ask_permission_framework_deny_fails_closed_without_asking(tmp_pat
     on_permission_ask.assert_not_called()
 
 
-def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) -> None:
+def test_multi_ask_resolve_threads_skill_field_into_ask_context(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `MultiPermissionAskRequired` item carrying `.skill` (rather than `.path`/`.command`)
     must reach `on_permission_ask`'s `PermissionAskContext.skill` -- exercises
     `Session._resolve_multi_permission_ask` directly, since no real tool raises a skill-bearing
     `MultiPermissionAskRequired` today (only `BashTool` produces multi-item asks, and never for
     a skill)."""
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     session = Session(config, provider=MagicMock(), tool_registry=MagicMock())
     item = PermissionAskItem("activate skill internal/s",
                              resource=SkillResource(skill_id=("internal", "s")))
@@ -2561,12 +2769,14 @@ def test_multi_ask_resolve_threads_skill_field_into_ask_context(tmp_path: Path) 
     assert ctx.resource.skill_id == ("internal", "s")
 
 
-def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None:
+def test_multi_ask_once_scope_builds_override_with_skill(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `scope="once"` decision for a skill item must retry through a `PermissionOverride`
     whose `skills` set covers the pair -- exercises `Session._retry_after_multi_permission_
     decisions` directly, mirroring `test_permission_ask_once_retry_failure_falls_through_to_
     generic_error`'s mocked-registry approach for the single-ask path."""
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     mock_tool = MagicMock()
     mock_tool.apply.return_value = "ok"
     mock_registry = MagicMock()
@@ -2587,11 +2797,13 @@ def test_multi_ask_once_scope_builds_override_with_skill(tmp_path: Path) -> None
     assert config.skill_rules.allow == []
 
 
-def test_multi_ask_persistent_scope_applies_skill_grant(tmp_path: Path) -> None:
+def test_multi_ask_persistent_scope_applies_skill_grant(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A persistent-scope decision for a skill item must persist via
     `apply_skill_permission_grant` -- reflected in the live `SessionConfig.skill_rules` for a
     `"session"`-scope grant."""
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model")
     mock_tool = MagicMock()
     mock_tool.apply.return_value = "ok"
     mock_registry = MagicMock()

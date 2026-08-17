@@ -74,13 +74,15 @@ def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> tupl
     return session, process_config
 
 
-async def test_escalate_privileges_panel_appears_for_an_escalate_tool_call() -> None:
+async def test_escalate_privileges_panel_appears_for_an_escalate_tool_call(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session, _ = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -95,13 +97,15 @@ async def test_escalate_privileges_panel_appears_for_an_escalate_tool_call() -> 
         assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_escalate_privileges_approve_records_scope_and_flows_back() -> None:
+async def test_escalate_privileges_approve_records_scope_and_flows_back(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session, process_config = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -131,13 +135,15 @@ async def test_escalate_privileges_approve_records_scope_and_flows_back() -> Non
         assert "Decision: Approve" in history_text
 
 
-async def test_escalate_privileges_deny_keeps_scope_locked_and_reports_denial() -> None:
+async def test_escalate_privileges_deny_keeps_scope_locked_and_reports_denial(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session, process_config = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -159,13 +165,13 @@ async def test_escalate_privileges_deny_keeps_scope_locked_and_reports_denial() 
         assert "denied" in str(tool_response.content)
 
 
-async def test_escalate_privileges_escape_denies() -> None:
+async def test_escalate_privileges_escape_denies(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session, process_config = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 

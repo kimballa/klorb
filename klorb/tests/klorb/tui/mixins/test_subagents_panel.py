@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.subagents_panel.SubagentsPanelMixin."""
-
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -34,12 +34,15 @@ def _handle(session: Session, role: str = "explorer", title: str = "find the bug
         role=role, title=title)
 
 
-def _add_subagent(root: Session, role: str = "explorer", title: str = "find the bug") -> SubagentHandle:
+def _add_subagent(
+    root: Session, make_session_config: Callable[..., SessionConfig],
+    role: str = "explorer", title: str = "find the bug",
+) -> SubagentHandle:
     # `session_name=title` mirrors `CreateSubagentTool` pre-setting the child `Session`'s name
     # from `CreateSubagent`'s `session_title` argument -- see docs/specs/subagents.md's
     # "Subagent session model" section.
     child = Session(
-        SessionConfig(role_name=role), provider=MagicMock(), parent=root, session_name=title)
+        make_session_config(role_name=role), provider=MagicMock(), parent=root, session_name=title)
     handle = _handle(child, role=role, title=title)
     root.subagent_tracker.register(handle)
     return handle
@@ -61,8 +64,8 @@ def _pending_interrupt(app: ReplApp) -> str | None:
     return app._subagent_interrupt_pending
 
 
-async def test_ctrl_g_shows_then_hides_the_panel() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_ctrl_g_shows_then_hides_the_panel(make_session_config: Callable[..., SessionConfig]) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         panel = app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
@@ -77,8 +80,10 @@ async def test_ctrl_g_shows_then_hides_the_panel() -> None:
         assert bool(panel.display) is False
 
 
-async def test_ctrl_g_hides_the_task_sidebar_if_shown() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_ctrl_g_hides_the_task_sidebar_if_shown(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press("ctrl+t")
@@ -93,8 +98,10 @@ async def test_ctrl_g_hides_the_task_sidebar_if_shown() -> None:
         assert bool(app.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display) is False
 
 
-async def test_ctrl_t_hides_the_subagents_panel_if_shown() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_ctrl_t_hides_the_subagents_panel_if_shown(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press("ctrl+g")
@@ -109,9 +116,11 @@ async def test_ctrl_t_hides_the_subagents_panel_if_shown() -> None:
         assert bool(app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display) is False
 
 
-async def test_selecting_a_subagent_swaps_history_visibility_and_keeps_prompt_input_enabled() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_selecting_a_subagent_swaps_history_visibility_and_keeps_prompt_input_enabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -127,9 +136,11 @@ async def test_selecting_a_subagent_swaps_history_visibility_and_keeps_prompt_in
         assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_reselecting_the_root_restores_history_and_prompt_input_stays_enabled() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_reselecting_the_root_restores_history_and_prompt_input_stays_enabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -146,9 +157,11 @@ async def test_reselecting_the_root_restores_history_and_prompt_input_stays_enab
         assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_selecting_a_different_session_saves_and_restores_prompt_draft_text() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_selecting_a_different_session_saves_and_restores_prompt_draft_text(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -172,13 +185,15 @@ async def test_selecting_a_different_session_saves_and_restores_prompt_draft_tex
         assert prompt_input.text == "a subagent draft"
 
 
-async def test_tick_refreshes_a_stale_selected_handle_after_a_resume() -> None:
+async def test_tick_refreshes_a_stale_selected_handle_after_a_resume(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A resume (a direct message or `MessageSubagent`) replaces the tracker's handle for the
     same session id; `_tick_subagents_panel` must re-resolve `_selected_handle` from the tree
     each tick rather than keep pointing at the orphaned original, or the trailing status notice
     would freeze at whatever state it was in when the subagent was first selected."""
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -197,9 +212,11 @@ async def test_tick_refreshes_a_stale_selected_handle_after_a_resume() -> None:
         assert app._selected_handle is new_handle
 
 
-async def test_selecting_a_row_via_the_option_list_switches_selection() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_selecting_a_row_via_the_option_list_switches_selection(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -215,9 +232,11 @@ async def test_selecting_a_row_via_the_option_list_switches_selection() -> None:
         assert app._selected_session is handle.session
 
 
-async def test_escape_aborts_the_selected_subagents_own_cancel_event() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_escape_aborts_the_selected_subagents_own_cancel_event(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -231,8 +250,10 @@ async def test_escape_aborts_the_selected_subagents_own_cancel_event() -> None:
         assert app._cancel_event is None  # the root session's own turn state is untouched
 
 
-async def test_root_row_never_shows_a_running_marker_but_footer_shows_its_role() -> None:
-    session = _session(MagicMock())
+async def test_root_row_never_shows_a_running_marker_but_footer_shows_its_role(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -244,12 +265,14 @@ async def test_root_row_never_shows_a_running_marker_but_footer_shows_its_role()
         assert option_list.option_count == 1
 
 
-async def test_new_subagent_messages_stay_pinned_to_the_bottom_when_already_there() -> None:
+async def test_new_subagent_messages_stay_pinned_to_the_bottom_when_already_there(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """See `test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom` in
     test_prompt_submission.py for why this spies on `_scroll_if_pinned` rather than asserting on
     the viewport's actual scroll position."""
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.session.load_messages([_message(f"padding line {i}") for i in range(20)])
     app = ReplApp(session=session)
 
@@ -266,9 +289,11 @@ async def test_new_subagent_messages_stay_pinned_to_the_bottom_when_already_ther
         assert all(call.args[-1] for call in mock_scroll_if_pinned.call_args_list)
 
 
-async def test_new_subagent_messages_do_not_yank_the_scroll_when_the_user_has_scrolled_away() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_new_subagent_messages_do_not_yank_the_scroll_when_the_user_has_scrolled_away(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.session.load_messages([_message(f"padding line {i}") for i in range(20)])
     app = ReplApp(session=session)
 
@@ -288,9 +313,11 @@ async def test_new_subagent_messages_do_not_yank_the_scroll_when_the_user_has_sc
         assert not any(call.args[-1] for call in mock_scroll_if_pinned.call_args_list)
 
 
-async def test_status_bar_reflects_the_selected_subagent_then_reverts_to_the_root() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_status_bar_reflects_the_selected_subagent_then_reverts_to_the_root(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.session.load_messages([_message("subagent reply", num_tokens=42)])
     app = ReplApp(session=session)
 
@@ -307,9 +334,11 @@ async def test_status_bar_reflects_the_selected_subagent_then_reverts_to_the_roo
         assert str(output_tokens.render()) == root_text
 
 
-async def test_subagent_notice_reads_task_complete_for_an_ordinary_finish() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_subagent_notice_reads_task_complete_for_an_ordinary_finish(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -324,9 +353,11 @@ async def test_subagent_notice_reads_task_complete_for_an_ordinary_finish() -> N
         assert _notice_text(app) == "Subagent task complete."
 
 
-async def test_subagent_notice_reads_interrupted_for_an_aborted_finish() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_subagent_notice_reads_interrupted_for_an_aborted_finish(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.state = "finished"
     handle.output = f"partial output\n\n{SUBAGENT_ABORTED_MARKER}"
     app = ReplApp(session=session)
@@ -338,9 +369,11 @@ async def test_subagent_notice_reads_interrupted_for_an_aborted_finish() -> None
         assert _notice_text(app) == "Subagent interrupted."
 
 
-async def test_escape_immediately_shows_sending_interrupt_then_flips_to_interrupted() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_escape_immediately_shows_sending_interrupt_then_flips_to_interrupted(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -362,9 +395,11 @@ async def test_escape_immediately_shows_sending_interrupt_then_flips_to_interrup
         assert _notice_text(app) == "Subagent interrupted."
 
 
-async def test_header_title_follows_selection_to_the_subagents_own_model() -> None:
-    session = _session(MagicMock(), model="root/model")
-    handle = _add_subagent(session)
+async def test_header_title_follows_selection_to_the_subagents_own_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config, model="root/model")
+    handle = _add_subagent(session, make_session_config)
     handle.session.config.model = "subagent/model"
     app = ReplApp(session=session)
 
@@ -378,9 +413,11 @@ async def test_header_title_follows_selection_to_the_subagents_own_model() -> No
         assert "root/model" not in app.format_title(app.title, app.sub_title).plain
 
 
-async def test_session_name_line_follows_selection_to_the_subagents_own_title() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session, title="find the flaky test")
+async def test_session_name_line_follows_selection_to_the_subagents_own_title(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config, title="find the flaky test")
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -397,9 +434,11 @@ async def test_session_name_line_follows_selection_to_the_subagents_own_title() 
         assert "find the flaky test" not in str(session_name.render())
 
 
-async def test_transcript_renders_a_tool_use_messages_own_commentary_alongside_its_tool_calls() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_transcript_renders_a_tool_use_messages_own_commentary_alongside_its_tool_calls(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.session.load_messages([
         Message(
             content="Here is the final answer.", role="tool_use", num_tokens=1,
@@ -417,9 +456,11 @@ async def test_transcript_renders_a_tool_use_messages_own_commentary_alongside_i
         assert any(widget.source == "Here is the final answer." for widget in responses)
 
 
-async def test_transcript_reconstructs_an_empty_thinking_body_from_reasoning_details() -> None:
-    session = _session(MagicMock())
-    handle = _add_subagent(session)
+async def test_transcript_reconstructs_an_empty_thinking_body_from_reasoning_details(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
     handle.session.load_messages([
         Message(
             content="", role="thinking", num_tokens=1, processing_state="complete",

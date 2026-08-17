@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.util.secret_redaction.SecretRedactor."""
-
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, DirRules
@@ -13,14 +13,16 @@ from klorb.workspace import Workspace
 _AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
 
 
-def _session(tmp_path: Path) -> Session:
-    config = SessionConfig(
+def _session(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> Session:
+    config = make_session_config(
         workspace=Workspace(path=tmp_path, trusted=True), read_dirs=DirRules(), write_dirs=DirRules())
     return Session(config=config)
 
 
-def test_redact_masks_a_known_credential_shape(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_redact_masks_a_known_credential_shape(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     try:
         redacted = SecretRedactor().redact(session, f"AWS_ACCESS_KEY_ID={_AWS_KEY}")
         assert _AWS_KEY not in redacted
@@ -38,10 +40,12 @@ def test_redact_empty_text_is_a_no_op() -> None:
     assert SecretRedactor().redact(None, "") == ""
 
 
-def test_same_secret_gets_the_same_token_across_separate_calls(tmp_path: Path) -> None:
+def test_same_secret_gets_the_same_token_across_separate_calls(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A re-read of the same file (a later ReadFile call) must resolve the same token, not a
     fresh one, so a model's earlier reference to it stays valid."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         redactor = SecretRedactor()
         first = redactor.redact(session, _AWS_KEY)
@@ -52,12 +56,12 @@ def test_same_secret_gets_the_same_token_across_separate_calls(tmp_path: Path) -
 
 
 def test_token_is_shared_across_separate_secretredactor_instances_on_the_same_session(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """SecretRedactor holds no state of its own -- the map lives in session.tool_state -- so a
     fresh instance (e.g. EditFileTool's own self._secret_redactor) resolves the same token
     ReadFileTool's instance minted earlier."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         redacted = SecretRedactor().redact(session, _AWS_KEY)
         assert SecretRedactor().detokenize(session, redacted) == _AWS_KEY
@@ -65,8 +69,10 @@ def test_token_is_shared_across_separate_secretredactor_instances_on_the_same_se
         session.close()
 
 
-def test_detokenize_round_trips_through_session_state(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_detokenize_round_trips_through_session_state(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     try:
         redactor = SecretRedactor()
         text = f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nordinary line"
@@ -81,8 +87,10 @@ def test_detokenize_leaves_unknown_token_untouched() -> None:
     assert SecretRedactor().detokenize(None, text) == text
 
 
-def test_detokenize_leaves_text_without_a_token_untouched(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_detokenize_leaves_text_without_a_token_untouched(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     try:
         text = "nothing secret here"
         assert SecretRedactor().detokenize(session, text) == text
@@ -100,12 +108,14 @@ def test_none_session_redacts_without_a_persistent_map() -> None:
     assert redactor.detokenize(None, redacted) == redacted
 
 
-def test_token_map_lives_only_in_session_tool_state_never_elsewhere(tmp_path: Path) -> None:
+def test_token_map_lives_only_in_session_tool_state_never_elsewhere(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The token<->plaintext map must be reachable only through session.tool_state -- the field
     Session documents as never read/written by Session itself and never persisted to disk (see
     docs/specs/secret-redaction.md's "Session-state storage" section) -- not copied anywhere
     else a session-persistence path could pick it up."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         SecretRedactor().redact(session, _AWS_KEY)
         assert "SecretRedaction" in session.tool_state
@@ -190,10 +200,12 @@ def test_empty_baseline_redacts_normally() -> None:
     assert redactor.redact(None, _AWS_KEY) != _AWS_KEY
 
 
-def test_get_or_create_caches_redactor_in_session_tool_state(tmp_path: Path) -> None:
+def test_get_or_create_caches_redactor_in_session_tool_state(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`get_or_create_secret_redactor` caches the `SecretRedactor` instance in
     `session.tool_state` so subsequent calls return the same object."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         first = get_or_create_secret_redactor(session)
         second = get_or_create_secret_redactor(session)
@@ -211,13 +223,15 @@ def test_get_or_create_returns_fresh_instance_when_session_is_none() -> None:
     assert first is not second
 
 
-def test_get_or_create_uses_baseline_hashes(tmp_path: Path) -> None:
+def test_get_or_create_uses_baseline_hashes(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The cached redactor applies baseline hashes the same as a manually-constructed one."""
     import hashlib
     secret_value = "AKIAABCDEFGHIJKLMNOP"
     sha1 = hashlib.sha1(secret_value.encode("utf-8")).hexdigest()
     _write_baseline(tmp_path, [sha1])
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         redactor = get_or_create_secret_redactor(session)
         text = f"AWS_ACCESS_KEY_ID={secret_value}"

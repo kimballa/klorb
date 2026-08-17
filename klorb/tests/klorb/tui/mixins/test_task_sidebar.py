@@ -1,13 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.task_sidebar.TaskSidebarMixin."""
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 from textual.widgets import Static
 from tui.conftest import _session
 
-from klorb.session import ToolCallEvent
+from klorb.session import SessionConfig, ToolCallEvent
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import TASK_SIDEBAR_ID
 from klorb.tui.widgets.task_sidebar import _BODY_ID, TaskSidebar
@@ -22,8 +23,8 @@ def _sidebar_body_text(app: ReplApp) -> str:
     return str(sidebar.query_one(f"#{_BODY_ID}", Static).render())
 
 
-async def test_ctrl_t_shows_then_hides_the_sidebar() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_ctrl_t_shows_then_hides_the_sidebar(make_session_config: Callable[..., SessionConfig]) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     with patch("klorb.tui.mixins.task_sidebar.chainlink_available", return_value=False):
         async with app.run_test() as pilot:
@@ -40,8 +41,10 @@ async def test_ctrl_t_shows_then_hides_the_sidebar() -> None:
             assert bool(sidebar.display) is False
 
 
-async def test_ctrl_t_shows_unavailable_message_when_no_chainlink_binary() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_ctrl_t_shows_unavailable_message_when_no_chainlink_binary(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     with patch("klorb.tui.mixins.task_sidebar.chainlink_available", return_value=False):
         async with app.run_test() as pilot:
@@ -52,8 +55,10 @@ async def test_ctrl_t_shows_unavailable_message_when_no_chainlink_binary() -> No
             assert "not available" in _sidebar_body_text(app)
 
 
-async def test_ctrl_t_lists_open_and_closed_tasks_starring_the_current_one() -> None:
-    session = _session(MagicMock())
+async def test_ctrl_t_lists_open_and_closed_tasks_starring_the_current_one(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     session.set_chainlink_task(2)
     app = ReplApp(session=session)
     issues = [_issue(2, "In progress"), _issue(1, "Done", status="closed")]
@@ -73,8 +78,10 @@ async def test_ctrl_t_lists_open_and_closed_tasks_starring_the_current_one() -> 
             assert "#1 Done" in body
 
 
-async def test_relevant_tool_call_refreshes_sidebar_while_shown() -> None:
-    session = _session(MagicMock())
+async def test_relevant_tool_call_refreshes_sidebar_while_shown(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     app = ReplApp(session=session)
 
     with (
@@ -99,8 +106,10 @@ async def test_relevant_tool_call_refreshes_sidebar_while_shown() -> None:
             assert "Second fetch" in _sidebar_body_text(app)
 
 
-async def test_irrelevant_tool_call_does_not_refresh_sidebar() -> None:
-    session = _session(MagicMock())
+async def test_irrelevant_tool_call_does_not_refresh_sidebar(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     app = ReplApp(session=session)
 
     with (

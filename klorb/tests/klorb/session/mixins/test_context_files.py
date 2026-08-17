@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for workspace context-file injection
 (`Session._build_context_files_interjection`/`Session.send_turn`)."""
-
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -17,13 +17,14 @@ from klorb.workspace import Workspace
 
 def _session(
     workspace_root: Path,
+    make_session_config: Callable[..., SessionConfig],
     *,
     trusted: bool = True,
     compatibility_claude_markdown: bool = False,
     provider: MagicMock | None = None,
 ) -> Session:
     """Build a `Session` with a mock provider whose workspace_root is `workspace_root`."""
-    config = SessionConfig(
+    config = make_session_config(
         model="some/model", workspace=Workspace(path=workspace_root, trusted=trusted))
     return Session(
         config,
@@ -53,33 +54,41 @@ def _reply(content: str = "ok") -> ProviderResponse:
     )
 
 
-def test_no_interjection_when_no_files_exist(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_no_interjection_when_no_files_exist(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     assert session._build_context_files_interjection() is None
 
 
-def test_no_interjection_when_workspace_untrusted(tmp_path: Path) -> None:
+def test_no_interjection_when_workspace_untrusted(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
     (tmp_path / ".klorb").mkdir()
     (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("Durable per-project instructions.")
 
-    session = _session(tmp_path, trusted=False)
+    session = _session(tmp_path, make_session_config, trusted=False)
     assert session._build_context_files_interjection() is None
 
 
-def test_untrusted_workspace_never_touches_filesystem(tmp_path: Path) -> None:
+def test_untrusted_workspace_never_touches_filesystem(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("content")
 
-    session = _session(tmp_path, trusted=False)
+    session = _session(tmp_path, make_session_config, trusted=False)
     session.config.workspace.path = Path("/nonexistent/does/not/exist")
     # Would raise if the untrusted path were ever resolved/read.
     assert session._build_context_files_interjection() is None
 
 
-def test_agents_md_wrapped_in_context_file_tag(tmp_path: Path) -> None:
+def test_agents_md_wrapped_in_context_file_tag(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -87,11 +96,13 @@ def test_agents_md_wrapped_in_context_file_tag(tmp_path: Path) -> None:
     assert '<ContextFile filename="AGENTS.md" priority="1">' in body
 
 
-def test_klorb_instructions_md_wrapped_in_context_file_tag(tmp_path: Path) -> None:
+def test_klorb_instructions_md_wrapped_in_context_file_tag(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / ".klorb").mkdir()
     (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("Durable per-project instructions.")
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -99,12 +110,14 @@ def test_klorb_instructions_md_wrapped_in_context_file_tag(tmp_path: Path) -> No
     assert '<ContextFile filename=".klorb/INSTRUCTIONS.md" priority="1">' in body
 
 
-def test_instructions_take_priority_one_agents_priority_two(tmp_path: Path) -> None:
+def test_instructions_take_priority_one_agents_priority_two(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / ".klorb").mkdir()
     (tmp_path / ".klorb" / "INSTRUCTIONS.md").write_text("instructions content")
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -113,11 +126,13 @@ def test_instructions_take_priority_one_agents_priority_two(tmp_path: Path) -> N
     assert body.index(".klorb/INSTRUCTIONS.md") < body.index("AGENTS.md")
 
 
-def test_claude_md_not_read_by_default(tmp_path: Path) -> None:
+def test_claude_md_not_read_by_default(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -125,11 +140,13 @@ def test_claude_md_not_read_by_default(tmp_path: Path) -> None:
     assert "claude content" not in body
 
 
-def test_claude_md_read_when_compatibility_enabled(tmp_path: Path) -> None:
+def test_claude_md_read_when_compatibility_enabled(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
 
-    session = _session(tmp_path, compatibility_claude_markdown=True)
+    session = _session(tmp_path, make_session_config, compatibility_claude_markdown=True)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -140,18 +157,22 @@ def test_claude_md_read_when_compatibility_enabled(tmp_path: Path) -> None:
     assert '<ContextFile filename="CLAUDE.md" priority="2">' in body
 
 
-def test_claude_md_compat_enabled_but_untrusted(tmp_path: Path) -> None:
+def test_claude_md_compat_enabled_but_untrusted(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("agents content")
     (tmp_path / "CLAUDE.md").write_text("claude content")
 
-    session = _session(tmp_path, trusted=False, compatibility_claude_markdown=True)
+    session = _session(tmp_path, make_session_config, trusted=False, compatibility_claude_markdown=True)
     assert session._build_context_files_interjection() is None
 
 
-def test_context_files_framed_as_context_not_task(tmp_path: Path) -> None:
+def test_context_files_framed_as_context_not_task(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("project rules")
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -159,24 +180,26 @@ def test_context_files_framed_as_context_not_task(tmp_path: Path) -> None:
     assert "not a task to act on directly" in body
 
 
-def test_applicable_filenames_default() -> None:
-    session = _session(Path("/tmp"))
+def test_applicable_filenames_default(make_session_config: Callable[..., SessionConfig]) -> None:
+    session = _session(Path("/tmp"), make_session_config)
     assert session._applicable_context_filenames() == [".klorb/INSTRUCTIONS.md", "AGENTS.md"]
 
 
-def test_applicable_filenames_with_compat() -> None:
-    session = _session(Path("/tmp"), compatibility_claude_markdown=True)
+def test_applicable_filenames_with_compat(make_session_config: Callable[..., SessionConfig]) -> None:
+    session = _session(Path("/tmp"), make_session_config, compatibility_claude_markdown=True)
     assert session._applicable_context_filenames() == [
         ".klorb/INSTRUCTIONS.md", "AGENTS.md", "CLAUDE.md",
     ]
 
 
-def test_send_turn_prepends_project_guidance_interjection(tmp_path: Path) -> None:
+def test_send_turn_prepends_project_guidance_interjection(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
 
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = _session(tmp_path, provider=mock_provider)
+    session = _session(tmp_path, make_session_config, provider=mock_provider)
     session.send_turn("do the task")
 
     user_msgs = _user_messages(session)
@@ -187,12 +210,14 @@ def test_send_turn_prepends_project_guidance_interjection(tmp_path: Path) -> Non
     assert session._context_files_seeded is True
 
 
-def test_send_turn_no_context_file_interjection_when_untrusted(tmp_path: Path) -> None:
+def test_send_turn_no_context_file_interjection_when_untrusted(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
 
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = _session(tmp_path, trusted=False, provider=mock_provider)
+    session = _session(tmp_path, make_session_config, trusted=False, provider=mock_provider)
     session.send_turn("do the task")
 
     user_msgs = _user_messages(session)
@@ -211,12 +236,14 @@ def test_send_turn_no_context_file_interjection_when_untrusted(tmp_path: Path) -
     assert session._metadata_seeded is True
 
 
-def test_send_turn_only_prepends_interjection_once(tmp_path: Path) -> None:
+def test_send_turn_only_prepends_interjection_once(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     (tmp_path / "AGENTS.md").write_text("Be careful with tests.")
 
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session = _session(tmp_path, provider=mock_provider)
+    session = _session(tmp_path, make_session_config, provider=mock_provider)
     session.send_turn("first")
     session.send_turn("second")
 
@@ -227,7 +254,7 @@ def test_send_turn_only_prepends_interjection_once(tmp_path: Path) -> None:
 
 
 def test_instructions_md_in_config_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     from klorb.session.mixins import skills
 
@@ -238,7 +265,7 @@ def test_instructions_md_in_config_dir(
 
     monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -250,7 +277,7 @@ def test_instructions_md_in_config_dir(
 
 
 def test_instructions_md_priority_ordering(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     from klorb.session.mixins import skills
 
@@ -264,7 +291,7 @@ def test_instructions_md_priority_ordering(
 
     monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
-    session = _session(tmp_path, compatibility_claude_markdown=True)
+    session = _session(tmp_path, make_session_config, compatibility_claude_markdown=True)
     body = session._build_context_files_interjection()
 
     assert body is not None
@@ -280,7 +307,7 @@ def test_instructions_md_priority_ordering(
 
 
 def test_instructions_md_only_when_untrusted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     from klorb.session.mixins import skills
 
@@ -294,7 +321,7 @@ def test_instructions_md_only_when_untrusted(
 
     monkeypatch.setattr(skills, "get_klorb_config_dir", lambda: config_dir)
 
-    session = _session(tmp_path, compatibility_claude_markdown=True, trusted=False)
+    session = _session(tmp_path, make_session_config, compatibility_claude_markdown=True, trusted=False)
     interjection = session._build_context_files_interjection()
     assert interjection is not None
     assert "config dir instructions" in interjection

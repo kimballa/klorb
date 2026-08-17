@@ -19,6 +19,7 @@ from server.acp_harness import AcpHarness, build_acp_harness
 from klorb.api_provider import ApiProvider, ProviderResponse
 from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.workspace import TrustManager
 
 
@@ -44,15 +45,18 @@ def _tool_call_reply(call_id: str, name: str, args: dict[str, Any]) -> ProviderR
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture, mirroring the other `server/` test modules' own: `await make_harness(
     provider=...)` returns a running `AcpHarness` wired to an isolated `TrustManager`, closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
 
-    async def _make(provider: ApiProvider | None = None) -> AcpHarness:
+    async def _make(
+        provider: ApiProvider | None = None
+    ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
-        harness = await build_acp_harness(ProcessConfig(), provider=provider, trust_manager=trust_manager)
+        harness = await build_acp_harness(ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 

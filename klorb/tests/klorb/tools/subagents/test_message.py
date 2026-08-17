@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.subagents.message.MessageSubagentTool."""
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -20,9 +20,11 @@ from klorb.tools.subagents.wait import WaitForSubagentTool
 from klorb.workspace import Workspace
 
 
-def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupContext:
+def _operator_context(
+    tmp_path: Path, provider: _FakeProvider, make_session_config: Callable[..., SessionConfig]
+) -> ToolSetupContext:
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator", workspace=Workspace(path=tmp_path))
     grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
     session_config.skill_rules = grants.skill_rules
     session = Session(
@@ -31,22 +33,26 @@ def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupConte
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 
-def test_raises_for_an_unknown_subagent_id(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, _FakeProvider())
+def test_raises_for_an_unknown_subagent_id(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, _FakeProvider(), make_session_config)
 
     with pytest.raises(ToolCallError, match="No such subagent"):
         MessageSubagentTool(context).apply({"id": "no-such-id", "message": "hi"})
 
 
-def test_raises_while_the_subagent_is_still_running(tmp_path: Path) -> None:
+def test_raises_while_the_subagent_is_still_running(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # A handle deliberately left "running" (its thread blocks on an Event this test controls
     # directly), rather than racing a real CreateSubagent-spawned thread's completion. The
     # event is set (and the thread joined) before the test ends so it doesn't outlive it.
     never_finishes = threading.Event()
-    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=context.session)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
         cancel_event=threading.Event(), role="explorer", title="task")
@@ -61,10 +67,12 @@ def test_raises_while_the_subagent_is_still_running(tmp_path: Path) -> None:
         handle.thread.join(timeout=5.0)
 
 
-def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(tmp_path: Path) -> None:
+def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
     process_config = ProcessConfig(subagents_max_concurrent_per_parent=1)
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(process_config, session_config)
     session = Session(
         session_config, provider=provider, process_config=process_config, tool_registry=tool_registry)
@@ -74,7 +82,7 @@ def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(tmp_pa
     # still_running for why this is built directly rather than via a real CreateSubagent call.
     # The event is set (and the thread joined) before the test ends so it doesn't outlive it.
     never_finishes = threading.Event()
-    running_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=session)
+    running_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=session)
     running_handle = SubagentHandle(
         session=running_child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
         cancel_event=threading.Event(), role="explorer", title="first")
@@ -82,7 +90,7 @@ def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(tmp_pa
     running_handle.thread.start()
     # A second, already-finished (dormant) subagent this call tries to resume. Its thread was
     # never started -- state="finished" is set directly -- so there's nothing to join.
-    dormant_child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=session)
+    dormant_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=session)
     dormant_handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
         cancel_event=threading.Event(), role="explorer", title="second", state="finished",
@@ -98,9 +106,11 @@ def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(tmp_pa
         running_handle.thread.join(timeout=5.0)
 
 
-def test_resumes_a_finished_subagent_and_its_new_output_is_deliverable(tmp_path: Path) -> None:
+def test_resumes_a_finished_subagent_and_its_new_output_is_deliverable(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider(reply_text="first answer")
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     CreateSubagentTool(context).apply({
         "role": "explorer", "session_title": "task", "initial_message": "go",
@@ -119,17 +129,17 @@ def test_resumes_a_finished_subagent_and_its_new_output_is_deliverable(tmp_path:
 
 
 def test_always_produces_a_parent_interested_handle_even_resuming_a_directly_messaged_one(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """MessageSubagent is only ever called by the parent agent itself -- unlike a human's direct
     message (`dispatch_direct_message`), its resume must always mark the parent as expecting a
     reply, even when the subagent it's resuming was last messaged directly by a human (i.e. its
     current handle has `parent_interested=False`)."""
     provider = _FakeProvider(reply_text="human-addressed reply")
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     dormant_child = Session(
-        SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+        make_session_config(role_name="explorer"), provider=provider, parent=context.session)
     handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
         cancel_event=threading.Event(), role="explorer", title="task", state="finished",

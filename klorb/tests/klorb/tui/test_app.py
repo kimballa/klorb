@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.app.ReplApp: core lifecycle, and cross-cutting flows spanning
 more than one mixin."""
-
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -39,14 +39,16 @@ from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.workspace import Workspace
 
 
-async def test_selection_safe_screen_drops_hit_on_detached_widget() -> None:
+async def test_selection_safe_screen_drops_hit_on_detached_widget(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `MouseDown` hit-test that resolves to a detached (parent-less) widget — as happens
     when a click lands on a `MarkdownParagraph` mid streaming-remount — is dropped so Textual's
     text-selection code never dereferences the widget's `None` parent and crashes the app. See
     docs/adrs/00118-drop-mousedown-on-detached-widget-to-avoid-selection-crash.md.
     """
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         screen = app.screen
@@ -66,23 +68,27 @@ async def test_selection_safe_screen_drops_hit_on_detached_widget() -> None:
             assert screen.get_widget_and_offset_at(3, 4) == (attached, Offset(1, 2))
 
 
-async def test_session_notice_handler_mounts_a_history_notice() -> None:
+async def test_session_notice_handler_mounts_a_history_notice(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`ReplApp.__init__` registers `_wire_session_notice_handler` on its `Session` -- a hook's
     `HookOutput.log`, delivered via `Session.deliver_notice`, should reach the history scroll as
     a neutral notice, the same `TuiHistoryNotice` hand-off `TuiHistoryLogHandler` uses for a
     `WARNING`+ log record."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app._session.deliver_notice("debug note")
         await _wait_until(pilot, lambda: "debug note" in _notice_texts(app))
 
 
-async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
+async def test_submitting_a_prompt_shows_it_and_the_response(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -104,10 +110,12 @@ async def test_submitting_a_prompt_shows_it_and_the_response() -> None:
     assert kwargs["session_id"] == TEST_SESSION_ID
 
 
-async def test_select_model_updates_active_model_and_subtitle() -> None:
+async def test_select_model_updates_active_model_and_subtitle(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("ok")
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.select_model("other/model")
@@ -124,9 +132,11 @@ async def test_select_model_updates_active_model_and_subtitle() -> None:
     assert kwargs["model"] == "other/model"
 
 
-async def test_set_thinking_enabled_updates_session_config() -> None:
+async def test_set_thinking_enabled_updates_session_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.set_thinking_enabled(False)
@@ -136,29 +146,35 @@ async def test_set_thinking_enabled_updates_session_config() -> None:
         assert app._session.config.thinking_enabled is True
 
 
-async def test_set_thinking_effort_updates_session_config() -> None:
+async def test_set_thinking_effort_updates_session_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.set_thinking_effort("low")
         assert app._session.config.thinking_effort == "low"
 
 
-async def test_select_model_also_updates_process_config_template() -> None:
+async def test_select_model_also_updates_process_config_template(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.select_model("other/model")
         assert app._process_config.session.model == "other/model"
 
 
-async def test_select_model_persists_to_the_user_config_file(tmp_path: Path) -> None:
+async def test_select_model_persists_to_the_user_config_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     config_path = tmp_path / "klorb-config.json"
     config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
@@ -169,20 +185,24 @@ async def test_select_model_persists_to_the_user_config_file(tmp_path: Path) -> 
     assert written["shell.command"] == "/bin/zsh"
 
 
-async def test_set_thinking_enabled_also_updates_process_config_template() -> None:
+async def test_set_thinking_enabled_also_updates_process_config_template(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.set_thinking_enabled(False)
         assert app._process_config.session.thinking_enabled is False
 
 
-async def test_set_thinking_enabled_persists_to_the_user_config_file(tmp_path: Path) -> None:
+async def test_set_thinking_enabled_persists_to_the_user_config_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     config_path = tmp_path / "klorb-config.json"
     config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
@@ -193,20 +213,24 @@ async def test_set_thinking_enabled_persists_to_the_user_config_file(tmp_path: P
     assert written["shell.command"] == "/bin/zsh"
 
 
-async def test_set_thinking_effort_also_updates_process_config_template() -> None:
+async def test_set_thinking_effort_also_updates_process_config_template(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.set_thinking_effort("low")
         assert app._process_config.session.thinking_effort == "low"
 
 
-async def test_set_thinking_effort_persists_to_the_user_config_file(tmp_path: Path) -> None:
+async def test_set_thinking_effort_persists_to_the_user_config_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     config_path = tmp_path / "klorb-config.json"
     config_path.write_text(json.dumps({"shell.command": "/bin/zsh"}), encoding="utf-8")
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch("klorb.tui.app.user_config_path", return_value=config_path):
         async with app.run_test():
@@ -217,9 +241,11 @@ async def test_set_thinking_effort_persists_to_the_user_config_file(tmp_path: Pa
     assert written["shell.command"] == "/bin/zsh"
 
 
-async def test_select_theme_updates_live_theme_and_process_config_template() -> None:
+async def test_select_theme_updates_live_theme_and_process_config_template(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.select_theme("nord")
@@ -227,9 +253,11 @@ async def test_select_theme_updates_live_theme_and_process_config_template() -> 
         assert app._process_config.theme == "nord"
 
 
-async def test_select_theme_persists_to_user_config() -> None:
+async def test_select_theme_persists_to_user_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.select_theme("nord")
@@ -238,9 +266,11 @@ async def test_select_theme_persists_to_user_config() -> None:
     assert raw["ui.theme"] == "nord"
 
 
-async def test_select_theme_announces_change_in_history_scroll() -> None:
+async def test_select_theme_announces_change_in_history_scroll(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.select_theme("nord")
@@ -248,9 +278,11 @@ async def test_select_theme_announces_change_in_history_scroll() -> None:
         assert "Changed current theme to `nord`." in _notice_texts(app)
 
 
-async def test_reload_skills_rebuilds_catalog_and_announces_count(tmp_path: Path) -> None:
+async def test_reload_skills_rebuilds_catalog_and_announces_count(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     workspace = Workspace(path=tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager=None)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager=None)
 
     async with app.run_test() as pilot:
         skill_dir = tmp_path / ".klorb" / "skills" / "do-thing"
@@ -263,8 +295,10 @@ async def test_reload_skills_rebuilds_catalog_and_announces_count(tmp_path: Path
         assert "Reloaded skill catalog: 1 skill found." in _notice_texts(app)
 
 
-async def test_warning_log_record_mounted_as_a_history_notice() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_warning_log_record_mounted_as_a_history_notice(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         logging_config.configure_logging(repl_mode=True, log_path=None)
@@ -276,8 +310,10 @@ async def test_warning_log_record_mounted_as_a_history_notice() -> None:
             logging_config.configure_logging(repl_mode=False, log_path=None)
 
 
-async def test_error_log_record_mounted_as_a_history_error_notice() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_error_log_record_mounted_as_a_history_error_notice(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         logging_config.configure_logging(repl_mode=True, log_path=None)
@@ -291,8 +327,10 @@ async def test_error_log_record_mounted_as_a_history_error_notice() -> None:
             logging_config.configure_logging(repl_mode=False, log_path=None)
 
 
-async def test_info_log_record_not_mounted_as_a_history_notice() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_info_log_record_not_mounted_as_a_history_notice(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         logging_config.configure_logging(repl_mode=True, log_path=None)
@@ -304,9 +342,11 @@ async def test_info_log_record_not_mounted_as_a_history_notice() -> None:
             logging_config.configure_logging(repl_mode=False, log_path=None)
 
 
-async def test_get_system_commands_excludes_builtin_theme_command() -> None:
+async def test_get_system_commands_excludes_builtin_theme_command(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         titles = {command.title for command in app.get_system_commands(app.screen)}
@@ -314,28 +354,34 @@ async def test_get_system_commands_excludes_builtin_theme_command() -> None:
         assert "Quit" in titles
 
 
-async def test_constructor_applies_persisted_theme_from_process_config() -> None:
+async def test_constructor_applies_persisted_theme_from_process_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     process_config = ProcessConfig(theme="nord")
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test():
         assert app.theme == "nord"
 
 
-async def test_constructor_ignores_unknown_persisted_theme() -> None:
+async def test_constructor_ignores_unknown_persisted_theme(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     process_config = ProcessConfig(theme="not-a-real-theme")
-    default_theme = ReplApp(session=_session(mock_provider)).theme
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    default_theme = ReplApp(session=_session(mock_provider, make_session_config)).theme
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test():
         assert app.theme == default_theme
 
 
-async def test_available_theme_names_returns_sorted_registered_themes() -> None:
+async def test_available_theme_names_returns_sorted_registered_themes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         names = app.available_theme_names()
@@ -343,28 +389,34 @@ async def test_available_theme_names_returns_sorted_registered_themes() -> None:
         assert "nord" in names
 
 
-async def test_get_current_theme_name_reflects_active_theme() -> None:
+async def test_get_current_theme_name_reflects_active_theme(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.select_theme("nord")
         assert app.get_current_theme_name() == "nord"
 
 
-async def test_get_thinking_effort_reflects_session_config() -> None:
+async def test_get_thinking_effort_reflects_session_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         app.set_thinking_effort("low")
         assert app.get_thinking_effort() == "low"
 
 
-async def test_format_title_shows_workspace_path_model_and_thinking_effort() -> None:
+async def test_format_title_shows_workspace_path_model_and_thinking_effort(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     short_path = Path("/home/user/proj")
-    config = SessionConfig(model="gpt-5", workspace=Workspace(path=short_path, trusted=True))
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=short_path, trusted=True))
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -375,10 +427,12 @@ async def test_format_title_shows_workspace_path_model_and_thinking_effort() -> 
         assert title == f"{short_path} - gpt-5 (High)"
 
 
-async def test_format_title_marks_an_untrusted_workspace_and_omits_effort_when_disabled() -> None:
+async def test_format_title_marks_an_untrusted_workspace_and_omits_effort_when_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     short_path = Path("/home/user/proj")
-    config = SessionConfig(model="gpt-5", workspace=Workspace(path=short_path, trusted=False))
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=short_path, trusted=False))
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -388,10 +442,12 @@ async def test_format_title_marks_an_untrusted_workspace_and_omits_effort_when_d
         assert title == f"{short_path} (Untrusted) - gpt-5"
 
 
-async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts() -> None:
+async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     long_path = Path("/some/very/deeply/nested/workspace/directory/tree/root")
-    config = SessionConfig(model="gpt-5", workspace=Workspace(path=long_path, trusted=True))
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=long_path, trusted=True))
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -401,10 +457,12 @@ async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts
         assert title == ".../tree/root - gpt-5"
 
 
-async def test_initial_message_is_submitted_as_first_turn() -> None:
+async def test_initial_message_is_submitted_as_first_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider), initial_message="what is 2+2?")
+    app = ReplApp(session=_session(mock_provider, make_session_config), initial_message="what is 2+2?")
 
     async with app.run_test() as pilot:
         await app.workers.wait_for_complete()
@@ -433,13 +491,15 @@ async def test_default_session_gets_a_tool_registry_discovering_built_in_tools()
         assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
 
 
-async def test_ctrl_o_footer_label_reads_detail_then_hide() -> None:
+async def test_ctrl_o_footer_label_reads_detail_then_hide(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -502,9 +562,11 @@ async def test_clicking_the_more_indicator_opens_expanded_command_screen() -> No
         assert isinstance(app.screen, ExpandedCommandScreen)
 
 
-async def test_no_trust_manager_skips_bootstrap_and_announcement_entirely(tmp_path: Path) -> None:
+async def test_no_trust_manager_skips_bootstrap_and_announcement_entirely(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     workspace = Workspace(path=tmp_path)
-    app = _repl_app_for_workspace(workspace, trust_manager=None)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager=None)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -512,9 +574,11 @@ async def test_no_trust_manager_skips_bootstrap_and_announcement_entirely(tmp_pa
         assert _notice_texts(app) == []
 
 
-async def test_quit_skips_save_prompt_with_no_trust_manager() -> None:
+async def test_quit_skips_save_prompt_with_no_trust_manager(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]

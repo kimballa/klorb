@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for the `Memories` interjection
 (`Session._build_memories_interjection`/`Session.send_turn`)."""
-
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -22,6 +22,7 @@ from klorb.workspace import Workspace
 def _build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
     *,
     trusted: bool = True,
     provider: MagicMock | None = None,
@@ -34,7 +35,7 @@ def _build(
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(
+    config = make_session_config(
         model="some/model", workspace=Workspace(path=workspace_root, trusted=trusted))
     process_config = ProcessConfig()
     tool_registry = ToolRegistry.discover_tools(process_config, config) if with_tool_registry else None
@@ -72,15 +73,17 @@ def _reply(content: str = "ok") -> ProviderResponse:
     )
 
 
-def test_no_tool_registry_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    session, _context = _build(tmp_path, monkeypatch, with_tool_registry=False)
+def test_no_tool_registry_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session, _context = _build(tmp_path, monkeypatch, make_session_config, with_tool_registry=False)
     assert session._build_memories_interjection() is None
 
 
 def test_empty_namespaces_prompt_create_memory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, _context = _build(tmp_path, monkeypatch)
+    session, _context = _build(tmp_path, monkeypatch, make_session_config)
     body = session._build_memories_interjection()
 
     assert body is not None
@@ -91,9 +94,9 @@ def test_empty_namespaces_prompt_create_memory(
 
 
 def test_lists_global_and_workspace_memory_topics(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch)
+    session, context = _build(tmp_path, monkeypatch, make_session_config)
     _write_memory(context, "global", "user.md", "User prefers concise replies\nbody\n")
     _write_memory(context, "workspace", "convention.md", "Uses tabs not spaces\nbody\n")
 
@@ -107,9 +110,9 @@ def test_lists_global_and_workspace_memory_topics(
 
 
 def test_workspace_section_omitted_when_untrusted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch, trusted=False)
+    session, context = _build(tmp_path, monkeypatch, make_session_config, trusted=False)
     _write_memory(context, "global", "user.md", "User prefers concise replies\n")
 
     body = session._build_memories_interjection()
@@ -121,9 +124,9 @@ def test_workspace_section_omitted_when_untrusted(
 
 
 def test_memory_toc_content_is_folded_into_the_interjection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch)
+    session, context = _build(tmp_path, monkeypatch, make_session_config)
     _write_memory(context, "global", "MEMORY.md", "TOC\nSee user.md for preferences\n")
 
     body = session._build_memories_interjection()
@@ -137,9 +140,9 @@ def test_memory_toc_content_is_folded_into_the_interjection(
 
 
 def test_memory_toc_absent_when_no_memory_md_exists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch)
+    session, context = _build(tmp_path, monkeypatch, make_session_config)
     _write_memory(context, "global", "user.md", "User prefers concise replies\n")
 
     body = session._build_memories_interjection()
@@ -149,9 +152,9 @@ def test_memory_toc_absent_when_no_memory_md_exists(
 
 
 def test_memory_toc_is_capped_at_the_auto_read_line_limit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch)
+    session, context = _build(tmp_path, monkeypatch, make_session_config)
     content = "TOC\n" + "\n".join(f"L{i}" for i in range(1, 60))
     _write_memory(context, "global", "MEMORY.md", content)
 
@@ -163,9 +166,9 @@ def test_memory_toc_is_capped_at_the_auto_read_line_limit(
 
 
 def test_memory_toc_truncation_names_the_resuming_read_memory_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch)
+    session, context = _build(tmp_path, monkeypatch, make_session_config)
     content = "TOC\n" + "\n".join(f"L{i}" for i in range(1, 60))
     _write_memory(context, "global", "MEMORY.md", content)
 
@@ -177,9 +180,9 @@ def test_memory_toc_truncation_names_the_resuming_read_memory_call(
 
 
 def test_memory_toc_omitted_for_untrusted_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _build(tmp_path, monkeypatch, trusted=False)
+    session, context = _build(tmp_path, monkeypatch, make_session_config, trusted=False)
     _write_memory(context, "workspace", "MEMORY.md", "TOC\n")
 
     body = session._build_memories_interjection()
@@ -189,7 +192,7 @@ def test_memory_toc_omitted_for_untrusted_workspace(
 
 
 def test_list_memories_failure_returns_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """Any `ListMemories` failure -- not just a permission denial, which can no longer happen
     here since a read is always allowed -- drops the interjection instead of raising."""
@@ -199,16 +202,16 @@ def test_list_memories_failure_returns_none(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(ListMemoriesTool, "apply", _boom)
-    session, _context = _build(tmp_path, monkeypatch)
+    session, _context = _build(tmp_path, monkeypatch, make_session_config)
     assert session._build_memories_interjection() is None
 
 
 def test_send_turn_prepends_memories_interjection_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    session, context = _build(tmp_path, monkeypatch, provider=mock_provider)
+    session, context = _build(tmp_path, monkeypatch, make_session_config, provider=mock_provider)
     _write_memory(context, "global", "user.md", "User prefers concise replies\n")
 
     session.send_turn("first")

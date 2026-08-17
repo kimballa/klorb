@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.subagents.wait.WaitForSubagentTool."""
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -19,9 +19,11 @@ from klorb.tools.subagents.wait import WaitForSubagentTool
 from klorb.workspace import Workspace
 
 
-def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupContext:
+def _operator_context(
+    tmp_path: Path, provider: _FakeProvider, make_session_config: Callable[..., SessionConfig]
+) -> ToolSetupContext:
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator", workspace=Workspace(path=tmp_path))
     grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
     session_config.skill_rules = grants.skill_rules
     session = Session(
@@ -30,17 +32,21 @@ def _operator_context(tmp_path: Path, provider: _FakeProvider) -> ToolSetupConte
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 
-def test_raises_immediately_when_no_subagents_are_outstanding(tmp_path: Path) -> None:
-    context = _operator_context(tmp_path, _FakeProvider())
+def test_raises_immediately_when_no_subagents_are_outstanding(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, _FakeProvider(), make_session_config)
     tool = WaitForSubagentTool(context)
 
     with pytest.raises(ToolCallError, match="no subagents"):
         tool.apply({})
 
 
-def test_returns_the_finished_subagents_output(tmp_path: Path) -> None:
+def test_returns_the_finished_subagents_output(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider(reply_text="the answer is 42")
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     CreateSubagentTool(context).apply({
         "role": "explorer", "session_title": "compute", "initial_message": "go",
@@ -56,9 +62,11 @@ def test_returns_the_finished_subagents_output(tmp_path: Path) -> None:
     }]
 
 
-def test_returns_every_subagent_that_finished_before_the_call(tmp_path: Path) -> None:
+def test_returns_every_subagent_that_finished_before_the_call(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # Each subagent's thread is joined before the next is created, so completion order is
     # deterministic (creation order) rather than a race between the two background threads.
@@ -79,9 +87,11 @@ def test_returns_every_subagent_that_finished_before_the_call(tmp_path: Path) ->
     assert [c["output"] for c in result["completed"]] == ["first done", "second done"]
 
 
-def test_second_wait_fails_once_the_only_subagent_was_already_delivered(tmp_path: Path) -> None:
+def test_second_wait_fails_once_the_only_subagent_was_already_delivered(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     CreateSubagentTool(context).apply({
         "role": "explorer", "session_title": "task", "initial_message": "go",
@@ -95,14 +105,14 @@ def test_second_wait_fails_once_the_only_subagent_was_already_delivered(tmp_path
 
 
 def test_cancel_event_raises_tool_interrupt_error_instead_of_blocking_forever(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # A subagent whose background thread never finishes on its own within the test.
     context.session.subagent_tracker.register(SubagentHandle(
-        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        session=Session(make_session_config(), provider=provider, parent=context.session),
         thread=threading.Thread(target=lambda: threading.Event().wait(30)),
         cancel_event=threading.Event(), role="explorer", title="never finishes"))
     context.session.active_cancel_event = threading.Event()
@@ -116,13 +126,15 @@ def test_cancel_event_raises_tool_interrupt_error_instead_of_blocking_forever(
         "incomplete": True, "incomplete_reason": "user_cancel"}
 
 
-def test_timeout_raises_tool_interrupt_error_after_timeout_elapses(tmp_path: Path) -> None:
+def test_timeout_raises_tool_interrupt_error_after_timeout_elapses(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # A subagent whose background thread never finishes on its own within the test.
     context.session.subagent_tracker.register(SubagentHandle(
-        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        session=Session(make_session_config(), provider=provider, parent=context.session),
         thread=threading.Thread(target=lambda: threading.Event().wait(30)),
         cancel_event=threading.Event(), role="explorer", title="never finishes"))
 
@@ -135,13 +147,15 @@ def test_timeout_raises_tool_interrupt_error_after_timeout_elapses(tmp_path: Pat
     assert "0.3 seconds elapsed" in exc_info.value.response_body["details"]
 
 
-def test_user_message_interrupts_wait(tmp_path: Path) -> None:
+def test_user_message_interrupts_wait(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # A subagent whose background thread never finishes on its own within the test.
     context.session.subagent_tracker.register(SubagentHandle(
-        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        session=Session(make_session_config(), provider=provider, parent=context.session),
         thread=threading.Thread(target=lambda: threading.Event().wait(30)),
         cancel_event=threading.Event(), role="explorer", title="never finishes"))
 
@@ -163,13 +177,15 @@ def test_user_message_interrupts_wait(tmp_path: Path) -> None:
         "incomplete": True, "incomplete_reason": "new_message"}
 
 
-def test_timeout_works_even_when_user_msg_event_is_set(tmp_path: Path) -> None:
+def test_timeout_works_even_when_user_msg_event_is_set(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A user message set before apply() starts is cleared; the timeout still fires."""
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     context.session.subagent_tracker.register(SubagentHandle(
-        session=Session(SessionConfig(), provider=provider, parent=context.session),
+        session=Session(make_session_config(), provider=provider, parent=context.session),
         thread=threading.Thread(target=lambda: threading.Event().wait(30)),
         cancel_event=threading.Event(), role="explorer", title="never finishes"))
     # Simulate a user message being enqueued before the wait starts.
@@ -184,13 +200,13 @@ def test_timeout_works_even_when_user_msg_event_is_set(tmp_path: Path) -> None:
 
 
 def test_never_returns_a_completion_from_a_subagent_a_human_messaged_directly(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A subagent a human resumed directly (`dispatch_direct_message` on a dormant handle,
     `parent_interested=False`) must never surface through WaitForSubagent -- the parent never
     asked for that reply."""
     provider = _FakeProvider(reply_text="human-addressed reply")
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     CreateSubagentTool(context).apply({
         "role": "explorer", "session_title": "task", "initial_message": "go",
@@ -208,17 +224,17 @@ def test_never_returns_a_completion_from_a_subagent_a_human_messaged_directly(
 
 
 def test_a_direct_message_enqueued_into_a_running_parent_dispatched_turn_still_delivers(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A human steering an already-running, parent-dispatched subagent turn (`dispatch_direct_
     message`'s enqueue branch) doesn't opt the parent out of a reply it already expects --
     `parent_interested` stays `True`, and WaitForSubagent still receives it once the turn actually
     finishes."""
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     never_finishes = threading.Event()
-    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=context.session)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=context.session)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=never_finishes.wait, daemon=True),
         cancel_event=threading.Event(), role="explorer", title="task")

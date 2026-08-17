@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.scratchpad.read."""
-
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,8 +13,11 @@ from klorb.tools.scratchpad.read import ReadScratchpadTool
 from klorb.tools.setup_context import ToolSetupContext
 
 
-def _context(scratchpad_path: str, *, max_lines: int = DEFAULT_READ_FILE_MAX_LINES) -> ToolSetupContext:
-    session_config = SessionConfig()
+def _context(
+    scratchpad_path: str, make_session_config: Callable[..., SessionConfig], *,
+    max_lines: int = DEFAULT_READ_FILE_MAX_LINES
+) -> ToolSetupContext:
+    session_config = make_session_config()
     session = Session(session_config, provider=MagicMock(), scratchpad_path=scratchpad_path)
     return ToolSetupContext(
         process_config=ProcessConfig(read_file_max_lines=max_lines),
@@ -27,10 +30,12 @@ def _write_lines(path: Path, count: int) -> Path:
     return scratchpad
 
 
-def test_reads_whole_short_scratchpad_by_default(tmp_path: Path) -> None:
+def test_reads_whole_short_scratchpad_by_default(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 3)
 
-    result = ReadScratchpadTool(_context(str(scratchpad))).apply({})
+    result = ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({})
 
     assert result["start_line"] == 1
     assert result["end_line"] == 3
@@ -39,51 +44,64 @@ def test_reads_whole_short_scratchpad_by_default(tmp_path: Path) -> None:
     assert result["content"] == "1|line 1\n2|line 2\n3|line 3"
 
 
-def test_start_line_zero_means_start_at_beginning(tmp_path: Path) -> None:
+def test_start_line_zero_means_start_at_beginning(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 3)
 
-    result = ReadScratchpadTool(_context(str(scratchpad))).apply({"start_line": 0})
+    result = ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"start_line": 0})
 
     assert result["start_line"] == 1
     assert result["content"].startswith("1|line 1")
 
 
-def test_explicit_range_returns_requested_lines(tmp_path: Path) -> None:
+def test_explicit_range_returns_requested_lines(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 50)
 
-    result = ReadScratchpadTool(_context(str(scratchpad))).apply({"start_line": 5, "end_line": 16})
+    result = ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"start_line": 5,
+        "end_line": 16})
 
     assert result["start_line"] == 5
     assert result["end_line"] == 16
     assert result["content"].splitlines() == [f"{i}|line {i}" for i in range(5, 17)]
 
 
-def test_request_beyond_max_lines_is_capped(tmp_path: Path) -> None:
+def test_request_beyond_max_lines_is_capped(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 1000)
 
-    result = ReadScratchpadTool(_context(str(scratchpad))).apply({"start_line": 1, "end_line": 500})
+    result = ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"start_line": 1,
+        "end_line": 500})
 
     assert result["end_line"] == DEFAULT_READ_FILE_MAX_LINES
     assert result["truncated"] is True
 
 
-def test_negative_start_line_raises(tmp_path: Path) -> None:
+def test_negative_start_line_raises(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 3)
 
     with pytest.raises(ValueError, match="start_line must be >= 0"):
-        ReadScratchpadTool(_context(str(scratchpad))).apply({"start_line": -1})
+        ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"start_line": -1})
 
 
-def test_end_line_before_start_line_raises(tmp_path: Path) -> None:
+def test_end_line_before_start_line_raises(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 3)
 
     with pytest.raises(ValueError, match="end_line .* must be >= start_line"):
-        ReadScratchpadTool(_context(str(scratchpad))).apply({"start_line": 10, "end_line": 5})
+        ReadScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"start_line": 10,
+            "end_line": 5})
 
 
-def test_name_and_parameters(tmp_path: Path) -> None:
+def test_name_and_parameters(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
     scratchpad = _write_lines(tmp_path, 1)
-    tool = ReadScratchpadTool(_context(str(scratchpad)))
+    tool = ReadScratchpadTool(_context(str(scratchpad), make_session_config))
 
     assert tool.name() == "ReadScratchpad"
     assert tool.parameters()["required"] == []
@@ -97,23 +115,25 @@ def test_requires_active_session() -> None:
         ReadScratchpadTool(context).apply({})
 
 
-def test_summary_on_success(tmp_path: Path) -> None:
+def test_summary_on_success(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
     scratchpad = _write_lines(tmp_path, 50)
-    tool = ReadScratchpadTool(_context(str(scratchpad)))
+    tool = ReadScratchpadTool(_context(str(scratchpad), make_session_config))
     result = tool.apply({"start_line": 5, "end_line": 16})
 
     assert tool.summary({}, result) == "Read scratchpad (lines 5-16 of 50)"
 
 
-def test_summary_on_failure_includes_the_error() -> None:
-    tool = ReadScratchpadTool(_context(str(Path("/tmp") / "SCRATCHPAD.md")))
+def test_summary_on_failure_includes_the_error(make_session_config: Callable[..., SessionConfig]) -> None:
+    tool = ReadScratchpadTool(_context(str(Path("/tmp") / "SCRATCHPAD.md"), make_session_config))
 
     assert tool.summary({}, error="not found") == "Read scratchpad failed: not found"
 
 
-def test_detail_view_truncates_long_content_to_eight_lines(tmp_path: Path) -> None:
+def test_detail_view_truncates_long_content_to_eight_lines(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 50)
-    tool = ReadScratchpadTool(_context(str(scratchpad)))
+    tool = ReadScratchpadTool(_context(str(scratchpad), make_session_config))
     result = tool.apply({})
 
     detail = json.loads(tool.detail_view({}, result))
@@ -122,9 +142,11 @@ def test_detail_view_truncates_long_content_to_eight_lines(tmp_path: Path) -> No
     assert detail["result"]["total_lines"] == 50
 
 
-def test_read_preview_open_full_rereads_the_whole_scratchpad(tmp_path: Path) -> None:
+def test_read_preview_open_full_rereads_the_whole_scratchpad(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad = _write_lines(tmp_path, 10)
-    tool = ReadScratchpadTool(_context(str(scratchpad)))
+    tool = ReadScratchpadTool(_context(str(scratchpad), make_session_config))
     args: dict[str, object] = {}
 
     result = tool.apply(args)

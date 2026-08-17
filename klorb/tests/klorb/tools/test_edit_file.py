@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.edit_file."""
-
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -36,8 +36,8 @@ def _context(
         session=session)
 
 
-def _session(tmp_path: Path) -> Session:
-    config = SessionConfig(
+def _session(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> Session:
+    config = make_session_config(
         workspace=Workspace(path=tmp_path), read_dirs=DirRules(allow=[tmp_path]),
         write_dirs=DirRules(allow=[tmp_path]))
     return Session(config=config)
@@ -744,11 +744,13 @@ def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
 # --- Secret redaction (see docs/specs/secret-redaction.md) ---
 
 
-def test_edit_file_token_round_trip_preserves_the_real_secret(tmp_path: Path) -> None:
+def test_edit_file_token_round_trip_preserves_the_real_secret(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The read/edit loop: a `[[SECRET:...]]` token echoed back in EditFile's old_text/new_text
     resolves to the real secret for matching (so the edit succeeds at all), and the real secret
     -- never the literal token text -- is what ends up written to disk."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         file_path = _write(tmp_path, "creds.env", f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nfoo\n")
 
@@ -774,9 +776,11 @@ def test_edit_file_token_round_trip_preserves_the_real_secret(tmp_path: Path) ->
         session.close()
 
 
-def test_edit_file_matches_a_token_via_old_text_start_end_form(tmp_path: Path) -> None:
+def test_edit_file_matches_a_token_via_old_text_start_end_form(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """old_text_start/old_text_end also resolve a token, not just old_text."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         file_path = _write(tmp_path, "creds.env", f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
 

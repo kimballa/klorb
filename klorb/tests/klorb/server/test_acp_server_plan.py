@@ -21,6 +21,7 @@ from klorb.api_provider import ApiProvider, ProviderResponse
 from klorb.message import Message, ToolCallRequest
 from klorb.process_config import ProcessConfig
 from klorb.server import turn_bridge
+from klorb.session import SessionConfig
 from klorb.tools.tasks import todo_create, todo_update
 from klorb.tools.tasks.common import ChainlinkError, chainlink_available
 from klorb.workspace import TrustManager
@@ -159,13 +160,16 @@ class _RaisingChainlinkClient:
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture, mirroring `test_acp_server_tool_calls.py`'s own."""
     harnesses: list[AcpHarness] = []
 
-    async def _make(provider: ApiProvider | None = None) -> AcpHarness:
+    async def _make(
+        provider: ApiProvider | None = None
+    ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
-        harness = await build_acp_harness(ProcessConfig(), provider=provider, trust_manager=trust_manager)
+        harness = await build_acp_harness(ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 

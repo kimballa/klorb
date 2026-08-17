@@ -2,6 +2,7 @@
 """Tests for klorb.tui.mixins.rendering.RenderingMixin."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -34,13 +35,15 @@ def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Sess
         process_config=process_config)
 
 
-async def test_tool_call_renders_as_a_one_line_summary_by_default() -> None:
+async def test_tool_call_renders_as_a_one_line_summary_by_default(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -57,13 +60,15 @@ async def test_tool_call_renders_as_a_one_line_summary_by_default() -> None:
         assert str(tool_call_widgets[0].render()) == "echo"
 
 
-async def test_tool_call_widget_is_preceded_by_a_tool_use_label() -> None:
+async def test_tool_call_widget_is_preceded_by_a_tool_use_label(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -81,7 +86,9 @@ async def test_tool_call_widget_is_preceded_by_a_tool_use_label() -> None:
         assert str(label_widget.render()) == TOOL_USE_LABEL
 
 
-async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns() -> None:
+async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
@@ -89,7 +96,7 @@ async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns() -
         _tool_call_reply([("call_2", "echo", '{"message": "bye"}')]),
         _reply("second done"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -120,7 +127,9 @@ async def test_ctrl_o_toggles_every_tool_call_widget_including_earlier_turns() -
         assert all(str(w.render()) == "echo" for w in tool_call_widgets)
 
 
-async def test_ctrl_o_preserves_the_topmost_visible_history_element() -> None:
+async def test_ctrl_o_preserves_the_topmost_visible_history_element(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Toggling tool-call detail must not reset the view to the top of history: whichever
     element was topmost in the viewport before the toggle should still be topmost afterward,
     at the same on-screen line -- not wherever `scroll_y` happens to land once every
@@ -132,7 +141,7 @@ async def test_ctrl_o_preserves_the_topmost_visible_history_element() -> None:
         _tool_call_reply(tool_calls),
         _reply("all done"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test(size=(80, 10)) as pilot:
@@ -179,13 +188,15 @@ async def test_ctrl_o_preserves_the_topmost_visible_history_element() -> None:
         await _wait_until(pilot, lambda: _anchor_settled(pre_toggle_y))
 
 
-async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
+async def test_unregistered_tool_name_renders_via_default_formatters(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "NoSuchTool", "{}")]),
         _reply("recovered"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -201,7 +212,9 @@ async def test_unregistered_tool_name_renders_via_default_formatters() -> None:
         assert str(tool_call_widgets[0].render()).startswith("NoSuchTool: ")
 
 
-async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_response() -> None:
+async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_response(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -217,7 +230,7 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -238,7 +251,9 @@ async def test_thinking_chunks_render_as_a_labeled_italicized_block_before_the_r
         assert response_widgets[0].source == "Hello"
 
 
-async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indicator() -> None:
+async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indicator(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -258,7 +273,7 @@ async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indica
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -276,7 +291,9 @@ async def test_reasoning_details_with_encrypted_entries_renders_a_compact_indica
         assert reasoning_details_widgets[0].content == "[2 reasoning blocks preserved, 1 encrypted]"
 
 
-async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing() -> None:
+async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -293,7 +310,7 @@ async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -306,7 +323,9 @@ async def test_reasoning_details_made_only_of_plain_text_entries_renders_nothing
         assert list(history.query(".reasoning-details-body").results(Static)) == []
 
 
-async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_italicized() -> None:
+async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_italicized(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -321,7 +340,7 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -337,7 +356,9 @@ async def test_thinking_chunks_with_multiple_paragraphs_still_render_fully_itali
         assert thinking_widgets[0].content == "First paragraph.\n\nSecond paragraph."
 
 
-async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
+async def test_thinking_chunks_render_literal_brackets_verbatim(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -352,7 +373,7 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -369,6 +390,7 @@ async def test_thinking_chunks_render_literal_brackets_verbatim() -> None:
 
 async def test_edit_file_call_renders_a_colored_diff_preview_clickable_to_full_overlay(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     file_path = tmp_path / "sample.txt"
     file_path.write_text("a\nb\nc\n")
@@ -379,7 +401,7 @@ async def test_edit_file_call_renders_a_colored_diff_preview_clickable_to_full_o
         }))]),
         _reply("edited"),
     ]
-    session_config = SessionConfig(
+    session_config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
     session = _session_with_real_tools(mock_provider, session_config)
@@ -413,7 +435,9 @@ async def test_edit_file_call_renders_a_colored_diff_preview_clickable_to_full_o
         assert not isinstance(app.screen, DiffDetailScreen)
 
 
-async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(tmp_path: Path) -> None:
+async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     file_path = tmp_path / "sample.txt"
     file_path.write_text("\n".join(str(i) for i in range(1, 31)) + "\n")
     mock_provider = MagicMock()
@@ -423,7 +447,7 @@ async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(tmp_path: Path) 
         }))]),
         _reply("edited"),
     ]
-    session_config = SessionConfig(
+    session_config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
     session = _session_with_real_tools(mock_provider, session_config)
@@ -468,6 +492,7 @@ async def test_ctrl_o_shows_the_full_diff_for_an_edit_file_call(tmp_path: Path) 
 
 async def test_read_file_call_renders_a_numbered_preview_clickable_to_full_file_overlay(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     file_path = tmp_path / "sample.txt"
     file_path.write_text("\n".join(f"line {i}" for i in range(1, 11)) + "\n")
@@ -476,7 +501,7 @@ async def test_read_file_call_renders_a_numbered_preview_clickable_to_full_file_
         _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
         _reply("read"),
     ]
-    session_config = SessionConfig(
+    session_config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
     session = _session_with_real_tools(mock_provider, session_config)
@@ -509,7 +534,9 @@ async def test_read_file_call_renders_a_numbered_preview_clickable_to_full_file_
         assert not isinstance(app.screen, ReadDetailScreen)
 
 
-async def test_read_file_call_overlay_reports_an_error_if_the_file_is_gone(tmp_path: Path) -> None:
+async def test_read_file_call_overlay_reports_an_error_if_the_file_is_gone(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     file_path = tmp_path / "sample.txt"
     file_path.write_text("line 1\nline 2\n")
     mock_provider = MagicMock()
@@ -517,7 +544,7 @@ async def test_read_file_call_overlay_reports_an_error_if_the_file_is_gone(tmp_p
         _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
         _reply("read"),
     ]
-    session_config = SessionConfig(
+    session_config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
     session = _session_with_real_tools(mock_provider, session_config)
@@ -541,7 +568,9 @@ async def test_read_file_call_overlay_reports_an_error_if_the_file_is_gone(tmp_p
         assert "Could not reopen" in content_text
 
 
-async def test_detail_screen_header_label_stays_pinned_while_content_scrolls(tmp_path: Path) -> None:
+async def test_detail_screen_header_label_stays_pinned_while_content_scrolls(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     file_path = tmp_path / "sample.txt"
     file_path.write_text("\n".join(f"line {i}" for i in range(1, 201)) + "\n")
     mock_provider = MagicMock()
@@ -549,7 +578,7 @@ async def test_detail_screen_header_label_stays_pinned_while_content_scrolls(tmp
         _tool_call_reply([("call_1", "ReadFile", json.dumps({"filename": str(file_path)}))]),
         _reply("read"),
     ]
-    session_config = SessionConfig(
+    session_config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path),
         read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
     session = _session_with_real_tools(mock_provider, session_config)

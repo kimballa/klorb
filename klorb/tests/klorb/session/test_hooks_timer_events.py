@@ -6,7 +6,7 @@ entry's configured action -- see `klorb.tests.klorb.hooks.test_timer_events` for
 test_hooks_fs_and_trust_events` for the equivalent `FileSystemModified`/`WorkspaceTrustChanged`
 coverage this mirrors.
 """
-
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -28,8 +28,10 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-def _process_config(workspace_root: Path, **events: Any) -> ProcessConfig:
-    session = SessionConfig(
+def _process_config(
+    workspace_root: Path, make_session_config: Callable[..., SessionConfig], **events: Any,
+) -> ProcessConfig:
+    session = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
         write_dirs=DirRules(allow=[workspace_root]))
@@ -73,11 +75,11 @@ def _install_fake_scheduler(monkeypatch: pytest.MonkeyPatch) -> list[_FakeSchedu
 
 
 def test_fire_session_start_hook_starts_the_timer_scheduler_when_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_scheduler(monkeypatch)
     entry = TimerEventConfig(interval_minutes=10, action=HookConfig(type="chat", prompt="tick"))
-    process_config = _process_config(tmp_path, Timer=[entry])
+    process_config = _process_config(tmp_path, make_session_config, Timer=[entry])
     session = Session(process_config.session, process_config=process_config)
     try:
         session.fire_session_start_hook("NewSession")
@@ -91,10 +93,10 @@ def test_fire_session_start_hook_starts_the_timer_scheduler_when_configured(
 
 
 def test_fire_session_start_hook_does_not_start_a_scheduler_with_no_entries_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_scheduler(monkeypatch)
-    process_config = _process_config(tmp_path)
+    process_config = _process_config(tmp_path, make_session_config)
     session = Session(process_config.session, process_config=process_config)
     try:
         session.fire_session_start_hook("NewSession")
@@ -104,11 +106,11 @@ def test_fire_session_start_hook_does_not_start_a_scheduler_with_no_entries_conf
 
 
 def test_fire_session_start_hook_does_not_start_a_scheduler_for_a_subagent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     created = _install_fake_scheduler(monkeypatch)
     entry = TimerEventConfig(interval_minutes=10, action=HookConfig(type="chat", prompt="tick"))
-    process_config = _process_config(tmp_path, Timer=[entry])
+    process_config = _process_config(tmp_path, make_session_config, Timer=[entry])
     root = Session(process_config.session, process_config=process_config)
     child = Session(process_config.session.model_copy(), process_config=process_config, parent=root)
     try:
@@ -122,7 +124,9 @@ def test_fire_session_start_hook_does_not_start_a_scheduler_for_a_subagent(
 # --- _dispatch_timer_event ---
 
 
-def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> None:
+def test_dispatch_timer_event_delivers_the_actions_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Delivered via `deliver_event_message`'s "a turn is already in flight" branch -- the only
     one that can render anywhere without a live host (see "Available events" in
     docs/specs/hooks-and-events.md); the idle branch raises `ChainedHookMessageUndeliverableError`
@@ -130,7 +134,7 @@ def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> No
     test_deliver_event_message_raises_when_idle`."""
     entry = TimerEventConfig(
         interval_minutes=10, action=HookConfig(type="bash", shell='echo \'{"message": "tick"}\''))
-    process_config = _process_config(tmp_path, Timer=[entry])
+    process_config = _process_config(tmp_path, make_session_config, Timer=[entry])
     provider = MagicMock()
     session = Session(process_config.session, provider=provider, process_config=process_config)
     session._current_turn_handlers = TurnEventHandlers()
@@ -145,7 +149,9 @@ def test_dispatch_timer_event_delivers_the_actions_message(tmp_path: Path) -> No
     assert drained == [QueuedMessage(message_text="tick", origin="event")]
 
 
-def test_dispatch_timer_event_reset_session_resets_and_wakes_the_host(tmp_path: Path) -> None:
+def test_dispatch_timer_event_reset_session_resets_and_wakes_the_host(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `reset_session` result wipes the conversation in place (same `id`) and delivers its
     `message` via `deliver_event_message` like an ordinary event message -- which, while idle,
     means enqueuing and pinging the registered wake handler (see `Session._deliver_or_reset_event`,
@@ -155,7 +161,7 @@ def test_dispatch_timer_event_reset_session_resets_and_wakes_the_host(tmp_path: 
         interval_minutes=10,
         action=HookConfig(
             type="bash", shell='echo \'{"message": "fresh start", "reset_session": true}\''))
-    process_config = _process_config(tmp_path, Timer=[entry])
+    process_config = _process_config(tmp_path, make_session_config, Timer=[entry])
     provider = MagicMock()
     session = Session(process_config.session, provider=provider, process_config=process_config)
     session.append_system_note("stale conversation")

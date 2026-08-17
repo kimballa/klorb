@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.status_bar.StatusBarMixin."""
-
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,11 +27,13 @@ from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.status_widgets import PALETTE_HINT_TEXT, PermissionBadge
 
 
-async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount() -> None:
+async def test_status_bar_shows_zero_tokens_against_model_context_window_on_mount(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -40,12 +42,14 @@ async def test_status_bar_shows_zero_tokens_against_model_context_window_on_moun
         assert status_bar.content == "\u2191 0 / 8k"
 
 
-async def test_status_bar_updates_after_a_turn_completes() -> None:
+async def test_status_bar_updates_after_a_turn_completes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -60,7 +64,9 @@ async def test_status_bar_updates_after_a_turn_completes() -> None:
         assert status_bar.content == f"\u2191 {format_token_count(session.total_tokens_used())} / 8k"
 
 
-async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None:
+async def test_status_bar_updates_mid_stream_before_the_turn_completes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The footer's token tally must track each incoming chunk, not just settle once the
     whole turn is done.
     """
@@ -88,7 +94,7 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
     mock_provider.send_prompt.side_effect = fake_send_prompt
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -116,20 +122,24 @@ async def test_status_bar_updates_mid_stream_before_the_turn_completes() -> None
         assert session.total_tokens_used() > mid_stream_total
 
 
-async def test_status_bar_omits_limit_when_model_unregistered() -> None:
+async def test_status_bar_omits_limit_when_model_unregistered(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         status_bar = app.query_one(f"#{STATUS_BAR_ID}", Static)
         assert status_bar.content == "\u2191 0"
 
 
-async def test_output_tokens_widget_shows_zero_on_mount() -> None:
+async def test_output_tokens_widget_shows_zero_on_mount(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -138,12 +148,14 @@ async def test_output_tokens_widget_shows_zero_on_mount() -> None:
         assert output_tokens.content == "\u2193 0"
 
 
-async def test_output_tokens_widget_updates_after_a_turn_completes() -> None:
+async def test_output_tokens_widget_updates_after_a_turn_completes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -158,7 +170,9 @@ async def test_output_tokens_widget_updates_after_a_turn_completes() -> None:
         assert output_tokens.content == f"\u2193 {format_token_count(session.total_output_tokens_used())}"
 
 
-async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes() -> None:
+async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     first_chunk_rendered = threading.Event()
     release_second_chunk = threading.Event()
@@ -178,7 +192,7 @@ async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes
     mock_provider.send_prompt.side_effect = fake_send_prompt
     registry = sample_model_registry()
     session = Session(
-        SessionConfig(model="alpha"), provider=mock_provider, model_registry=registry,
+        make_session_config(model="alpha"), provider=mock_provider, model_registry=registry,
         session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -200,9 +214,11 @@ async def test_output_tokens_widget_updates_mid_stream_before_the_turn_completes
         assert output_tokens.content == f"\u2193 {format_token_count(session.total_output_tokens_used())}"
 
 
-async def test_permission_badge_shows_the_session_permission_framework() -> None:
+async def test_permission_badge_shows_the_session_permission_framework(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     config.permission_framework = "auto"
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
@@ -212,23 +228,25 @@ async def test_permission_badge_shows_the_session_permission_framework() -> None
         assert str(badge.render()) == "[auto]"
 
 
-async def test_permission_badge_defaults_to_ask() -> None:
+async def test_permission_badge_defaults_to_ask(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         badge = app.query_one(f"#{PERMISSION_BADGE_ID}", PermissionBadge)
         assert str(badge.render()) == "[ask]"
 
 
-async def test_shift_tab_cycles_permission_framework() -> None:
+async def test_shift_tab_cycles_permission_framework(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Wraps every read of `permission_framework` in `str(...)` -- comparing the same
     `Literal["ask", "auto", "deny"]`-typed attribute against several different literals in
     sequence, with no reassignment mypy can see in between (it happens inside `ReplApp`'s
     key handling), would otherwise have mypy narrow the attribute to the first-asserted
     literal and flag every later assertion as unreachable."""
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -250,7 +268,9 @@ async def test_shift_tab_cycles_permission_framework() -> None:
         assert str(session.config.permission_framework) == "ask"
 
 
-async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disabled() -> None:
+async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Shift+Tab must keep cycling `permission_framework` while `PromptInput` is disabled and
     blurred -- e.g. during an in-flight turn (see `PromptSubmissionMixin._send_prompt`) -- since
     that's exactly when a user is most likely to want to flip it (e.g. to `"auto"` so an
@@ -268,7 +288,7 @@ async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disab
         return _reply()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -291,11 +311,13 @@ async def test_shift_tab_cycles_permission_framework_while_prompt_input_is_disab
         await pilot.pause()
 
 
-async def test_clicking_permission_badge_cycles_permission_framework() -> None:
+async def test_clicking_permission_badge_cycles_permission_framework(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A mouse click on the badge advances the framework the same way Shift+Tab does (see
     `PermissionBadge.Clicked` / `on_permission_badge_clicked`)."""
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -312,8 +334,10 @@ async def test_clicking_permission_badge_cycles_permission_framework() -> None:
         assert str(session.config.permission_framework) == "deny"
 
 
-async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_palette_hint_shown_only_while_the_box_is_empty_or_bare_gt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         hint = app.query_one(f"#{PALETTE_HINT_ID}", Static)

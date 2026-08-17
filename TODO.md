@@ -20,15 +20,6 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* The Session instances across all unit tests should be initialized thru the make_session_config()
-  factory fixture. Once all sites are migrated, we can use this to enforce default values for testing
-  that are distinct from the true defaults. For example, setting the enable_workspace_indexer to
-  False, so we don't have to do something tricky to enforce that across tests, like we do today. (we
-  currently use a tmpdir for where it thinks the model should be, so it can't load it.)
-  * Once migrated, find other places where we're using a tmpdir-hiding trick, or a monkeypatch'd
-    function, to override default behavior; if we can satisfy the same overrides just by enforcing
-    a non-default setting value, let's just do that instead.
-
 ### Feature backlog
 
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
@@ -50,6 +41,18 @@
   (credential extraction attempt).
 
 * New Subagent roles:
+  * pair_programmer -- a subagent that works closely alongside the main Operator while doing a large task.
+    The two agents can pass messages/responses back and forth for a conversation about the design, and once
+    they both agree on the design, they can move forward with the work
+    * the pair programmer should use an inotify / FileChanged Event hook to get updates on all the files
+      being edited by the primary Operator. It should do reviews in real time as the edits are happening,
+      to provide feedback as it goes. The Pairer should feel at libery to explore other files near the
+      site of the change to give better feedback. It should be doing code reviews as it goes.
+    * We need the ability to enable the FileChanged event handler only for a specific subagent, perhaps
+      as part of a particular skill that it activates.
+    * If the main Operator isn't expecting further communication with the subagent, subagent message
+      output in response to FileChanged isn't going to make it back to the Operator. It needs a
+      `MessageAgent()` tool that will force the message into its context.
   * project_manager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're
@@ -118,6 +121,31 @@
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)
 
 * Context auto-compaction
+
+Create another catalog in the vector database for skills. Like the existing catalogs, it's in the same
+single "store" (sqlite3 database) as the rest of them. This will contain all the skills visible
+to the workspace--including skills that are baked into the harness ("internal" namespace) or in the
+"user" namespace. Much like how global-namespace memories are indexed, we make up a "close enough"
+filename to store as the filename element within the database table to adapt the "foreign" directories
+into the ontology needed by the vector db.
+
+Also like global memories and workspace trust, we don't start the indexer in an untrusted workspace
+so we won't get semantic search over skills in an untrusted workspace. this is an acceptable tradeoff.
+
+When the harness starts up, we re-scan the skill namespace roots (for user namespace and internal
+namespace as well as .klorb/skills/ within the workspace.)
+
+The "internal" namespace is not actually visible as a filesystem -- we will need to adapt the iterator
+mechanism to be able to iterate over elements in the 'klorb.resources' package and read the contents
+in a filesystem-ish-like way without actually using `open()`.
+
+We index all the markdown files within a skill, not just SKILL.md itself. Skills may have subdirs
+like `resources/` and we descend into those and index markdown files we find in there too.
+
+Then create a SearchSkills tool.
+
+* This has `SkillSearch` as an alias
+* This takes a `queries` argument
 
 * Vector database indexing of skills for fuzzier search (see docs/specs/local-search-index.md's
   "Out of scope" -- the workspace and memories catalogs are already built; `chunk.py`/

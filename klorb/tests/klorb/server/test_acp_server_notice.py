@@ -13,6 +13,7 @@ from server.acp_harness import AcpHarness, build_acp_harness
 
 from klorb.hooks.config import HookConfig
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.workspace import TrustManager
 
 
@@ -22,7 +23,7 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     harnesses: list[AcpHarness] = []
 
     async def _make(process_config: ProcessConfig) -> AcpHarness:

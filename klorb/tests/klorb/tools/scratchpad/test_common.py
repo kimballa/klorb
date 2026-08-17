@@ -125,8 +125,10 @@ def test_cleanup_is_idempotent() -> None:
     scratchpad.cleanup()  # must not raise
 
 
-def test_session_close_cleans_up_a_freshly_created_scratchpad() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_session_close_cleans_up_a_freshly_created_scratchpad(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
     scratchpad_dir = session.scratchpad.path.parent
 
     session.close()
@@ -134,10 +136,12 @@ def test_session_close_cleans_up_a_freshly_created_scratchpad() -> None:
     assert not scratchpad_dir.exists()
 
 
-def test_session_close_does_not_remove_a_reused_scratchpad(tmp_path: Path) -> None:
+def test_session_close_does_not_remove_a_reused_scratchpad(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     shared = tmp_path / "team-scratchpad.md"
     shared.write_text("existing notes\n")
-    session = Session(SessionConfig(), provider=MagicMock(), scratchpad_path=str(shared))
+    session = Session(make_session_config(), provider=MagicMock(), scratchpad_path=str(shared))
 
     session.close()
 
@@ -145,10 +149,12 @@ def test_session_close_does_not_remove_a_reused_scratchpad(tmp_path: Path) -> No
     assert shared.read_text() == "existing notes\n"
 
 
-def test_scratchpad_path_helper_returns_the_session_scratchpad(tmp_path: Path) -> None:
+def test_scratchpad_path_helper_returns_the_session_scratchpad(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     scratchpad_file = tmp_path / "SCRATCHPAD.md"
     scratchpad_file.write_text("")
-    session_config = SessionConfig()
+    session_config = make_session_config()
     session = Session(session_config, provider=MagicMock(), scratchpad_path=str(scratchpad_file))
     context = ToolSetupContext(
         process_config=ProcessConfig(), session_config=session_config, session=session)

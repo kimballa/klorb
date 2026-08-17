@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.semantic_search."""
-
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -15,9 +15,11 @@ from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
 
-def _context_with_session(workspace_root: Path) -> tuple[Session, ToolSetupContext]:
+def _context_with_session(
+    workspace_root: Path, make_session_config: Callable[..., SessionConfig]
+) -> tuple[Session, ToolSetupContext]:
     """A `ToolSetupContext` backed by a real `Session`. Caller must `session.close()` when done."""
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=workspace_root), read_dirs=DirRules(), write_dirs=DirRules())
     session = Session(config=session_config)
     context = ToolSetupContext(
@@ -68,10 +70,12 @@ def _chunk(source_path: str, kind: ChunkKind, start_line: int, end_line: int, te
         start_line=start_line, end_line=end_line, text=text)
 
 
-def test_returns_a_file_entry_for_a_chunk_hit(tmp_path: Path) -> None:
+def test_returns_a_file_entry_for_a_chunk_hit(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
     chunk = _chunk("sub/nested.py", "function", 1, 2, "def hello():\n    return 'hello again'")
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         [(chunk, 0.5)])
     try:
@@ -88,14 +92,16 @@ def test_returns_a_file_entry_for_a_chunk_hit(tmp_path: Path) -> None:
     assert [line_number for line_number, _text, matched in parsed if matched] == [1, 2]
 
 
-def test_merges_multiple_chunks_from_the_same_file(tmp_path: Path) -> None:
+def test_merges_multiple_chunks_from_the_same_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
     (tmp_path / "sub" / "many.py").write_text("def a():\n    pass\ndef b():\n    pass\n")
     chunks = [
         (_chunk("sub/many.py", "function", 1, 2, "def a():\n    pass"), 0.9),
         (_chunk("sub/many.py", "function", 3, 4, "def b():\n    pass"), 0.7),
     ]
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         chunks)
     try:
@@ -110,10 +116,10 @@ def test_merges_multiple_chunks_from_the_same_file(tmp_path: Path) -> None:
     assert [line_number for line_number, _text, matched in parsed if matched] == [1, 2, 3, 4]
 
 
-def test_respects_path_scope(tmp_path: Path) -> None:
+def test_respects_path_scope(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
     _make_tree(tmp_path)
     out_of_scope_chunk = _chunk("top.py", "toplevel", 1, 2, "import os\nprint('hello world')")
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         [(out_of_scope_chunk, 0.5)])
     try:
@@ -125,10 +131,10 @@ def test_respects_path_scope(tmp_path: Path) -> None:
     assert "top.py" not in _matched_filenames(result)
 
 
-def test_respects_file_glob(tmp_path: Path) -> None:
+def test_respects_file_glob(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
     _make_tree(tmp_path)
     txt_chunk = _chunk("sub/notes.txt", "window", 1, 1, "hello from notes")
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         [(txt_chunk, 0.5)])
     try:
@@ -140,9 +146,11 @@ def test_respects_file_glob(tmp_path: Path) -> None:
     assert "notes.txt" not in _matched_filenames(result)
 
 
-def test_without_a_workspace_indexer_raises_tool_call_error(tmp_path: Path) -> None:
+def test_without_a_workspace_indexer_raises_tool_call_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     assert session.workspace_indexer is None
     try:
         with pytest.raises(ToolCallError, match="search index"):
@@ -151,7 +159,9 @@ def test_without_a_workspace_indexer_raises_tool_call_error(tmp_path: Path) -> N
         session.close()
 
 
-def test_top_k_caps_returned_chunks(tmp_path: Path) -> None:
+def test_top_k_caps_returned_chunks(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
     (tmp_path / "sub" / "many.py").write_text(
         "\n".join(f"def fn_{i}():\n    return {i}" for i in range(20)))
@@ -160,7 +170,7 @@ def test_top_k_caps_returned_chunks(tmp_path: Path) -> None:
          1.0 - i * 0.01)
         for i in range(20)
     ]
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         chunks)
     try:
@@ -177,13 +187,15 @@ def test_top_k_caps_returned_chunks(tmp_path: Path) -> None:
     assert result["truncated"] is True
 
 
-def test_list_files_output_style_returns_deduplicated_filenames(tmp_path: Path) -> None:
+def test_list_files_output_style_returns_deduplicated_filenames(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
     chunks = [
         (_chunk("sub/nested.py", "function", 1, 1, "def hello():"), 0.9),
         (_chunk("sub/nested.py", "function", 2, 2, "    return 'hello again'"), 0.8),
     ]
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
         chunks)
     try:
@@ -196,8 +208,10 @@ def test_list_files_output_style_returns_deduplicated_filenames(tmp_path: Path) 
     assert result["files"][0].endswith("nested.py")
 
 
-def test_invalid_output_style_raises_value_error(tmp_path: Path) -> None:
-    session, context = _context_with_session(tmp_path)
+def test_invalid_output_style_raises_value_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer([])  # type: ignore[assignment]
     try:
         with pytest.raises(ValueError, match="outputStyle"):
@@ -207,8 +221,10 @@ def test_invalid_output_style_raises_value_error(tmp_path: Path) -> None:
         session.close()
 
 
-def test_empty_queries_raises_value_error(tmp_path: Path) -> None:
-    session, context = _context_with_session(tmp_path)
+def test_empty_queries_raises_value_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session, context = _context_with_session(tmp_path, make_session_config)
     session._workspace_indexer = _FakeWorkspaceIndexer([])  # type: ignore[assignment]
     try:
         with pytest.raises(ValueError, match="queries"):

@@ -55,7 +55,7 @@ def _allow_once(option_id: str = "allow:once") -> RequestPermissionResponse:
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture, mirroring the other `server/` test modules' own: `await make_harness(
     provider=..., process_config=...)` returns a running `AcpHarness` wired to an isolated
     `TrustManager`, closed automatically at teardown if the test hasn't already closed it."""
@@ -66,7 +66,8 @@ async def make_harness(tmp_path: Path):
     ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
         harness = await build_acp_harness(
-            process_config or ProcessConfig(), provider=provider, trust_manager=trust_manager)
+            process_config or ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 
@@ -229,11 +230,12 @@ async def test_escalate_privileges_ask_maps_decision_both_ways(
 
 async def test_tool_call_limit_with_capability_advertised_asks_and_continues(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "f.txt").write_text("hi\n")
-    process_config = ProcessConfig(session=SessionConfig(max_tool_calls_per_turn=1))
+    process_config = ProcessConfig(session=make_session_config(max_tool_calls_per_turn=1))
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([
@@ -268,11 +270,12 @@ async def test_tool_call_limit_with_capability_advertised_asks_and_continues(
 
 async def test_tool_call_limit_without_capability_fails_the_turn_and_never_asks(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "f.txt").write_text("hi\n")
-    process_config = ProcessConfig(session=SessionConfig(max_tool_calls_per_turn=1))
+    process_config = ProcessConfig(session=make_session_config(max_tool_calls_per_turn=1))
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([

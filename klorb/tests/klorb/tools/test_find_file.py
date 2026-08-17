@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.find_file."""
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -192,12 +192,14 @@ def test_use_gitignore_false_includes_ignored_matches(tmp_path: Path) -> None:
     assert "note" not in result
 
 
-def test_find_file_is_interrupted_by_the_turn_cancel_event(tmp_path: Path) -> None:
+def test_find_file_is_interrupted_by_the_turn_cancel_event(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """An already-set `Session.active_cancel_event` (a Ctrl+C/Escape interrupt) stops the search
     at the first directory and reports `cancelled: True` rather than walking the whole tree —
     see `InterruptibleTool`."""
     _make_tree(tmp_path)
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=tmp_path), read_dirs=DirRules(), write_dirs=DirRules())
     session = Session(config=session_config)
     try:

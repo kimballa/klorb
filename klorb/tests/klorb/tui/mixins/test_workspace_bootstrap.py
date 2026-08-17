@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin."""
-
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -63,9 +63,11 @@ def _save_session(
     return subdir
 
 
-async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -> None:
+async def test_trusting_a_workspace_refreshes_the_header_title(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    config = SessionConfig(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -78,7 +80,9 @@ async def test_trusting_a_workspace_refreshes_the_header_title(tmp_path: Path) -
         assert "(Untrusted)" not in app.format_title(app.title, app.sub_title).plain
 
 
-async def test_trusting_a_workspace_reloads_the_skill_catalog(tmp_path: Path) -> None:
+async def test_trusting_a_workspace_reloads_the_skill_catalog(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A workspace-tier skill invisible to the session's catalog while untrusted becomes
     resolvable immediately after `_apply_workspace_config()` applies a newly-trusted workspace,
     rather than staying invisible until an explicit `>Reload skills`."""
@@ -87,7 +91,7 @@ async def test_trusting_a_workspace_reloads_the_skill_catalog(tmp_path: Path) ->
     (skill_dir / "SKILL.md").write_text("---\ndescription: d\n---\n")
 
     mock_provider = MagicMock()
-    config = SessionConfig(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=tmp_path, trusted=False))
     session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
     app = ReplApp(session=session)
 
@@ -105,10 +109,12 @@ async def test_trusting_a_workspace_reloads_the_skill_catalog(tmp_path: Path) ->
         assert session.skill_catalog_registry.canonical().get(("workspace", "my-skill")) is not None
 
 
-async def test_registered_trusted_workspace_announces_and_shows_no_modal(tmp_path: Path) -> None:
+async def test_registered_trusted_workspace_announces_and_shows_no_modal(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -116,10 +122,12 @@ async def test_registered_trusted_workspace_announces_and_shows_no_modal(tmp_pat
         assert f"Working in project: {tmp_path}" in _notice_texts(app)
 
 
-async def test_registered_untrusted_workspace_announces_not_trusted_with_no_modal(tmp_path: Path) -> None:
+async def test_registered_untrusted_workspace_announces_not_trusted_with_no_modal(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -132,12 +140,13 @@ async def test_registered_untrusted_workspace_announces_not_trusted_with_no_moda
 
 async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=project_root)
-    app = _repl_app_for_workspace(workspace, trust_manager, model="burned/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="burned/model")
 
     async with app.run_test() as pilot:
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
@@ -165,7 +174,9 @@ async def test_bootstrap_open_as_project_and_trust_registers_and_writes_config(
     assert session_defaults["writeDirs"]["allow"] == [str(project_root)]
 
 
-async def test_bootstrap_keeps_an_existing_project_config_file(tmp_path: Path) -> None:
+async def test_bootstrap_keeps_an_existing_project_config_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A workspace that already ships its own `.klorb/klorb-config.json` (e.g. a downloaded
     repository) must not have it clobbered with the starter template when the user opens it
     as a project and trusts it."""
@@ -174,7 +185,7 @@ async def test_bootstrap_keeps_an_existing_project_config_file(tmp_path: Path) -
     write_initial_project_config(project_root, "shipped/model", trusted=True)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=project_root)
-    app = _repl_app_for_workspace(workspace, trust_manager, model="burned/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="burned/model")
 
     async with app.run_test() as pilot:
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
@@ -199,12 +210,14 @@ async def test_bootstrap_keeps_an_existing_project_config_file(tmp_path: Path) -
     assert raw[SESSION_DEFAULTS_KEY]["model"] == "shipped/model"
 
 
-async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Path) -> None:
+async def test_confirm_screen_arrow_keys_move_focus_between_buttons(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=project_root)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
@@ -222,12 +235,13 @@ async def test_confirm_screen_arrow_keys_move_focus_between_buttons(tmp_path: Pa
 
 async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=project_root)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
@@ -249,10 +263,11 @@ async def test_bootstrap_declining_project_but_trusting_keeps_it_in_memory_only(
 
 async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=tmp_path)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await _wait_until(pilot, lambda: len(app.screen_stack) == 2)
@@ -273,11 +288,12 @@ async def test_bootstrap_declining_both_stays_unregistered_and_untrusted(
 
 async def test_trust_workspace_command_persists_and_offers_config_init(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -312,11 +328,12 @@ async def test_trust_workspace_command_persists_and_offers_config_init(
 
 async def test_trust_workspace_command_declining_config_init_leaves_no_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -344,6 +361,7 @@ async def test_trust_workspace_command_declining_config_init_leaves_no_file(
 
 async def test_trust_workspace_for_non_project_workspace_skips_config_init_prompt(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A non-project (never registered) workspace can only reach "already resolved, untrusted"
     mid-session -- a fresh mount always treats `workspace.id is None` as "never resolved" and
@@ -354,7 +372,7 @@ async def test_trust_workspace_for_non_project_workspace_skips_config_init_promp
     """
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=tmp_path, is_project=False, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager=None)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager=None)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -371,12 +389,14 @@ async def test_trust_workspace_for_non_project_workspace_skips_config_init_promp
     assert not project_config_path(tmp_path).is_file()
 
 
-async def test_quit_never_pushes_a_modal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_quit_never_pushes_a_modal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Quitting no longer asks whether to save — see docs/specs/session-persistence.md."""
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
     app._session.load_messages([_sample_message("hi")])
     app._session.claim_session_directory()
 
@@ -394,11 +414,12 @@ async def test_quit_never_pushes_a_modal(tmp_path: Path, monkeypatch: pytest.Mon
 
 async def test_quit_persists_session_unconditionally_for_trusted_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager, model="save/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="save/model")
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -422,11 +443,12 @@ async def test_quit_persists_session_unconditionally_for_trusted_workspace(
 
 async def test_quit_releases_the_session_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -447,6 +469,7 @@ async def test_quit_releases_the_session_lock(
 
 async def test_quit_skips_persisting_a_session_with_no_messages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A session that never had a turn submitted (hence never claimed a `sessions/<subdir>/`
     directory -- see `Session.claim_session_directory`, only ever called from `send_turn()`)
@@ -454,7 +477,7 @@ async def test_quit_skips_persisting_a_session_with_no_messages(
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -472,11 +495,12 @@ async def test_quit_skips_persisting_a_session_with_no_messages(
 
 async def test_quit_skips_persisting_for_untrusted_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -494,16 +518,17 @@ async def test_quit_skips_persisting_for_untrusted_workspace(
 
 async def test_restores_previous_session_config_and_messages_on_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     _save_session(
-        workspace, SessionConfig(model="restored/model", workspace=workspace),
+        workspace, make_session_config(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user"),
          _sample_message("earlier reply", "assistant")])
 
-    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="fresh/model")
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -519,6 +544,7 @@ async def test_restores_previous_session_config_and_messages_on_startup(
 
 async def test_new_flag_skips_restoring_previous_session_on_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """`klorb --new` (`ReplApp(skip_session_restore=True)`) must start blank even for a trusted
     workspace with a saved session on disk -- see docs/specs/session-persistence.md."""
@@ -526,11 +552,11 @@ async def test_new_flag_skips_restoring_previous_session_on_startup(
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     _save_session(
-        workspace, SessionConfig(model="restored/model", workspace=workspace),
+        workspace, make_session_config(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user")])
 
     app = _repl_app_for_workspace(
-        workspace, trust_manager, model="fresh/model", skip_session_restore=True)
+        workspace, make_session_config, trust_manager, model="fresh/model", skip_session_restore=True)
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -541,11 +567,12 @@ async def test_new_flag_skips_restoring_previous_session_on_startup(
 
 async def test_restore_skipped_when_no_saved_session_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="fresh/model")
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -555,6 +582,7 @@ async def test_restore_skipped_when_no_saved_session_exists(
 
 async def test_restores_tool_call_history_as_a_tool_call_widget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
@@ -566,9 +594,9 @@ async def test_restores_tool_call_history_as_a_tool_call_widget(
     tool_response = Message(
         content="42", role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
-    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+    _save_session(workspace, make_session_config(workspace=workspace), [tool_use, tool_response])
 
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
     async with app.run_test() as pilot:
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -577,6 +605,7 @@ async def test_restores_tool_call_history_as_a_tool_call_widget(
 
 async def test_restores_tool_call_history_from_a_structured_response_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `tool_response.content` saved as a `klorb.tools.response_envelope.
     ToolResponseEnvelope`'s wire JSON (`Session._run_tool_calls`'s persisted shape) restores the
@@ -596,9 +625,9 @@ async def test_restores_tool_call_history_from_a_structured_response_envelope(
     tool_response = Message(
         content=envelope_content, role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
-    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+    _save_session(workspace, make_session_config(workspace=workspace), [tool_use, tool_response])
 
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
     async with app.run_test() as pilot:
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -607,6 +636,7 @@ async def test_restores_tool_call_history_from_a_structured_response_envelope(
 
 async def test_restores_a_tool_use_messages_own_commentary_alongside_its_tool_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `role="tool_use"` message can carry its own non-empty `content` alongside the tool calls
     it requested -- e.g. the model's final answer, if that arrived in the same round as its last
@@ -623,9 +653,9 @@ async def test_restores_a_tool_use_messages_own_commentary_alongside_its_tool_ca
     tool_response = Message(
         content="42", role="tool_response", num_tokens=1, processing_state="complete",
         timestamp=datetime(2026, 7, 12, 0, 0, 1), tool_call_id="call-1")
-    _save_session(workspace, SessionConfig(workspace=workspace), [tool_use, tool_response])
+    _save_session(workspace, make_session_config(workspace=workspace), [tool_use, tool_response])
 
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
     async with app.run_test() as pilot:
         await pilot.pause()
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -636,18 +666,19 @@ async def test_restores_a_tool_use_messages_own_commentary_alongside_its_tool_ca
 
 async def test_restore_restores_session_id_and_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     _save_session(
         workspace,
-        SessionConfig(model="restored/model", workspace=workspace),
+        make_session_config(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user")],
         session_id="2026-07-19-01-50-fix-auth",
         session_name="Fix auth token refresh bug")
 
-    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="fresh/model")
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -661,6 +692,7 @@ async def test_restore_restores_session_id_and_name(
 
 async def test_restore_without_name_keeps_naming_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
@@ -668,10 +700,10 @@ async def test_restore_without_name_keeps_naming_pending(
     # Write a session without session_name (simulates an older save format).
     _save_session(
         workspace,
-        SessionConfig(model="restored/model", workspace=workspace),
+        make_session_config(model="restored/model", workspace=workspace),
         [_sample_message("earlier prompt", "user")])
 
-    app = _repl_app_for_workspace(workspace, trust_manager, model="fresh/model")
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager, model="fresh/model")
     async with app.run_test() as pilot:
         await pilot.pause()
 
@@ -707,6 +739,7 @@ def test_workspace_auto_allowed_skills_returns_empty_when_no_config(tmp_path: Pa
 
 async def test_bootstrap_trust_prompt_lists_auto_allowed_workspace_skills(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -721,7 +754,7 @@ async def test_bootstrap_trust_prompt_lists_auto_allowed_workspace_skills(
 
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = Workspace(path=project_root)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         # First screen: "Open as a project?"
@@ -743,6 +776,7 @@ async def test_bootstrap_trust_prompt_lists_auto_allowed_workspace_skills(
 
 async def test_trust_workspace_command_prompt_lists_auto_allowed_workspace_skills(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     _isolated_data_dir(tmp_path, monkeypatch)
     config_path = project_config_path(tmp_path)
@@ -756,7 +790,7 @@ async def test_trust_workspace_command_prompt_lists_auto_allowed_workspace_skill
 
     trust_manager = TrustManager(path=tmp_path / "data" / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=False)
-    app = _repl_app_for_workspace(workspace, trust_manager)
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
 
     async with app.run_test() as pilot:
         await pilot.pause()

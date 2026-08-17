@@ -4,8 +4,8 @@ in `klorb.session.mixins.turns._dispatch_turn` (root session only), `onToolUse`/
 in `klorb.session.mixins.tool_execution._run_tool_calls`, and the `Session.
 _deliver_chained_hook_message`/`max_chained_hook_turns` chained-turn safety cap a `chat`
 handler relies on."""
-
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -30,8 +30,11 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 
-def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) -> ProcessConfig:
-    session = SessionConfig(
+def _process_config(
+    workspace_root: Path, make_session_config: Callable[..., SessionConfig],
+    hooks: dict[str, list[HookConfig]],
+) -> ProcessConfig:
+    session = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
         write_dirs=DirRules(allow=[workspace_root]))
@@ -58,8 +61,10 @@ def _tool_call_reply(call_id: str, tool_name: str, arguments: str) -> ProviderRe
 # --- onSubmitUserPrompt ---
 
 
-def test_onsubmituserprompt_rewrites_the_user_message(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onsubmituserprompt_rewrites_the_user_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onSubmitUserPrompt": [HookConfig(type="bash", shell='echo \'{"message": "rewritten"}\'')],
     })
     provider = MagicMock()
@@ -73,8 +78,10 @@ def test_onsubmituserprompt_rewrites_the_user_message(tmp_path: Path) -> None:
     assert user_message.num_tokens == estimate_tokens("rewritten")
 
 
-def test_onsubmituserprompt_denial_raises_and_marks_the_user_message_as_errored(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onsubmituserprompt_denial_raises_and_marks_the_user_message_as_errored(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onSubmitUserPrompt": [
             HookConfig(type="bash", shell='echo \'{"success": false, "message": "blocked by policy"}\''),
         ],
@@ -92,11 +99,13 @@ def test_onsubmituserprompt_denial_raises_and_marks_the_user_message_as_errored(
     provider.send_prompt.assert_not_called()
 
 
-def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> None:
+def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`onSubmitUserPrompt` fires for the root session only -- a subagent's own turn goes
     through the exact same `_dispatch_turn`, so this proves the `self.parent is None` guard,
     not just that the hook exists."""
-    process_config = _process_config(tmp_path, {
+    process_config = _process_config(tmp_path, make_session_config, {
         "onSubmitUserPrompt": [HookConfig(type="bash", shell='echo \'{"message": "rewritten"}\'')],
     })
     provider = MagicMock()
@@ -115,8 +124,10 @@ def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> Non
 # --- onAgentTurnEnd / _deliver_chained_hook_message / max_chained_hook_turns ---
 
 
-def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
     provider = MagicMock()
@@ -134,8 +145,10 @@ def test_onagentturnend_chat_handler_chains_turns_until_the_cap_trips(tmp_path: 
     assert user_messages[1:] == ["keep going"] * 5
 
 
-def test_max_chained_hook_turns_zero_disables_chaining(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_max_chained_hook_turns_zero_disables_chaining(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
     process_config.session.max_chained_hook_turns = 0
@@ -148,8 +161,10 @@ def test_max_chained_hook_turns_zero_disables_chaining(tmp_path: Path) -> None:
     assert provider.send_prompt.call_count == 1
 
 
-def test_max_chained_hook_turns_negative_means_unlimited(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_max_chained_hook_turns_negative_means_unlimited(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [
             HookConfig(
                 type="chat", prompt="keep going",
@@ -170,8 +185,10 @@ def test_max_chained_hook_turns_negative_means_unlimited(tmp_path: Path) -> None
     assert provider.send_prompt.call_count == 8
 
 
-def test_aborted_turn_resets_the_chained_hook_counter(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_aborted_turn_resets_the_chained_hook_counter(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
     provider = MagicMock()
@@ -191,8 +208,10 @@ def test_aborted_turn_resets_the_chained_hook_counter(tmp_path: Path) -> None:
     assert provider.send_prompt.call_count == 3 + 6
 
 
-def test_onagentturnend_reset_session_resets_the_conversation_in_place(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onagentturnend_reset_session_resets_the_conversation_in_place(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [
             HookConfig(
                 type="bash",
@@ -222,10 +241,10 @@ def test_onagentturnend_reset_session_resets_the_conversation_in_place(tmp_path:
 
 
 def test_onagentturnend_reset_session_also_fires_onsessionend_with_resetsession_event(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     output_path = tmp_path / "output.json"
-    process_config = _process_config(tmp_path, {
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [
             HookConfig(
                 type="bash",
@@ -252,8 +271,10 @@ def test_onagentturnend_reset_session_also_fires_onsessionend_with_resetsession_
     assert data["reason"] == "ResetSession"
 
 
-def test_onagentturnend_reset_session_without_a_message_is_ignored(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onagentturnend_reset_session_without_a_message_is_ignored(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [
             HookConfig(type="bash", shell='echo \'{"reset_session": true}\''),
         ],
@@ -272,8 +293,10 @@ def test_onagentturnend_reset_session_without_a_message_is_ignored(tmp_path: Pat
     assert user_messages[0].endswith("go")
 
 
-def test_onagentturnend_is_a_noop_for_a_subagent_turn(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_onagentturnend_is_a_noop_for_a_subagent_turn(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
     provider = MagicMock()
@@ -294,8 +317,10 @@ def _tool_registry(process_config: ProcessConfig, config: SessionConfig) -> Tool
     return ToolRegistry.discover_tools(process_config, config, package=sample_tools_package)
 
 
-def test_ontooluse_rewrites_tool_args_before_the_tool_runs(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_ontooluse_rewrites_tool_args_before_the_tool_runs(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onToolUse": [HookConfig(type="bash", shell='echo \'{"tool_args": {"message": "rewritten"}}\'')],
     })
     provider = MagicMock()
@@ -314,8 +339,10 @@ def test_ontooluse_rewrites_tool_args_before_the_tool_runs(tmp_path: Path) -> No
     assert envelope["response_body"] == "rewritten"
 
 
-def test_ontooluse_deny_blocks_the_call(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_ontooluse_deny_blocks_the_call(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onToolUse": [
             HookConfig(type="bash", shell='echo \'{"permission": "deny", "message": "blocked by policy"}\''),
         ],
@@ -338,8 +365,10 @@ def test_ontooluse_deny_blocks_the_call(tmp_path: Path) -> None:
     assert envelope["error_message"] == "blocked by policy"
 
 
-def test_ontoolresult_rewrites_the_response_content(tmp_path: Path) -> None:
-    process_config = _process_config(tmp_path, {
+def test_ontoolresult_rewrites_the_response_content(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    process_config = _process_config(tmp_path, make_session_config, {
         "onToolResult": [HookConfig(type="bash", shell='echo \'{"tool_result": "rewritten result"}\'')],
     })
     provider = MagicMock()

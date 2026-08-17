@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.memory.search_memories."""
-
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -29,14 +29,15 @@ def _context(
 
 
 def _context_with_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, trusted: bool = True,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig], *,
+        trusted: bool = True,
 ) -> tuple[Session, ToolSetupContext]:
     """A `ToolSetupContext` backed by a real `Session`, so `context.session.workspace_indexer`
     can be overridden. Caller must `session.close()` when done."""
     monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=trusted),
         read_dirs=DirRules(), write_dirs=DirRules())
     session = Session(config=session_config)
@@ -359,9 +360,9 @@ def test_namespace_filter_workspace_in_untrusted_workspace_yields_no_results(
 
 
 def test_semantic_only_hit_from_global_index_is_included(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
@@ -378,9 +379,9 @@ def test_semantic_only_hit_from_global_index_is_included(
 
 
 def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "global", "notes.md", "Topic\nMATCH here\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
@@ -396,9 +397,9 @@ def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
 
 
 def test_semantic_hits_respect_the_namespace_filter(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "global", "notes.md", "Topic\nsome unrelated content\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
@@ -413,9 +414,9 @@ def test_semantic_hits_respect_the_namespace_filter(
 
 
 def test_semantic_hit_below_min_score_is_dropped(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
@@ -429,9 +430,9 @@ def test_semantic_hit_below_min_score_is_dropped(
 
 
 def test_semantic_hit_from_workspace_index_is_included(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "workspace", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("workspace", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
@@ -447,9 +448,9 @@ def test_semantic_hit_from_workspace_index_is_included(
 
 
 def test_semantic_hit_included_in_list_files_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session, context = _context_with_session(tmp_path, monkeypatch)
+    session, context = _context_with_session(tmp_path, monkeypatch, make_session_config)
     _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
     chunk = _semantic_chunk("global", "notes.md", 1, 2)
     session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]

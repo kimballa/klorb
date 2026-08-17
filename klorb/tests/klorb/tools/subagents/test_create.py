@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.subagents.create.CreateSubagentTool."""
-
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,9 +22,11 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _operator_context(tmp_path: Path, provider: ApiProvider) -> ToolSetupContext:
+def _operator_context(
+    tmp_path: Path, provider: ApiProvider, make_session_config: Callable[..., SessionConfig]
+) -> ToolSetupContext:
     process_config = ProcessConfig()
-    session_config = SessionConfig(role_name="operator", workspace=Workspace(path=tmp_path))
+    session_config = make_session_config(role_name="operator", workspace=Workspace(path=tmp_path))
     grants = compute_root_session_grants(process_config, session_config, session_config.role_name)
     session_config.skill_rules = grants.skill_rules
     session = Session(
@@ -33,9 +35,11 @@ def _operator_context(tmp_path: Path, provider: ApiProvider) -> ToolSetupContext
     return ToolSetupContext(process_config=process_config, session_config=session_config, session=session)
 
 
-def test_apply_returns_a_subagent_id_and_note(tmp_path: Path) -> None:
+def test_apply_returns_a_subagent_id_and_note(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -49,9 +53,11 @@ def test_apply_returns_a_subagent_id_and_note(tmp_path: Path) -> None:
     context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
 
 
-def test_apply_registers_the_subagent_and_delivers_its_output(tmp_path: Path) -> None:
+def test_apply_registers_the_subagent_and_delivers_its_output(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider(reply_text="found it in foo.py")
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -71,9 +77,11 @@ def test_apply_registers_the_subagent_and_delivers_its_output(tmp_path: Path) ->
     assert handle.output == "found it in foo.py"
 
 
-def test_subagent_session_gets_the_explorer_role_and_scratchpad_path(tmp_path: Path) -> None:
+def test_subagent_session_gets_the_explorer_role_and_scratchpad_path(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -88,13 +96,15 @@ def test_subagent_session_gets_the_explorer_role_and_scratchpad_path(tmp_path: P
     handle.thread.join(timeout=5.0)
 
 
-def test_subagent_session_shares_the_parents_root_id(tmp_path: Path) -> None:
+def test_subagent_session_shares_the_parents_root_id(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A subagent's `root_id` must match its creator's, not default to its own `id` -- otherwise
     it would scope its chainlink issues to a group of its own rather than sharing its creator's
     (see `Session.get_chainlink_label()` and docs/specs/chainlink-task-tracking.md's "Session
     state" section)."""
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -106,13 +116,15 @@ def test_subagent_session_shares_the_parents_root_id(tmp_path: Path) -> None:
     handle.thread.join(timeout=5.0)
 
 
-def test_apply_does_not_touch_chainlink_when_child_has_no_task_tool(tmp_path: Path) -> None:
+def test_apply_does_not_touch_chainlink_when_child_has_no_task_tool(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Explorer (the only launchable role today) has no `TASKS` tool in its resolved tool set, so
     `CreateSubagentTool.apply()` must not construct a `ChainlinkClient` at all -- constructing one
     for a fresh workspace runs `chainlink init`, too expensive to pay for every subagent creation
     regardless of whether it could ever track tasks."""
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -124,14 +136,14 @@ def test_apply_does_not_touch_chainlink_when_child_has_no_task_tool(tmp_path: Pa
 
 @requires_chainlink
 def test_apply_ensures_the_creators_chainlink_client_when_child_has_a_task_tool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """Explorer has no real `TASKS` tool today, so this patches `TASK_TOOL_NAMES` to overlap with
     a tool Explorer definitely has (`ReadFile`), purely to exercise the
     `ensure_chainlink_client()` wiring without a real task-tracking subagent role existing yet."""
     monkeypatch.setattr(create_module, "TASK_TOOL_NAMES", frozenset({"ReadFile"}))
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -142,9 +154,11 @@ def test_apply_ensures_the_creators_chainlink_client_when_child_has_a_task_tool(
     context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
 
 
-def test_apply_raises_without_constructing_a_session_when_validation_fails(tmp_path: Path) -> None:
+def test_apply_raises_without_constructing_a_session_when_validation_fails(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     tool = CreateSubagentTool(context)
 
@@ -154,9 +168,9 @@ def test_apply_raises_without_constructing_a_session_when_validation_fails(tmp_p
     assert context.session.subagent_tracker.handles() == []
 
 
-def test_name_and_category(tmp_path: Path) -> None:
+def test_name_and_category(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     tool = CreateSubagentTool(context)
 
     assert tool.name() == "CreateSubagent"
@@ -166,14 +180,14 @@ def test_name_and_category(tmp_path: Path) -> None:
 
 @requires_chainlink
 def test_apply_with_starting_task_id_claims_all_labeled_task_and_prepends_summary(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """When starting_task_id points to an unclaimed ("all"-labeled) issue, the tool claims it
     for the new subagent and prepends the task summary to the initial message."""
     from klorb.tools.tasks.common import ALL_LABEL, ChainlinkClient, agent_label
 
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     client = ChainlinkClient(context)
     task_id = client.create_issue("Fix the bug", description="It crashes on startup")
@@ -205,14 +219,14 @@ def test_apply_with_starting_task_id_claims_all_labeled_task_and_prepends_summar
 
 @requires_chainlink
 def test_apply_with_starting_task_id_when_already_labeled_for_child(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """When the task is already labeled for the child agent, no re-claim is needed -- the
     summary is still prepended."""
     from klorb.tools.tasks.common import ChainlinkClient, agent_label
 
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     # Pre-create the child so we know its id.
     tool = CreateSubagentTool(context)
@@ -232,11 +246,13 @@ def test_apply_with_starting_task_id_when_already_labeled_for_child(
 
 
 @requires_chainlink
-def test_apply_with_starting_task_id_raises_when_task_closed(tmp_path: Path) -> None:
+def test_apply_with_starting_task_id_raises_when_task_closed(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     from klorb.tools.tasks.common import ChainlinkClient
 
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
     client = ChainlinkClient(context)
     task_id = client.create_issue("Old task")
@@ -253,9 +269,11 @@ def test_apply_with_starting_task_id_raises_when_task_closed(tmp_path: Path) -> 
 
 
 @requires_chainlink
-def test_apply_with_starting_task_id_raises_when_task_not_found(tmp_path: Path) -> None:
+def test_apply_with_starting_task_id_raises_when_task_not_found(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = _FakeProvider()
-    context = _operator_context(tmp_path, provider)
+    context = _operator_context(tmp_path, provider, make_session_config)
     assert context.session is not None
 
     tool = CreateSubagentTool(context)

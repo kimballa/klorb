@@ -18,6 +18,7 @@ from server.acp_harness import AcpHarness, build_acp_harness
 from klorb.api_provider import ApiProvider, ProviderResponse
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
+from klorb.session import SessionConfig
 from klorb.session_naming import SessionName
 from klorb.workspace import TrustManager
 from klorb.workspace.session_store import find_recent_session, read_sessions_index
@@ -57,15 +58,18 @@ def _isolate_user_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture: `await make_harness(provider=...)` returns a running `AcpHarness`
     wired to an isolated `TrustManager` (so no test touches the real `KLORB_DATA_DIR`), closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
 
-    async def _make(provider: ApiProvider | None = None) -> AcpHarness:
+    async def _make(
+        provider: ApiProvider | None = None
+    ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
-        harness = await build_acp_harness(ProcessConfig(), provider=provider, trust_manager=trust_manager)
+        harness = await build_acp_harness(ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 

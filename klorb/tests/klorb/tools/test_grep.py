@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.grep."""
-
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -39,14 +39,14 @@ def _context(
 
 
 def _context_with_session(
-    workspace_root: Path,
+    workspace_root: Path, make_session_config: Callable[..., SessionConfig],
     *,
     spill_bytes: int = 32 * 1024,
 ) -> tuple[Session, ToolSetupContext]:
     """A `ToolSetupContext` backed by a real `Session` (`GrepTool`'s spill needs one to track its
     tmpdir in `Session.tool_state` — see `klorb.tools.util.spill.SpillDir`). Caller must
     `session.close()` when done, same as `test_grep_is_interrupted_by_the_turn_cancel_event`."""
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=workspace_root), read_dirs=DirRules(), write_dirs=DirRules())
     session = Session(config=session_config)
     context = ToolSetupContext(
@@ -291,12 +291,14 @@ def test_grep_redacts_before_truncating_not_after(tmp_path: Path) -> None:
     assert not any(_AWS_KEY[i:i + 8] in line for i in range(len(_AWS_KEY) - 8))
 
 
-def test_grep_query_token_resolves_to_the_real_secret_for_matching(tmp_path: Path) -> None:
+def test_grep_query_token_resolves_to_the_real_secret_for_matching(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `[[SECRET:...]]` token echoed back from an earlier Grep/ReadFile result is resolved to
     the real plaintext before matching, so re-searching with the token still finds the secret
     in real file content -- and the result echoes the token back, never the plaintext."""
     (tmp_path / "creds.env").write_text(f"AWS_ACCESS_KEY_ID={_AWS_KEY}\n")
-    session, context = _context_with_session(tmp_path)
+    session, context = _context_with_session(tmp_path, make_session_config)
     try:
         first = GrepTool(context).apply({"path": "", "queries": ["AWS_ACCESS_KEY_ID"]})
         token = first["files"][0]["lines"][0].split("=", 1)[1]
@@ -552,12 +554,14 @@ def test_no_gitignore_hidden_flag_when_ignored_files_are_filtered_out_by_glob(tm
     assert "note" not in result
 
 
-def test_grep_is_interrupted_by_the_turn_cancel_event(tmp_path: Path) -> None:
+def test_grep_is_interrupted_by_the_turn_cancel_event(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """An already-set `Session.active_cancel_event` (a Ctrl+C/Escape interrupt) stops the search
     at the first directory and reports `cancelled: True` rather than reading the whole tree —
     see `InterruptibleTool`."""
     _make_tree(tmp_path)
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=tmp_path), read_dirs=DirRules(), write_dirs=DirRules())
     session = Session(config=session_config)
     try:
@@ -631,9 +635,11 @@ def test_short_line_is_not_truncated(tmp_path: Path) -> None:
     assert parsed[0][1] == "MATCH short line"
 
 
-def test_files_payload_spills_to_a_file_when_over_spill_bytes(tmp_path: Path) -> None:
+def test_files_payload_spills_to_a_file_when_over_spill_bytes(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
-    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    session, context = _context_with_session(tmp_path, make_session_config, spill_bytes=1)
     try:
         result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
 
@@ -647,9 +653,11 @@ def test_files_payload_spills_to_a_file_when_over_spill_bytes(tmp_path: Path) ->
         session.close()
 
 
-def test_spilled_tmpdir_is_granted_read_access(tmp_path: Path) -> None:
+def test_spilled_tmpdir_is_granted_read_access(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     _make_tree(tmp_path)
-    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    session, context = _context_with_session(tmp_path, make_session_config, spill_bytes=1)
     try:
         result = GrepTool(context).apply({"path": "", "queries": ["hello"]})
 
@@ -661,11 +669,13 @@ def test_spilled_tmpdir_is_granted_read_access(tmp_path: Path) -> None:
         session.close()
 
 
-def test_multiple_spills_in_one_session_reuse_the_same_tmpdir(tmp_path: Path) -> None:
+def test_multiple_spills_in_one_session_reuse_the_same_tmpdir(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The shared `SpillDir` mechanism (`klorb.tools.util.spill`, also used by `WebFetchTool`)
     reuses one tmpdir per session rather than minting a fresh directory per spill."""
     _make_tree(tmp_path)
-    session, context = _context_with_session(tmp_path, spill_bytes=1)
+    session, context = _context_with_session(tmp_path, make_session_config, spill_bytes=1)
     try:
         tool = GrepTool(context)
         first = tool.apply({"path": "", "queries": ["hello"]})

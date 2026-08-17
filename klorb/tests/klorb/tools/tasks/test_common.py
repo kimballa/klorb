@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.tasks.common."""
-
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -27,10 +27,13 @@ def _context(tmp_path: Path, session: Session | None) -> ToolSetupContext:
         session=session)
 
 
-def _session(tmp_path: Path, session_id: str = "2026-07-20-00-00-test-label") -> Session:
+def _session(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+    session_id: str = "2026-07-20-00-00-test-label"
+) -> Session:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
     return Session(config=config, session_id=session_id)
 
 
@@ -97,9 +100,9 @@ def test_open_blocker_count_only_counts_ids_still_open() -> None:
 
 @requires_chainlink
 def test_run_retries_on_lock_contention_then_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -122,9 +125,9 @@ def test_run_retries_on_lock_contention_then_succeeds(
 
 @requires_chainlink
 def test_run_raises_chainlink_error_after_exhausting_retries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -140,9 +143,9 @@ def test_run_raises_chainlink_error_after_exhausting_retries(
 
 @requires_chainlink
 def test_run_does_not_retry_a_non_lock_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -160,8 +163,10 @@ def test_run_does_not_retry_a_non_lock_failure(
 
 
 @requires_chainlink
-def test_ensure_setup_prunes_claude_scaffold_it_created(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_ensure_setup_prunes_claude_scaffold_it_created(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     workspace_root = context.session_config.workspace.path
 
@@ -173,8 +178,10 @@ def test_ensure_setup_prunes_claude_scaffold_it_created(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_ensure_setup_preserves_a_pre_existing_claude_settings_file(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_ensure_setup_preserves_a_pre_existing_claude_settings_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     workspace_root = context.session_config.workspace.path
     claude_dir = workspace_root / ".claude"
@@ -188,8 +195,10 @@ def test_ensure_setup_preserves_a_pre_existing_claude_settings_file(tmp_path: Pa
 
 
 @requires_chainlink
-def test_ensure_setup_adds_gitignore_entry(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_ensure_setup_adds_gitignore_entry(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     workspace_root = context.session_config.workspace.path
 
@@ -200,8 +209,10 @@ def test_ensure_setup_adds_gitignore_entry(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_ensure_setup_does_not_duplicate_an_existing_gitignore_entry(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_ensure_setup_does_not_duplicate_an_existing_gitignore_entry(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     workspace_root = context.session_config.workspace.path
     (workspace_root / ".gitignore").write_text("node_modules/\n.chainlink/\n")
@@ -214,9 +225,9 @@ def test_ensure_setup_does_not_duplicate_an_existing_gitignore_entry(tmp_path: P
 
 @requires_chainlink
 def test_ensure_setup_is_a_cheap_noop_once_the_database_exists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     ChainlinkClient(context)  # first call does the real init
 
@@ -236,8 +247,10 @@ def test_ensure_setup_is_a_cheap_noop_once_the_database_exists(
 
 
 @requires_chainlink
-def test_create_show_update_close_round_trip(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_create_show_update_close_round_trip(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -263,8 +276,10 @@ def test_create_show_update_close_round_trip(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_block_and_unblock_round_trip(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_block_and_unblock_round_trip(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -279,10 +294,12 @@ def test_block_and_unblock_round_trip(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_list_issues_is_scoped_to_this_sessions_label(tmp_path: Path) -> None:
+def test_list_issues_is_scoped_to_this_sessions_label(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
 
     session_a = Session(config=config, session_id="label-a")
     context_a = ToolSetupContext(
@@ -303,8 +320,10 @@ def test_list_issues_is_scoped_to_this_sessions_label(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_close_all_on_teardown_closes_this_labels_open_issues(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_close_all_on_teardown_closes_this_labels_open_issues(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Will be closed on session close")
@@ -315,10 +334,12 @@ def test_close_all_on_teardown_closes_this_labels_open_issues(tmp_path: Path) ->
 
 
 @requires_chainlink
-def test_teardown_is_only_registered_for_a_root_session(tmp_path: Path) -> None:
+def test_teardown_is_only_registered_for_a_root_session(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
     root = Session(config=config, session_id="root-id")
     child = Session(config=config, session_id="child-id", parent=root, root_id=root.root_id)
     child_context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=child)
@@ -329,16 +350,20 @@ def test_teardown_is_only_registered_for_a_root_session(tmp_path: Path) -> None:
     assert "ChainlinkClient" not in root._teardown_callbacks
 
 
-def _root_session_with_process_config(tmp_path: Path) -> Session:
+def _root_session_with_process_config(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> Session:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
     return Session(config=config, process_config=ProcessConfig())
 
 
 @requires_chainlink
-def test_ensure_chainlink_client_registers_teardown_for_a_root_session(tmp_path: Path) -> None:
-    session = _root_session_with_process_config(tmp_path)
+def test_ensure_chainlink_client_registers_teardown_for_a_root_session(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _root_session_with_process_config(tmp_path, make_session_config)
 
     session.ensure_chainlink_client()
 
@@ -348,9 +373,9 @@ def test_ensure_chainlink_client_registers_teardown_for_a_root_session(tmp_path:
 
 @requires_chainlink
 def test_ensure_chainlink_client_is_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _root_session_with_process_config(tmp_path)
+    session = _root_session_with_process_config(tmp_path, make_session_config)
 
     calls: list[None] = []
     real_init = ChainlinkClient.__init__
@@ -367,8 +392,10 @@ def test_ensure_chainlink_client_is_idempotent(
     assert len(calls) == 1
 
 
-def test_ensure_chainlink_client_is_a_noop_without_a_process_config(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_ensure_chainlink_client_is_a_noop_without_a_process_config(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
 
     session.ensure_chainlink_client()  # no raise, no attempt
 
@@ -376,8 +403,10 @@ def test_ensure_chainlink_client_is_a_noop_without_a_process_config(tmp_path: Pa
 
 
 @requires_chainlink
-def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_add_label_and_remove_label_round_trip(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Label me")
@@ -390,8 +419,8 @@ def test_add_label_and_remove_label_round_trip(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_add_label_is_idempotent(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_add_label_is_idempotent(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Label me twice")
@@ -403,8 +432,10 @@ def test_add_label_is_idempotent(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_remove_label_is_a_noop_when_absent(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_remove_label_is_a_noop_when_absent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Nothing to remove")
@@ -413,8 +444,10 @@ def test_remove_label_is_a_noop_when_absent(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_fetch_and_sort_issues_is_a_chainlink_client_method(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_fetch_and_sort_issues_is_a_chainlink_client_method(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     client.create_issue("Only issue")
@@ -425,10 +458,12 @@ def test_fetch_and_sort_issues_is_a_chainlink_client_method(tmp_path: Path) -> N
 
 
 @requires_chainlink
-def test_client_scopes_issues_by_root_id_not_by_session_id(tmp_path: Path) -> None:
+def test_client_scopes_issues_by_root_id_not_by_session_id(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
 
     session = Session(config=config, session_id="child-id", root_id="shared-root")
     context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
@@ -451,9 +486,9 @@ def test_validate_priority_rejects_unknown_priority() -> None:
 
 @requires_chainlink
 def test_create_issue_rejects_invalid_priority_before_shelling_out(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -467,8 +502,10 @@ def test_create_issue_rejects_invalid_priority_before_shelling_out(
 
 
 @requires_chainlink
-def test_update_issue_rejects_invalid_priority(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_update_issue_rejects_invalid_priority(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
     issue_id = client.create_issue("Task")
@@ -479,9 +516,9 @@ def test_update_issue_rejects_invalid_priority(tmp_path: Path) -> None:
 
 @requires_chainlink
 def test_run_always_passes_json_and_respects_quiet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 
@@ -503,8 +540,10 @@ def test_run_always_passes_json_and_respects_quiet(
 
 
 @requires_chainlink
-def test_chainlink_error_message_includes_argv_cwd_and_exit_code(tmp_path: Path) -> None:
-    session = _session(tmp_path)
+def test_chainlink_error_message_includes_argv_cwd_and_exit_code(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
     context = _context(tmp_path, session)
     client = ChainlinkClient(context)
 

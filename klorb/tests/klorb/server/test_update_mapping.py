@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for `klorb.server.update_mapping` -- pure klorb-event-to-ACP-tool-call-update mapping.
 See docs/specs/klorb-server.md's tool-call update mapping section."""
-
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -652,8 +652,10 @@ def test_session_mode_state_reports_all_three_modes_with_the_current_one_selecte
     assert state.current_mode_id == "auto"
 
 
-def test_session_config_json_reports_current_values_and_every_registered_model() -> None:
-    config = SessionConfig(model="beta", thinking_enabled=False, thinking_effort="low")
+def test_session_config_json_reports_current_values_and_every_registered_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    config = make_session_config(model="beta", thinking_enabled=False, thinking_effort="low")
     session = Session(config, provider=MagicMock(), model_registry=sample_model_registry())
 
     payload = session_config_json(session, sample_model_registry())
@@ -696,8 +698,10 @@ def _msg(role: MessageRole, content: str = "", **kwargs: object) -> Message:
 
 
 class TestBuildSessionReplay:
-    def test_text_roles_become_text_entries_in_order(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_text_roles_become_text_entries_in_order(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([
             _msg("user", "hi there"),
             _msg("thinking", "pondering..."),
@@ -712,8 +716,10 @@ class TestBuildSessionReplay:
             {"kind": "response", "text": "hello!", "streaming": False},
         ]
 
-    def test_system_and_tool_defs_messages_are_skipped(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_system_and_tool_defs_messages_are_skipped(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([
             _msg("system", "you are an agent"),
             _msg("tool_defs", "[]"),
@@ -724,8 +730,10 @@ class TestBuildSessionReplay:
 
         assert entries == [{"kind": "prompt", "text": "hi", "streaming": False}]
 
-    def test_successful_tool_call_pairs_with_its_response(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_successful_tool_call_pairs_with_its_response(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments='{"x": 1}')])
         tool_response = _msg("tool_response", content="42", tool_call_id="call-1")
@@ -740,9 +748,9 @@ class TestBuildSessionReplay:
         assert entries[0]["contentText"] == "42"
 
     def test_user_message_after_a_tool_round_replays_as_a_prompt_entry(
-        self, tmp_path: Path,
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig],
     ) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         tool_response = _msg("tool_response", content="42", tool_call_id="call-1")
@@ -756,8 +764,10 @@ class TestBuildSessionReplay:
         assert entries[1] == {
             "kind": "prompt", "text": "also check the tests", "streaming": False}
 
-    def test_error_envelope_response_marks_the_call_failed(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_error_envelope_response_marks_the_call_failed(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         envelope = (
@@ -771,8 +781,10 @@ class TestBuildSessionReplay:
         assert entries[0]["status"] == "failed"
         assert entries[0]["contentText"] == "boom"
 
-    def test_legacy_error_prefix_response_marks_the_call_failed(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_legacy_error_prefix_response_marks_the_call_failed(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         tool_response = _msg("tool_response", content="Error: boom", tool_call_id="call-1")
@@ -783,8 +795,10 @@ class TestBuildSessionReplay:
         assert entries[0]["status"] == "failed"
         assert entries[0]["contentText"] == "boom"
 
-    def test_tool_call_with_no_matching_response_has_no_content_text(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_tool_call_with_no_matching_response_has_no_content_text(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         session.load_messages([tool_use])
@@ -795,8 +809,10 @@ class TestBuildSessionReplay:
         assert entries[0]["status"] == "completed"
         assert entries[0]["contentText"] is None
 
-    def test_prompt_entry_carries_image_metadata_without_bytes(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_prompt_entry_carries_image_metadata_without_bytes(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([_msg("user", "look at this", fragments=[
             MessageFragment(type="text", text="look at this"),
             MessageFragment(
@@ -812,9 +828,9 @@ class TestBuildSessionReplay:
         }]
 
     def test_prompt_entry_image_metadata_omits_unknown_fields_rather_than_nulling_them(
-        self, tmp_path: Path,
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig],
     ) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([_msg("user", "look", fragments=[
             MessageFragment(type="text", text="look"),
             MessageFragment(type="image_url", image_url={"url": "data:image/png;base64,xx"}),
@@ -824,8 +840,10 @@ class TestBuildSessionReplay:
 
         assert entries[0]["images"] == [{}]
 
-    def test_prompt_entry_without_image_fragments_has_no_images_key(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_prompt_entry_without_image_fragments_has_no_images_key(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([_msg("user", "hi")])
 
         entries = build_session_replay(session, None, tmp_path)
@@ -833,9 +851,9 @@ class TestBuildSessionReplay:
         assert "images" not in entries[0]
 
     def test_tool_use_commentary_becomes_a_response_entry_before_its_tool_calls(
-        self, tmp_path: Path,
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig],
     ) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", content="here's what I found", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         session.load_messages([tool_use])
@@ -845,8 +863,10 @@ class TestBuildSessionReplay:
         assert entries[0] == {"kind": "response", "text": "here's what I found", "streaming": False}
         assert entries[1]["kind"] == "toolCall"
 
-    def test_tool_use_with_blank_commentary_emits_no_response_entry(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_tool_use_with_blank_commentary_emits_no_response_entry(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", content="   ", tool_calls=[
             ToolCallRequest(id="call-1", name="SampleTool", arguments="{}")])
         session.load_messages([tool_use])
@@ -857,9 +877,9 @@ class TestBuildSessionReplay:
         assert entries[0]["kind"] == "toolCall"
 
     def test_thinking_text_falls_back_to_reasoning_details_when_content_is_empty(
-        self, tmp_path: Path,
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig],
     ) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([_msg(
             "thinking", "", reasoning_details=[{"text": "first"}, {"summary": "second"}])])
 
@@ -867,8 +887,10 @@ class TestBuildSessionReplay:
 
         assert entries == [{"kind": "thinking", "text": "first\n\nsecond", "streaming": False}]
 
-    def test_thinking_text_prefers_content_over_reasoning_details(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_thinking_text_prefers_content_over_reasoning_details(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         session.load_messages([_msg(
             "thinking", "pondering...", reasoning_details=[{"text": "ignored"}])])
 
@@ -876,9 +898,11 @@ class TestBuildSessionReplay:
 
         assert entries == [{"kind": "thinking", "text": "pondering...", "streaming": False}]
 
-    def test_replayed_readfile_call_includes_readfile_meta(self, tmp_path: Path) -> None:
+    def test_replayed_readfile_call_includes_readfile_meta(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
         (tmp_path / "hello.txt").write_text("line one\nline two\n")
-        session = Session(SessionConfig(), provider=MagicMock())
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="ReadFile",
                             arguments='{"filename": "hello.txt"}')])
@@ -901,8 +925,10 @@ class TestBuildSessionReplay:
         assert "line one" in entries[0]["readFileMeta"]["content"]
         assert "line two" in entries[0]["readFileMeta"]["content"]
 
-    def test_replayed_read_scratchpad_call_includes_readfile_meta(self, tmp_path: Path) -> None:
-        session = Session(SessionConfig(), provider=MagicMock())
+    def test_replayed_read_scratchpad_call_includes_readfile_meta(
+        self, tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+    ) -> None:
+        session = Session(make_session_config(), provider=MagicMock())
         tool_use = _msg("tool_use", tool_calls=[
             ToolCallRequest(id="call-1", name="ReadScratchpad", arguments="{}")])
         tool_response = _msg("tool_response", content=json.dumps({

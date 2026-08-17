@@ -2,10 +2,10 @@
 """Tests for klorb.permissions.risk_classifier: LLM-driven risk scoring for BashTool asks. See
 docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section.
 """
-
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -610,14 +610,18 @@ def test_response_format_sets_additional_properties_false_on_every_object_schema
 # --- _default_classifier_model ---
 
 
-def test_default_classifier_model_picks_the_capability_tagged_model() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_default_classifier_model_picks_the_capability_tagged_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     assert _default_classifier_model(session) == "openai/gpt-oss-120b:nitro"
 
 
-def test_default_classifier_model_falls_back_when_no_model_declares_the_capability() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+def test_default_classifier_model_falls_back_when_no_model_declares_the_capability(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), model_registry=sample_model_registry())
 
     assert _default_classifier_model(session) == DEFAULT_BASH_RISK_CLASSIFIER_MODEL
 
@@ -625,8 +629,8 @@ def test_default_classifier_model_falls_back_when_no_model_declares_the_capabili
 # --- resolve_item_risk_assessment: gating, batching, caching ---
 
 
-def _session(provider: MagicMock) -> Session:
-    return Session(SessionConfig(), provider=provider)
+def _session(provider: MagicMock, make_session_config: Callable[..., SessionConfig]) -> Session:
+    return Session(make_session_config(), provider=provider)
 
 
 def _ask_ctx(
@@ -652,44 +656,52 @@ def _ask_ctx(
         sibling_items=sibling_items)
 
 
-def test_resolve_item_risk_assessment_returns_none_when_disabled() -> None:
+def test_resolve_item_risk_assessment_returns_none_when_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
     process_config = ProcessConfig()
     process_config.bash_risk_classifier_enabled = False
 
     result = resolve_item_risk_assessment(
-        _ask_ctx(), session=_session(provider), process_config=process_config)
+        _ask_ctx(), session=_session(provider, make_session_config), process_config=process_config)
 
     assert result is None
     provider.send_prompt.assert_not_called()
 
 
-def test_resolve_item_risk_assessment_returns_none_for_a_path_only_ask() -> None:
+def test_resolve_item_risk_assessment_returns_none_for_a_path_only_ask(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
 
     result = resolve_item_risk_assessment(
         _ask_ctx(command_text=None, path=Path("/tmp/f.txt")),
-        session=_session(provider), process_config=ProcessConfig())
+        session=_session(provider, make_session_config), process_config=ProcessConfig())
 
     assert result is None
     provider.send_prompt.assert_not_called()
 
 
-def test_resolve_item_risk_assessment_returns_the_matching_item() -> None:
+def test_resolve_item_risk_assessment_returns_the_matching_item(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
 
     result = resolve_item_risk_assessment(
         _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"]),
-        session=_session(provider), process_config=ProcessConfig())
+        session=_session(provider, make_session_config), process_config=ProcessConfig())
 
     assert result is not None
     assert result.item_id == "item-0"
 
 
-def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_default() -> None:
+def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_default(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`ProcessConfig.bash_risk_classifier_model` unset (the default) means klorb picks a
     model itself, by `klorb_capabilities` -- see `klorb.models.registry.ModelRegistry.
     find_by_capability` and the packaged `openai/gpt-oss-120b:nitro` model, the only
@@ -699,13 +711,15 @@ def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_defaul
 
     resolve_item_risk_assessment(
         _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"]),
-        session=_session(provider), process_config=ProcessConfig())
+        session=_session(provider, make_session_config), process_config=ProcessConfig())
 
     _, kwargs = provider.send_prompt.call_args
     assert kwargs["model"] == "openai/gpt-oss-120b:nitro"
 
 
-def test_resolve_item_risk_assessment_respects_an_explicit_model_override() -> None:
+def test_resolve_item_risk_assessment_respects_an_explicit_model_override(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
     process_config = ProcessConfig()
@@ -713,13 +727,15 @@ def test_resolve_item_risk_assessment_respects_an_explicit_model_override() -> N
 
     resolve_item_risk_assessment(
         _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"]),
-        session=_session(provider), process_config=process_config)
+        session=_session(provider, make_session_config), process_config=process_config)
 
     _, kwargs = provider.send_prompt.call_args
     assert kwargs["model"] == "openai/gpt-5-nano"
 
 
-def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request() -> None:
+def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Two items sharing the same compound command, resolved one after another (mirroring
     `Session._resolve_multi_permission_ask`'s serial loop) -- the second lookup must reuse the
     first's cached report rather than spending a second classifier round trip."""
@@ -731,7 +747,7 @@ def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request() 
             {"item_id": "item-1", "risk_score": 2, "rationale": "also reads only", "suggested_pattern": []},
         ],
     }))
-    session = _session(provider)
+    session = _session(provider, make_session_config)
     process_config = ProcessConfig()
     siblings = [
         PermissionAskItem(
@@ -764,10 +780,12 @@ def test_resolve_item_risk_assessment_classifies_sibling_items_in_one_request() 
     provider.send_prompt.assert_called_once()
 
 
-def test_resolve_item_risk_assessment_caches_a_retried_identical_item() -> None:
+def test_resolve_item_risk_assessment_caches_a_retried_identical_item(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
-    session = _session(provider)
+    session = _session(provider, make_session_config)
     process_config = ProcessConfig()
     ctx = _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"])
 
@@ -777,26 +795,30 @@ def test_resolve_item_risk_assessment_caches_a_retried_identical_item() -> None:
     provider.send_prompt.assert_called_once()
 
 
-def test_resolve_item_risk_assessment_forwards_the_ask_contexts_intent() -> None:
+def test_resolve_item_risk_assessment_forwards_the_ask_contexts_intent(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
 
     resolve_item_risk_assessment(
         _ask_ctx(command=["grep", "-rn", "TODO", "src/foo.py"], intent="Find TODO comments"),
-        session=_session(provider), process_config=ProcessConfig())
+        session=_session(provider, make_session_config), process_config=ProcessConfig())
 
     args, _ = provider.send_prompt.call_args
     user_message = args[0][0].content
     assert "<![CDATA[Find TODO comments]]>" in user_message
 
 
-def test_resolve_item_risk_assessment_returns_none_when_classification_fails() -> None:
+def test_resolve_item_risk_assessment_returns_none_when_classification_fails(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.side_effect = RuntimeError("network error")
 
     result = resolve_item_risk_assessment(
         _ask_ctx(command=["grep", "-rn", "TODO"]),
-        session=_session(provider), process_config=ProcessConfig())
+        session=_session(provider, make_session_config), process_config=ProcessConfig())
 
     assert result is None
 
@@ -804,8 +826,10 @@ def test_resolve_item_risk_assessment_returns_none_when_classification_fails() -
 # --- record_decision_history / _recent_history ---
 
 
-def test_record_decision_history_appends_an_entry_for_a_bash_ask() -> None:
-    session = _session(MagicMock())
+def test_record_decision_history_appends_an_entry_for_a_bash_ask(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     ctx = _ask_ctx(command_text="grep -rn TODO", command=["grep", "-rn", "TODO"])
 
     record_decision_history(
@@ -818,8 +842,10 @@ def test_record_decision_history_appends_an_entry_for_a_bash_ask() -> None:
     assert history[0].decision == "allowed, scope=session"
 
 
-def test_record_decision_history_renders_a_denial_with_free_text_explanation() -> None:
-    session = _session(MagicMock())
+def test_record_decision_history_renders_a_denial_with_free_text_explanation(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     ctx = _ask_ctx(command_text="rm -rf build")
 
     record_decision_history(
@@ -830,8 +856,10 @@ def test_record_decision_history_renders_a_denial_with_free_text_explanation() -
     assert history[0].decision == "denied (explanation: use make clean instead)"
 
 
-def test_record_decision_history_is_a_noop_for_a_path_only_ask() -> None:
-    session = _session(MagicMock())
+def test_record_decision_history_is_a_noop_for_a_path_only_ask(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     ctx = _ask_ctx(command_text=None, path=Path("/tmp/f.txt"))
 
     record_decision_history(
@@ -841,8 +869,10 @@ def test_record_decision_history_is_a_noop_for_a_path_only_ask() -> None:
     assert _recent_history(session, ProcessConfig()) == []
 
 
-def test_record_decision_history_is_a_noop_when_classifier_is_disabled() -> None:
-    session = _session(MagicMock())
+def test_record_decision_history_is_a_noop_when_classifier_is_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     ctx = _ask_ctx(command=["grep", "-rn", "TODO"])
     process_config = ProcessConfig()
     process_config.bash_risk_classifier_enabled = False
@@ -854,8 +884,10 @@ def test_record_decision_history_is_a_noop_when_classifier_is_disabled() -> None
     assert _recent_history(session, process_config) == []
 
 
-def test_record_decision_history_trims_to_the_configured_history_size() -> None:
-    session = _session(MagicMock())
+def test_record_decision_history_trims_to_the_configured_history_size(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     process_config = ProcessConfig()
     process_config.bash_risk_classifier_history_size = 2
 
@@ -869,8 +901,10 @@ def test_record_decision_history_trims_to_the_configured_history_size() -> None:
     assert [entry.command_text for entry in history] == ["echo 3", "echo 4"]
 
 
-def test_recent_history_reflects_a_lowered_history_size_immediately() -> None:
-    session = _session(MagicMock())
+def test_recent_history_reflects_a_lowered_history_size_immediately(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
     process_config = ProcessConfig()
 
     for index in range(5):
@@ -884,10 +918,12 @@ def test_recent_history_reflects_a_lowered_history_size_immediately() -> None:
     assert [entry.command_text for entry in history] == ["echo 4"]
 
 
-def test_resolve_item_risk_assessment_forwards_recorded_history_into_the_request() -> None:
+def test_resolve_item_risk_assessment_forwards_recorded_history_into_the_request(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
-    session = _session(provider)
+    session = _session(provider, make_session_config)
     process_config = ProcessConfig()
     earlier_ctx = _ask_ctx(command_text="grep -rn FIXME", command=["grep", "-rn", "FIXME"])
     record_decision_history(

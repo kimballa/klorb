@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.prompt_submission.PromptSubmissionMixin."""
-
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -32,12 +32,14 @@ from klorb.tui.widgets.tool_call_widgets import ToolCallStatic, TurnWaitingStati
 from klorb.workspace import Workspace
 
 
-def _add_running_subagent(root: Session, provider: MagicMock) -> SubagentHandle:
+def _add_running_subagent(
+    root: Session, provider: MagicMock, make_session_config: Callable[..., SessionConfig]
+) -> SubagentHandle:
     """A subagent whose background thread never finishes on its own within the test -- mirrors
     the pattern `tests/klorb/tools/subagents/test_wait.py` uses for a deliberately-`"running"`
     handle, so a test can exercise `dispatch_direct_message`'s enqueue branch without a real
     turn ever completing."""
-    child = Session(SessionConfig(role_name="explorer"), provider=provider, parent=root)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=root)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: threading.Event().wait(30)),
         cancel_event=threading.Event(), role="explorer", title="task")
@@ -45,9 +47,11 @@ def _add_running_subagent(root: Session, provider: MagicMock) -> SubagentHandle:
     return handle
 
 
-async def test_submitting_an_empty_prompt_does_nothing() -> None:
+async def test_submitting_an_empty_prompt_does_nothing(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -61,13 +65,15 @@ async def test_submitting_an_empty_prompt_does_nothing() -> None:
     mock_provider.send_prompt.assert_not_called()
 
 
-async def test_submitting_while_a_subagent_is_selected_addresses_it_not_the_root() -> None:
+async def test_submitting_while_a_subagent_is_selected_addresses_it_not_the_root(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A submission while a subagent is selected routes to it directly via
     `dispatch_direct_message`, never touching the root session's own turn state -- see
     docs/specs/subagents.md's "Direct user messaging" section."""
     mock_provider = MagicMock()
-    session = _session(mock_provider)
-    handle = _add_running_subagent(session, mock_provider)
+    session = _session(mock_provider, make_session_config)
+    handle = _add_running_subagent(session, mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -88,14 +94,16 @@ async def test_submitting_while_a_subagent_is_selected_addresses_it_not_the_root
     mock_provider.send_prompt.assert_not_called()
 
 
-async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurrency_limit() -> None:
+async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurrency_limit(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A human resuming a dormant subagent from the panel is bound by the same
     `maxConcurrentPerParent` limit a tool-driven `MessageSubagent` resume is -- surfaced as a
     notice rather than silently dropped or crashing the app."""
     mock_provider = MagicMock()
     process_config = ProcessConfig(subagents_max_concurrent_per_parent=0)
-    session = _session(mock_provider)
-    child = Session(SessionConfig(role_name="explorer"), provider=mock_provider, parent=session)
+    session = _session(mock_provider, make_session_config)
+    child = Session(make_session_config(role_name="explorer"), provider=mock_provider, parent=session)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="task", state="finished", output="earlier output")
@@ -117,7 +125,9 @@ async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurr
     mock_provider.send_prompt.assert_not_called()
 
 
-async def test_second_submit_while_a_turn_is_in_flight_is_dropped() -> None:
+async def test_second_submit_while_a_turn_is_in_flight_is_dropped(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A submit that arrives while a turn is still running is ignored (`_turn_in_flight`), so a
     double Enter / a bracketed paste with a trailing newline can't launch a second, concurrent
     `_send_prompt` worker. The prompt input's `disabled` flag can't be relied on for this: Enter
@@ -133,7 +143,7 @@ async def test_second_submit_while_a_turn_is_in_flight_is_dropped() -> None:
         return _reply()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -163,7 +173,9 @@ async def test_second_submit_while_a_turn_is_in_flight_is_dropped() -> None:
     assert mock_provider.send_prompt.call_count == 1
 
 
-async def test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash() -> None:
+async def test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`_queue_prompt` (what `on_prompt_input_submitted` calls when `_turn_in_flight` is `True`)
     runs synchronously on the app's own thread, since it's driven directly by a Textual event
     handler -- not by `_send_prompt`'s worker thread. `Session.enqueue_queued_message` calls
@@ -182,7 +194,7 @@ async def test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash() -> 
         return _reply()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -212,7 +224,9 @@ async def test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash() -> 
     assert mock_provider.send_prompt.call_count == 2
 
 
-async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost() -> None:
+async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Queueing two messages while a turn is in flight must not silently drop the second one.
 
     `_finish_turn` used to call `_submit_prompt` once per drained message (via
@@ -230,7 +244,7 @@ async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost()
         return _reply()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -264,10 +278,12 @@ async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost()
         assert prompt_widgets.last(Static).content == "second queued\n\nthird queued"
 
 
-async def test_quit_on_success_exits_after_a_successful_turn() -> None:
+async def test_quit_on_success_exits_after_a_successful_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), quit_on_success=True)
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -283,10 +299,12 @@ async def test_quit_on_success_exits_after_a_successful_turn() -> None:
         assert app._final_turn_response == "model reply"
 
 
-async def test_quit_on_success_off_by_default_stays_in_the_repl() -> None:
+async def test_quit_on_success_off_by_default_stays_in_the_repl(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -300,10 +318,12 @@ async def test_quit_on_success_off_by_default_stays_in_the_repl() -> None:
         assert app._final_turn_response is None
 
 
-async def test_quit_on_success_disregarded_on_error() -> None:
+async def test_quit_on_success_disregarded_on_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
-    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), quit_on_success=True)
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -318,10 +338,12 @@ async def test_quit_on_success_disregarded_on_error() -> None:
         assert app._final_turn_response is None
 
 
-async def test_quit_on_success_disregarded_on_abort() -> None:
+async def test_quit_on_success_disregarded_on_abort(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = ResponseAborted()
-    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), quit_on_success=True)
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -336,13 +358,15 @@ async def test_quit_on_success_disregarded_on_abort() -> None:
         assert app._final_turn_response is None
 
 
-async def test_quit_on_success_latches_off_so_a_later_clean_turn_does_not_exit() -> None:
+async def test_quit_on_success_latches_off_so_a_later_clean_turn_does_not_exit(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Once disregarded (here, by an error), `--quit-on-success` must not re-arm itself just
     because some later turn happens to finish clean -- see
     docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [RuntimeError("boom"), _reply()]
-    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), quit_on_success=True)
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -363,7 +387,9 @@ async def test_quit_on_success_latches_off_so_a_later_clean_turn_does_not_exit()
         app.exit.assert_not_called()
 
 
-async def test_quit_on_success_disregarded_when_a_message_was_queued() -> None:
+async def test_quit_on_success_disregarded_when_a_message_was_queued(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A message the user queued during the turn (see
     `test_queueing_a_message_while_a_turn_is_in_flight_does_not_crash`) is folded into a fresh
     turn by `_finish_turn` -- quitting right there would strand it. Interjecting is also a sign
@@ -380,7 +406,7 @@ async def test_quit_on_success_disregarded_when_a_message_was_queued() -> None:
         return _reply()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider), quit_on_success=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), quit_on_success=True)
 
     async with app.run_test() as pilot:
         app.exit = MagicMock()  # type: ignore[method-assign]
@@ -405,10 +431,10 @@ async def test_quit_on_success_disregarded_when_a_message_was_queued() -> None:
         assert app._quit_on_success is False
 
 
-async def test_provider_error_is_shown_in_history() -> None:
+async def test_provider_error_is_shown_in_history(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = RuntimeError("boom")
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -424,7 +450,9 @@ async def test_provider_error_is_shown_in_history() -> None:
         assert prompt_input.disabled is False
 
 
-async def test_leading_skill_mention_shows_activated_skill_notice(tmp_path: Path) -> None:
+async def test_leading_skill_mention_shows_activated_skill_notice(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A live turn whose prompt starts with `/<name>` and unconditionally activates a skill
     (see `SessionSkillsMixin._build_user_skill_activation_interjection`) shows a visible
     "Activated skill: ..." notice in the history, via `TurnEventHandlers.on_skill_activated`."""
@@ -434,7 +462,7 @@ async def test_leading_skill_mention_shows_activated_skill_notice(tmp_path: Path
 
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    config = SessionConfig(
+    config = make_session_config(
         model="some/model", workspace=Workspace(path=tmp_path, trusted=True),
         skill_rules=SkillRules(allow=[("workspace", "do-thing")]))
     app = ReplApp(session=Session(config, provider=mock_provider, session_id=TEST_SESSION_ID))
@@ -451,10 +479,12 @@ async def test_leading_skill_mention_shows_activated_skill_notice(tmp_path: Path
         assert str(notice_widget.content) == "Activated skill: workspace/do-thing"
 
 
-async def test_aborted_response_keeps_prompt_in_history_and_clears_input() -> None:
+async def test_aborted_response_keeps_prompt_in_history_and_clears_input(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = ResponseAborted()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -476,7 +506,7 @@ async def test_aborted_response_keeps_prompt_in_history_and_clears_input() -> No
     assert session.messages[-1].processing_state == "aborted"
 
 
-async def test_escape_aborts_a_streaming_response() -> None:
+async def test_escape_aborts_a_streaming_response(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     streaming_started = threading.Event()
 
@@ -487,7 +517,7 @@ async def test_escape_aborts_a_streaming_response() -> None:
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -514,7 +544,9 @@ async def test_escape_aborts_a_streaming_response() -> None:
     assert session.messages[-1].processing_state == "aborted"
 
 
-async def test_turn_in_flight_cleared_when_worker_raises_base_exception() -> None:
+async def test_turn_in_flight_cleared_when_worker_raises_base_exception(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `BaseException` out of `send_turn` (e.g. worker cancellation) slips past `except
     Exception`; the `finally` backstop (`_ensure_turn_finished`) must still clear
     `_turn_in_flight` and re-enable input so the app doesn't wedge — see
@@ -524,7 +556,7 @@ async def test_turn_in_flight_cleared_when_worker_raises_base_exception() -> Non
         pass
 
     streaming_started = threading.Event()
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     def boom(*args: Any, **kwargs: Any) -> Any:
         streaming_started.set()
@@ -542,7 +574,9 @@ async def test_turn_in_flight_cleared_when_worker_raises_base_exception() -> Non
         assert prompt_input.disabled is False
 
 
-async def test_a_tool_call_mounts_a_running_spinner_before_it_runs() -> None:
+async def test_a_tool_call_mounts_a_running_spinner_before_it_runs(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Every tool call — not just Bash — mounts a `RunningToolCallStatic` (the `<Tool use>` +
     `Running…` spinner) before its work begins, via the generic `on_tool_call_started` path, so a
     slow tool like FindFile/Grep shows activity while it runs rather than appearing frozen."""
@@ -551,7 +585,7 @@ async def test_a_tool_call_mounts_a_running_spinner_before_it_runs() -> None:
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("done"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     mounted: list[str] = []
@@ -571,7 +605,9 @@ async def test_a_tool_call_mounts_a_running_spinner_before_it_runs() -> None:
     assert mounted == ["call_1"]
 
 
-async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it() -> None:
+async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`TurnWaitingStatic` is mounted before the worker thread streams anything back, and is
     cleared as soon as the first real content (a response chunk here) arrives. `_send_prompt`
     mounts it (via a blocking `call_from_thread`) before ever calling into the provider, so by
@@ -594,7 +630,7 @@ async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it() 
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -615,7 +651,9 @@ async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it() 
         assert app._turn_waiting_widget is None
 
 
-async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chunk() -> None:
+async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chunk(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A turn that goes straight into a tool call (no response/thinking text first) clears
     `TurnWaitingStatic` once the tool call is far enough along to mount its own `Running…`
     indicator -- not while its arguments are merely being classified/dispatched."""
@@ -624,7 +662,7 @@ async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chu
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("done"),
     ]
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -638,7 +676,9 @@ async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chu
         assert app._turn_waiting_widget is None
 
 
-async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
+async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     streaming_started = threading.Event()
     calls_made = 0
@@ -654,7 +694,7 @@ async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
         raise ResponseAborted()
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -682,7 +722,9 @@ async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets() -> None:
     assert len(app._tool_call_widgets) == 1
 
 
-async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() -> None:
+async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     calls_made = 0
 
@@ -704,7 +746,7 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
         return _reply("Round two reply.")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    session = _session_with_tools(mock_provider, SessionConfig(model="some/model"))
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -735,9 +777,11 @@ async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks() 
 # --- shell commands ("!"-prefixed) ---
 
 
-async def test_shell_command_echoes_and_shows_output() -> None:
+async def test_shell_command_echoes_and_shows_output(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -756,13 +800,15 @@ async def test_shell_command_echoes_and_shows_output() -> None:
     mock_provider.send_prompt.assert_not_called()
 
 
-async def test_shell_command_preserves_newlines_across_multiple_lines() -> None:
+async def test_shell_command_preserves_newlines_across_multiple_lines(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Regression test: shell output used to be rendered via a `Markdown` widget, whose
     CommonMark rendering collapses a single newline inside a paragraph into a soft line
     break (a space). Shell output isn't markdown, so its newlines must survive verbatim.
     """
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -776,9 +822,11 @@ async def test_shell_command_preserves_newlines_across_multiple_lines() -> None:
         assert output_widget.content == "a\nb\nc\n"
 
 
-async def test_shell_command_exit_code_shown_as_error() -> None:
+async def test_shell_command_exit_code_shown_as_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -793,10 +841,12 @@ async def test_shell_command_exit_code_shown_as_error() -> None:
         assert prompt_input.disabled is False
 
 
-async def test_shell_command_uses_configured_shell_binary() -> None:
+async def test_shell_command_uses_configured_shell_binary(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     process_config = ProcessConfig(shell_command="/no/such/shell")
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -810,10 +860,12 @@ async def test_shell_command_uses_configured_shell_binary() -> None:
         assert "/no/such/shell not found" in str(output_widget.content)
 
 
-async def test_shell_command_timeout_kills_it_and_shows_an_error() -> None:
+async def test_shell_command_timeout_kills_it_and_shows_an_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     process_config = ProcessConfig(shell_timeout_seconds=0.2)
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -828,10 +880,12 @@ async def test_shell_command_timeout_kills_it_and_shows_an_error() -> None:
         assert prompt_input.disabled is False
 
 
-async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
+async def test_clear_gives_the_new_session_a_fresh_tool_registry(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         await _invoke_clear_session(pilot)
@@ -840,12 +894,14 @@ async def test_clear_gives_the_new_session_a_fresh_tool_registry() -> None:
         assert "ReadFile" in {tool.name() for tool in app._session.tool_registry.tools()}
 
 
-async def test_clear_replaces_session_and_resets_history() -> None:
+async def test_clear_replaces_session_and_resets_history(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
     process_config = ProcessConfig(
         session_cli_flags={"model": "some/model", "interactive": True})
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -866,12 +922,12 @@ async def test_clear_replaces_session_and_resets_history() -> None:
         assert app._session.messages == []
 
 
-async def test_clear_closes_the_outgoing_session() -> None:
+async def test_clear_closes_the_outgoing_session(make_session_config: Callable[..., SessionConfig]) -> None:
     """`clear_session()` must tear down the outgoing `Session` (e.g. killing any live
     `BashTool` persistent shell it holds) before replacing it -- otherwise a registered
     teardown callback would never run and the resource it guards would leak."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         outgoing_session = app._session
@@ -887,6 +943,7 @@ async def test_clear_closes_the_outgoing_session() -> None:
 
 async def test_clear_carries_over_thinking_settings_from_process_config(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """`/clear` rebuilds the new session's `SessionConfig` by re-reading the config layers
     from disk and applying CLI flags on top (see `ReplApp.clear_session`), so a setting
@@ -900,7 +957,7 @@ async def test_clear_carries_over_thinking_settings_from_process_config(
     from klorb.process_config import user_config_path as process_user_config_path
 
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch("klorb.tui.app.user_config_path", return_value=process_user_config_path()):
         async with app.run_test() as pilot:
@@ -914,6 +971,7 @@ async def test_clear_carries_over_thinking_settings_from_process_config(
 
 async def test_clear_reloads_session_config_from_disk(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """`/clear` re-reads the config layers from disk into the new session's
     `SessionConfig`, so a config-file edit made between startup and the `/clear` takes
@@ -928,7 +986,7 @@ async def test_clear_reloads_session_config_from_disk(
     from klorb.schema_envelope import write_versioned_json
 
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         # Sanity check: the session starts with the tool-call limit the session was constructed with,
@@ -950,6 +1008,7 @@ async def test_clear_reloads_session_config_from_disk(
 
 async def test_clear_applies_cli_flags_on_top_of_disk(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """CLI flags are re-applied on top of the disk-reloaded `SessionConfig` during
     `/clear`, so a `--model` (etc.) passed to this invocation survives a `/clear` and wins
@@ -963,7 +1022,7 @@ async def test_clear_applies_cli_flags_on_top_of_disk(
     mock_provider = MagicMock()
     process_config = ProcessConfig(
         session_cli_flags={"max_tool_calls_per_turn": raised_limit, "interactive": True})
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test() as pilot:
         config_path = process_user_config_path()
@@ -983,7 +1042,9 @@ async def test_clear_applies_cli_flags_on_top_of_disk(
             {"max_tool_calls_per_turn": raised_limit, "interactive": True}
 
 
-async def test_clear_preserves_argv_and_cli_flags_across_reload() -> None:
+async def test_clear_preserves_argv_and_cli_flags_across_reload(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`clear_session()` reloads process-only fields from disk via `load_process_config()`,
     which never populates `argv`/`cli_flags` (those are set once by `klorb.cli.main()`).
     The reload must not wipe them back to their empty defaults — otherwise a second
@@ -993,7 +1054,7 @@ async def test_clear_preserves_argv_and_cli_flags_across_reload() -> None:
     argv = ["klorb", "--model", "from/cli"]
     cli_flags = {"model": "from/cli", "interactive": True}
     process_config = ProcessConfig(argv=argv, session_cli_flags=cli_flags)
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test() as pilot:
         await _invoke_clear_session(pilot)
@@ -1002,9 +1063,11 @@ async def test_clear_preserves_argv_and_cli_flags_across_reload() -> None:
         assert app._process_config.session_cli_flags == cli_flags
 
 
-async def test_clear_does_not_disable_input_or_send_to_provider() -> None:
+async def test_clear_does_not_disable_input_or_send_to_provider(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -1015,9 +1078,11 @@ async def test_clear_does_not_disable_input_or_send_to_provider() -> None:
     mock_provider.send_prompt.assert_not_called()
 
 
-async def test_clear_rotates_log_file_when_session_log_enabled() -> None:
+async def test_clear_rotates_log_file_when_session_log_enabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider), session_log_enabled=True)
+    app = ReplApp(session=_session(mock_provider, make_session_config), session_log_enabled=True)
 
     with patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
@@ -1027,9 +1092,11 @@ async def test_clear_rotates_log_file_when_session_log_enabled() -> None:
         repl_mode=True, log_path=session_log_path(app._session.id))
 
 
-async def test_clear_skips_log_rotation_when_session_log_disabled() -> None:
+async def test_clear_skips_log_rotation_when_session_log_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider), session_log_enabled=False)
+    app = ReplApp(session=_session(mock_provider, make_session_config), session_log_enabled=False)
 
     with patch("klorb.tui.mixins.prompt_submission.configure_logging") as mock_configure_logging:
         async with app.run_test() as pilot:
@@ -1052,15 +1119,19 @@ def _naming_pending(app: ReplApp) -> bool:
     return app._session.session_naming_pending
 
 
-async def test_session_name_line_starts_as_new_session() -> None:
+async def test_session_name_line_starts_as_new_session(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test():
         assert _session_name_line(app) == NEW_SESSION_LABEL
 
 
-async def test_first_submit_triggers_naming_and_updates_status_line_without_renaming_id() -> None:
+async def test_first_submit_triggers_naming_and_updates_status_line_without_renaming_id(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Session naming runs on a background thread (`SessionCoreMixin._start_session_naming`) and
     only ever derives a title -- `Session.id` never changes, and the status line update lands
     whenever that thread finishes, not necessarily by the time the turn's own worker completes
@@ -1068,7 +1139,7 @@ async def test_first_submit_triggers_naming_and_updates_status_line_without_rena
     `_wait_until` instead of asserting immediately."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     original_id = app._session.id
 
     with patch(
@@ -1089,10 +1160,12 @@ async def test_first_submit_triggers_naming_and_updates_status_line_without_rena
     assert mock_generate_session_name.call_args.args[0] == "please fix the auth bug"
 
 
-async def test_naming_failure_shows_the_fallback_title() -> None:
+async def test_naming_failure_shows_the_fallback_title(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     original_id = app._session.id
 
     with patch(
@@ -1108,7 +1181,9 @@ async def test_naming_failure_shows_the_fallback_title() -> None:
             assert app._session.id == original_id
 
 
-async def test_turn_waiting_widget_mounts_immediately_even_while_naming_is_still_running() -> None:
+async def test_turn_waiting_widget_mounts_immediately_even_while_naming_is_still_running(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The classifier no longer blocks the turn's own dispatch -- `TurnWaitingStatic` must mount
     right away on the first submitted prompt, the same as any other turn, even while a slow
     classifier call is still in flight on its own background thread. The turn's own response is
@@ -1122,7 +1197,7 @@ async def test_turn_waiting_widget_mounts_immediately_even_while_naming_is_still
         return _reply("hi there")
 
     mock_provider.send_prompt.side_effect = blocking_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     naming_started = threading.Event()
     release_naming = threading.Event()
 
@@ -1150,10 +1225,12 @@ async def test_turn_waiting_widget_mounts_immediately_even_while_naming_is_still
             await pilot.pause()
 
 
-async def test_clear_session_resets_naming_pending_and_status_line() -> None:
+async def test_clear_session_resets_naming_pending_and_status_line(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply("hi there")
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     with patch(
         "klorb.session.mixins.core.generate_session_name",
@@ -1183,7 +1260,9 @@ async def test_clear_session_resets_naming_pending_and_status_line() -> None:
 # --- input history (up/down-arrow recall) ---
 
 
-async def test_streaming_response_updates_widget_progressively() -> None:
+async def test_streaming_response_updates_widget_progressively(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
 
     def fake_send_prompt(
@@ -1197,7 +1276,7 @@ async def test_streaming_response_updates_widget_progressively() -> None:
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -1213,7 +1292,9 @@ async def test_streaming_response_updates_widget_progressively() -> None:
         assert response_widgets[0].source == "Hello"
 
 
-async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom() -> None:
+async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`ReplApp._scroll_if_pinned` is where the app decides whether to follow new streaming
     content to the bottom; spying on it (rather than asserting on `history.scroll_y` /
     `max_scroll_y` directly) tests that decision without depending on exactly when Textual's
@@ -1234,7 +1315,7 @@ async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_t
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         with patch.object(ReplApp, "_scroll_if_pinned", autospec=True) as mock_scroll_if_pinned:
@@ -1249,7 +1330,9 @@ async def test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_t
         assert all(was_pinned_values)
 
 
-async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scrolled_away() -> None:
+async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scrolled_away(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """See `test_streaming_updates_stay_pinned_to_the_bottom_when_the_user_is_at_the_bottom` for
     why this spies on `_scroll_if_pinned` rather than asserting on the viewport's actual scroll
     position.
@@ -1273,7 +1356,7 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
         return _reply("Hello")
 
     mock_provider.send_prompt.side_effect = fake_send_prompt
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test(size=(40, 6)) as pilot:
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
@@ -1308,9 +1391,11 @@ async def test_streaming_updates_do_not_yank_the_scroll_when_the_user_has_scroll
 # --- rename session ---
 
 
-async def test_rename_session_sets_title_and_persists() -> None:
+async def test_rename_session_sets_title_and_persists(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     session.session_naming_pending = True
     app = ReplApp(session=session)
 
@@ -1323,9 +1408,11 @@ async def test_rename_session_sets_title_and_persists() -> None:
         assert str(app.query_one(f"#{SESSION_NAME_ID}", Static).content) == "Session: My Custom Title"
 
 
-async def test_get_current_session_title_returns_empty_when_unnamed() -> None:
+async def test_get_current_session_title_returns_empty_when_unnamed(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -1333,9 +1420,11 @@ async def test_get_current_session_title_returns_empty_when_unnamed() -> None:
         assert app.get_current_session_title() == ""
 
 
-async def test_get_current_session_title_returns_name_when_set() -> None:
+async def test_get_current_session_title_returns_name_when_set(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     session.name = "Existing Title"
     app = ReplApp(session=session)
 

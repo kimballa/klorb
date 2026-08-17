@@ -2,6 +2,7 @@
 """Tests for klorb.tui.widgets.prompt_input.PromptInput: input history recall,
 reverse-incremental search, and the inline command palette."""
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -23,7 +24,7 @@ from tui.conftest import (
 )
 
 from klorb.process_config import ProcessConfig
-from klorb.session import Session
+from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel, FinderMatch
@@ -33,10 +34,12 @@ from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.input_history import project_history_path
 
 
-async def test_prompt_input_max_height_comes_from_process_config() -> None:
+async def test_prompt_input_max_height_comes_from_process_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     process_config = ProcessConfig(prompt_input_max_lines=3)
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
 
     async with app.run_test():
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -45,10 +48,12 @@ async def test_prompt_input_max_height_comes_from_process_config() -> None:
         assert int(max_height.value) == 4
 
 
-async def test_up_arrow_recalls_the_most_recent_prompt() -> None:
+async def test_up_arrow_recalls_the_most_recent_prompt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -62,10 +67,12 @@ async def test_up_arrow_recalls_the_most_recent_prompt() -> None:
         assert prompt_input.text == "first"
 
 
-async def test_repeated_up_arrow_walks_back_through_history() -> None:
+async def test_repeated_up_arrow_walks_back_through_history(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -86,7 +93,7 @@ async def test_repeated_up_arrow_walks_back_through_history() -> None:
         assert prompt_input.text == "first"
 
 
-async def test_paste_inserts_text_exactly_once() -> None:
+async def test_paste_inserts_text_exactly_once(make_session_config: Callable[..., SessionConfig]) -> None:
     """A single bracketed-paste event inserts the pasted text once, not twice. `PromptInput`
     overrides `_on_paste` to detach from history before the box mutates; because Textual
     dispatches an event to every `_on_paste` along the widget's MRO, that override must not
@@ -94,7 +101,7 @@ async def test_paste_inserts_text_exactly_once() -> None:
     bug). The event is delivered via `app.post_message` exactly as the input driver forwards a
     real bracketed paste to the focused widget."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -106,14 +113,16 @@ async def test_paste_inserts_text_exactly_once() -> None:
         assert prompt_input.text == "pasted text"
 
 
-async def test_paste_after_recalling_history_starts_a_fresh_draft() -> None:
+async def test_paste_after_recalling_history_starts_a_fresh_draft(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Pasting detaches from history even though `_on_paste` no longer calls `super()` -- the
     detach happens in the override itself, and the base handler that actually inserts the text
     runs afterward via Textual's MRO dispatch. So a paste on top of a recalled entry appends to
     it as an ordinary edit rather than being discarded as part of the read-only recall."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -132,10 +141,12 @@ async def test_paste_after_recalling_history_starts_a_fresh_draft() -> None:
         assert prompt_input._history_index is None
 
 
-async def test_down_arrow_walks_forward_and_returns_to_empty_draft() -> None:
+async def test_down_arrow_walks_forward_and_returns_to_empty_draft(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -164,12 +175,14 @@ async def test_down_arrow_walks_forward_and_returns_to_empty_draft() -> None:
         assert prompt_input.text == ""
 
 
-async def test_down_arrow_past_most_recent_restores_the_in_progress_draft() -> None:
+async def test_down_arrow_past_most_recent_restores_the_in_progress_draft(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Walking up from an untouched draft and back down past the most recent entry restores
     that draft rather than clearing the box to empty."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -190,12 +203,14 @@ async def test_down_arrow_past_most_recent_restores_the_in_progress_draft() -> N
         assert prompt_input.text == "an unsent draft"
 
 
-async def test_editing_a_recalled_prompt_detaches_and_resets_recall_position() -> None:
+async def test_editing_a_recalled_prompt_detaches_and_resets_recall_position(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """After typing into a recalled entry, the next up-arrow starts fresh from the most
     recent entry rather than continuing from the now-stale recall position."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -225,10 +240,12 @@ async def test_editing_a_recalled_prompt_detaches_and_resets_recall_position() -
         assert prompt_input.text == "second"
 
 
-async def test_empty_prompt_is_not_recorded_in_history() -> None:
+async def test_empty_prompt_is_not_recorded_in_history(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -247,10 +264,10 @@ async def test_empty_prompt_is_not_recorded_in_history() -> None:
         assert prompt_input.text == "first"
 
 
-async def test_clear_resets_input_history() -> None:
+async def test_clear_resets_input_history(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -277,14 +294,15 @@ async def test_clear_resets_input_history() -> None:
 
 
 def _repl_app_with_mock_provider(
-    workspace: Workspace, trust_manager: TrustManager, model: str = "some/model",
+    workspace: Workspace, make_session_config: Callable[..., SessionConfig],
+    trust_manager: TrustManager, model: str = "some/model",
 ) -> tuple[ReplApp, MagicMock]:
     """Build a `ReplApp` whose `Session` uses a `MagicMock` provider the caller keeps a
     typed reference to, so configuring `mock.send_prompt.return_value` satisfies mypy
     (`Session.provider` is typed as a real `ApiProvider`, so reaching for `.return_value`
     through it is an `attr-defined` error — see `_session` for the same pattern)."""
     mock_provider = MagicMock()
-    process_config = _process_config_for_workspace(workspace, model)
+    process_config = _process_config_for_workspace(workspace, make_session_config, model)
     session = Session(
         process_config.session.model_copy(), provider=mock_provider, session_id=TEST_SESSION_ID,
         process_config=process_config)
@@ -293,13 +311,14 @@ def _repl_app_with_mock_provider(
 
 async def test_submitted_prompt_persists_to_history_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A prompt submitted in one session is appended to the on-disk `history` file under the
     project's per-project directory."""
     _isolated_data_dir(tmp_path, monkeypatch)
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    app, mock_provider = _repl_app_with_mock_provider(workspace, trust_manager)
+    app, mock_provider = _repl_app_with_mock_provider(workspace, make_session_config, trust_manager)
     mock_provider.send_prompt.return_value = _reply()
 
     async with app.run_test() as pilot:
@@ -318,6 +337,7 @@ async def test_submitted_prompt_persists_to_history_file(
 
 async def test_history_seeds_from_file_on_startup_so_prior_sessions_are_recallable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A prompt submitted in an earlier session is recallable via up-arrow in a fresh session
     opened in the same project — the in-memory history is seeded from the on-disk file at
@@ -327,7 +347,7 @@ async def test_history_seeds_from_file_on_startup_so_prior_sessions_are_recallab
     workspace = trust_manager.register_project(tmp_path, trusted=True)
 
     # First session: submit a prompt so it lands on disk.
-    app, mock_provider = _repl_app_with_mock_provider(workspace, trust_manager)
+    app, mock_provider = _repl_app_with_mock_provider(workspace, make_session_config, trust_manager)
     mock_provider.send_prompt.return_value = _reply()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -342,7 +362,7 @@ async def test_history_seeds_from_file_on_startup_so_prior_sessions_are_recallab
     assert history_file.is_file()
 
     # Second session: a fresh ReplApp in the same (registered) project seeds from the file.
-    app2, _ = _repl_app_with_mock_provider(workspace, trust_manager)
+    app2, _ = _repl_app_with_mock_provider(workspace, make_session_config, trust_manager)
     async with app2.run_test() as pilot:
         await pilot.pause()
         await app2.workers.wait_for_complete()
@@ -357,10 +377,12 @@ async def test_history_seeds_from_file_on_startup_so_prior_sessions_are_recallab
 # --- Ctrl+R reverse-incremental-search ---
 
 
-async def test_ctrl_r_finds_the_most_recent_matching_prompt() -> None:
+async def test_ctrl_r_finds_the_most_recent_matching_prompt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -383,10 +405,10 @@ async def test_ctrl_r_finds_the_most_recent_matching_prompt() -> None:
         assert prompt_input.text == "hello world"
 
 
-async def test_ctrl_r_search_is_case_insensitive() -> None:
+async def test_ctrl_r_search_is_case_insensitive(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -404,10 +426,12 @@ async def test_ctrl_r_search_is_case_insensitive() -> None:
         assert prompt_input.text == "Fix the Bug"
 
 
-async def test_repeated_ctrl_r_advances_to_older_match() -> None:
+async def test_repeated_ctrl_r_advances_to_older_match(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -432,10 +456,12 @@ async def test_repeated_ctrl_r_advances_to_older_match() -> None:
         assert prompt_input.text == "search me alpha"
 
 
-async def test_ctrl_r_enter_exits_search_and_submits() -> None:
+async def test_ctrl_r_enter_exits_search_and_submits(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -458,10 +484,12 @@ async def test_ctrl_r_enter_exits_search_and_submits() -> None:
         assert prompt_input._isearch_active is False
 
 
-async def test_ctrl_r_escape_exits_search_without_submitting() -> None:
+async def test_ctrl_r_escape_exits_search_without_submitting(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -487,8 +515,10 @@ async def test_ctrl_r_escape_exits_search_without_submitting() -> None:
 # --- command palette from the prompt (a leading ">" in the prompt input) ---
 
 
-async def test_bare_gt_shows_the_full_discovery_list() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_bare_gt_shows_the_full_discovery_list(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(">")
@@ -500,12 +530,14 @@ async def test_bare_gt_shows_the_full_discovery_list() -> None:
         assert "Clear session" in _palette_hit_texts(palette)
 
 
-async def test_bare_gt_lists_rows_alphabetically_since_every_score_ties_at_zero() -> None:
+async def test_bare_gt_lists_rows_alphabetically_since_every_score_ties_at_zero(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A `DiscoveryHit` (what `discover()` yields for the empty query behind a bare `>`)
     always scores `0.0`, so with nothing to rank by, the alphabetical tiebreak alone decides
     the full listing's order (see `gather_palette_hits`).
     """
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(">")
@@ -518,8 +550,10 @@ async def test_bare_gt_lists_rows_alphabetically_since_every_score_ties_at_zero(
         assert texts == sorted(texts, key=str.casefold)
 
 
-async def test_typing_a_query_narrows_the_palette_to_matching_hits() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_typing_a_query_narrows_the_palette_to_matching_hits(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(*f"{PALETTE_PREFIX}clear")
@@ -530,8 +564,10 @@ async def test_typing_a_query_narrows_the_palette_to_matching_hits() -> None:
         assert _palette_hit_texts(palette) == {"Clear session"}
 
 
-async def test_up_down_arrows_move_the_palette_highlight_not_the_cursor() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_up_down_arrows_move_the_palette_highlight_not_the_cursor(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(">")
@@ -553,8 +589,10 @@ async def test_up_down_arrows_move_the_palette_highlight_not_the_cursor() -> Non
         assert prompt_input.text == ">"
 
 
-async def test_enter_executes_the_highlighted_palette_command_and_clears_the_input() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_enter_executes_the_highlighted_palette_command_and_clears_the_input(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(*f"{PALETTE_PREFIX}clear")
@@ -571,11 +609,13 @@ async def test_enter_executes_the_highlighted_palette_command_and_clears_the_inp
         assert len(history.query(Static).exclude(".mascot")) == 1
 
 
-async def test_palette_selection_is_recorded_in_history_by_its_canonical_name() -> None:
+async def test_palette_selection_is_recorded_in_history_by_its_canonical_name(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Recalling a palette selection via up-arrow should show `>Clear session` (the
     canonical/standard name), not whatever partial query the user actually typed.
     """
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(*f"{PALETTE_PREFIX}cle")
@@ -588,12 +628,14 @@ async def test_palette_selection_is_recorded_in_history_by_its_canonical_name() 
         assert prompt_input.text == f"{PALETTE_PREFIX}Clear session"
 
 
-async def test_recalling_a_past_palette_selection_does_not_resurface_the_popup() -> None:
+async def test_recalling_a_past_palette_selection_does_not_resurface_the_popup(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Browsing history up to a recalled `>Clear session` entry (per
     docs/specs/command-palette-from-prompt.md's "History browsing" section) shows it as
     plain recalled text; the popup only reappears once the user actually edits it.
     """
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(*f"{PALETTE_PREFIX}clear")
@@ -609,8 +651,10 @@ async def test_recalling_a_past_palette_selection_does_not_resurface_the_popup()
         assert palette.display is False
 
 
-async def test_escape_dismisses_the_palette_and_continues_as_plain_text() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_escape_dismisses_the_palette_and_continues_as_plain_text(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(*f"{PALETTE_PREFIX}clear")
@@ -630,10 +674,12 @@ async def test_escape_dismisses_the_palette_and_continues_as_plain_text() -> Non
         assert palette.display is False
 
 
-async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt() -> None:
+async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         # Set directly rather than typed key-by-key: only the end state (a non-matching
@@ -657,8 +703,10 @@ async def test_enter_with_no_matching_palette_option_submits_as_a_plain_prompt()
         assert prompt_widget.content == gibberish
 
 
-async def test_no_match_then_space_dismisses_the_palette() -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_no_match_then_space_dismisses_the_palette(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         # Set directly rather than typed key-by-key (see
@@ -681,7 +729,9 @@ async def test_no_match_then_space_dismisses_the_palette() -> None:
         assert palette.display is False
 
 
-async def test_backspacing_the_leading_gt_to_empty_closes_the_palette() -> None:
+async def test_backspacing_the_leading_gt_to_empty_closes_the_palette(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Regression test: backspace is dispatched via a bound `TextArea` action
     (`action_delete_left`) that Textual applies *after* `_on_key` returns, not from within
     it — so `_refresh_palette` can't reliably read the post-edit text if called directly from
@@ -690,7 +740,7 @@ async def test_backspacing_the_leading_gt_to_empty_closes_the_palette() -> None:
     """
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         await pilot.press(">")
@@ -723,8 +773,10 @@ async def test_backspacing_the_leading_gt_to_empty_closes_the_palette() -> None:
 # --- @-mention file finder ---
 
 
-async def test_at_mention_opens_the_finder_with_matches(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_at_mention_opens_the_finder_with_matches(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py", "src/other.py")
         try:
@@ -739,8 +791,10 @@ async def test_at_mention_opens_the_finder_with_matches(tmp_path: Path) -> None:
             index.close()
 
 
-async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "a.py", "b.py")
         try:
@@ -765,8 +819,10 @@ async def test_up_down_arrows_move_the_finder_highlight_not_the_cursor(tmp_path:
             index.close()
 
 
-async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_enter_selects_the_highlighted_match_and_escapes_spaces(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "readme with space.md")
         try:
@@ -783,8 +839,10 @@ async def test_enter_selects_the_highlighted_match_and_escapes_spaces(tmp_path: 
             index.close()
 
 
-async def test_clicking_a_match_activates_it_not_just_highlights_it(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_clicking_a_match_activates_it_not_just_highlights_it(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "a.py", "b.py", "c.py")
         try:
@@ -807,8 +865,9 @@ async def test_clicking_a_match_activates_it_not_just_highlights_it(tmp_path: Pa
 
 async def test_clicking_a_directory_match_narrows_the_query_instead_of_completing(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -828,8 +887,10 @@ async def test_clicking_a_directory_match_narrows_the_query_instead_of_completin
             index.close()
 
 
-async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_tab_selects_the_highlighted_match(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -846,8 +907,9 @@ async def test_tab_selects_the_highlighted_match(tmp_path: Path) -> None:
 
 async def test_tab_on_a_directory_match_narrows_the_query_instead_of_completing(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -871,8 +933,10 @@ async def test_tab_on_a_directory_match_narrows_the_query_instead_of_completing(
             index.close()
 
 
-async def test_escape_dismisses_the_finder_and_continues_as_plain_text(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_escape_dismisses_the_finder_and_continues_as_plain_text(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -895,10 +959,12 @@ async def test_escape_dismisses_the_finder_and_continues_as_plain_text(tmp_path:
             index.close()
 
 
-async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(tmp_path: Path) -> None:
+async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _reply()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -919,8 +985,10 @@ async def test_no_matching_query_does_not_intercept_enter_and_submits_normally(t
             index.close()
 
 
-async def test_typing_space_after_the_mention_closes_the_finder(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_typing_space_after_the_mention_closes_the_finder(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:
@@ -940,8 +1008,10 @@ async def test_typing_space_after_the_mention_closes_the_finder(tmp_path: Path) 
             index.close()
 
 
-async def test_moving_cursor_out_of_the_mention_closes_the_finder(tmp_path: Path) -> None:
-    app = ReplApp(session=_session(MagicMock()))
+async def test_moving_cursor_out_of_the_mention_closes_the_finder(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
     async with app.run_test() as pilot:
         index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
         try:

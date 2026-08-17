@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for `klorb.server.subagent_updates.build_subagent_tree_snapshot`."""
-
 import threading
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle
@@ -9,9 +9,12 @@ from klorb.server.subagent_updates import build_subagent_tree_snapshot
 from klorb.session import Session, SessionConfig
 
 
-def _add_subagent(root: Session, role: str = "explorer", title: str = "find the bug") -> SubagentHandle:
+def _add_subagent(
+    root: Session, make_session_config: Callable[..., SessionConfig],
+    role: str = "explorer", title: str = "find the bug",
+) -> SubagentHandle:
     child = Session(
-        SessionConfig(role_name=role), provider=MagicMock(), parent=root, session_name=title)
+        make_session_config(role_name=role), provider=MagicMock(), parent=root, session_name=title)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role=role, title=title)
@@ -19,8 +22,8 @@ def _add_subagent(root: Session, role: str = "explorer", title: str = "find the 
     return handle
 
 
-def test_root_only_tree_reports_one_node() -> None:
-    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
+def test_root_only_tree_reports_one_node(make_session_config: Callable[..., SessionConfig]) -> None:
+    root = Session(make_session_config(role_name="operator"), provider=MagicMock())
 
     snapshot = build_subagent_tree_snapshot(root)
 
@@ -41,9 +44,11 @@ def test_root_only_tree_reports_one_node() -> None:
     }]
 
 
-def test_subagent_node_reports_its_parent_by_the_root_id() -> None:
-    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
-    handle = _add_subagent(root)
+def test_subagent_node_reports_its_parent_by_the_root_id(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    root = Session(make_session_config(role_name="operator"), provider=MagicMock())
+    handle = _add_subagent(root, make_session_config)
 
     snapshot = build_subagent_tree_snapshot(root)
 
@@ -54,10 +59,12 @@ def test_subagent_node_reports_its_parent_by_the_root_id() -> None:
     assert child_node["state"] == "running"
 
 
-def test_grandchild_subagent_reports_its_direct_parent_not_the_root() -> None:
-    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
-    handle = _add_subagent(root, title="find the bug")
-    grandchild = _add_subagent(handle.session, title="dig deeper")
+def test_grandchild_subagent_reports_its_direct_parent_not_the_root(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    root = Session(make_session_config(role_name="operator"), provider=MagicMock())
+    handle = _add_subagent(root, make_session_config, title="find the bug")
+    grandchild = _add_subagent(handle.session, make_session_config, title="dig deeper")
 
     snapshot = build_subagent_tree_snapshot(root)
 
@@ -67,9 +74,11 @@ def test_grandchild_subagent_reports_its_direct_parent_not_the_root() -> None:
     assert grandchild_node["address"] == "1.1.1"
 
 
-def test_finished_handle_with_abort_marker_reports_aborted() -> None:
-    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
-    handle = _add_subagent(root)
+def test_finished_handle_with_abort_marker_reports_aborted(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    root = Session(make_session_config(role_name="operator"), provider=MagicMock())
+    handle = _add_subagent(root, make_session_config)
     handle.state = "finished"
     handle.output = f"partial\n\n{SUBAGENT_ABORTED_MARKER}"
 
@@ -80,9 +89,11 @@ def test_finished_handle_with_abort_marker_reports_aborted() -> None:
     assert child_node["aborted"] is True
 
 
-def test_finished_handle_without_abort_marker_reports_not_aborted() -> None:
-    root = Session(SessionConfig(role_name="operator"), provider=MagicMock())
-    handle = _add_subagent(root)
+def test_finished_handle_without_abort_marker_reports_not_aborted(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    root = Session(make_session_config(role_name="operator"), provider=MagicMock())
+    handle = _add_subagent(root, make_session_config)
     handle.state = "finished"
     handle.output = "all done"
 

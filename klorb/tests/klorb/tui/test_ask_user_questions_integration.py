@@ -66,13 +66,15 @@ def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Sess
     return Session(config, provider=provider, tool_registry=tool_registry)
 
 
-async def test_ask_user_questions_modal_appears_for_an_ask_tool_call() -> None:
+async def test_ask_user_questions_modal_appears_for_an_ask_tool_call(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [{"header": "Auth", "question": "Which?", "options": []}])]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -87,7 +89,9 @@ async def test_ask_user_questions_modal_appears_for_an_ask_tool_call() -> None:
         assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_ask_user_questions_modal_answer_flows_back_into_the_tool_response() -> None:
+async def test_ask_user_questions_modal_answer_flows_back_into_the_tool_response(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [{
@@ -96,7 +100,7 @@ async def test_ask_user_questions_modal_answer_flows_back_into_the_tool_response
         }])]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -125,13 +129,15 @@ async def test_ask_user_questions_modal_answer_flows_back_into_the_tool_response
         assert "Decision: JWT" in history_text
 
 
-async def test_ask_user_questions_modal_escape_cancels_and_shows_error() -> None:
+async def test_ask_user_questions_modal_escape_cancels_and_shows_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [{"header": "Auth", "question": "Which?", "options": []}])]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -152,7 +158,9 @@ async def test_ask_user_questions_modal_escape_cancels_and_shows_error() -> None
         assert "declined" in str(tool_response.content)
 
 
-async def test_ask_user_questions_modal_other_input_flows_back_as_free_text() -> None:
+async def test_ask_user_questions_modal_other_input_flows_back_as_free_text(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_call("call_1", [{
@@ -161,7 +169,7 @@ async def test_ask_user_questions_modal_other_input_flows_back_as_free_text() ->
         }])]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model")
+    config = make_session_config(model="some/model")
     session = _session_with_real_tools(mock_provider, config)
     app = ReplApp(session=session)
 

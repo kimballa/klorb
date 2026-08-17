@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.create_file."""
-
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -232,18 +232,20 @@ def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
 _AWS_KEY = "AKIAABCDEFGHIJKLMNOP"
 
 
-def _session(tmp_path: Path) -> Session:
-    config = SessionConfig(
+def _session(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> Session:
+    config = make_session_config(
         workspace=Workspace(path=tmp_path), read_dirs=DirRules(allow=[tmp_path]),
         write_dirs=DirRules(allow=[tmp_path]))
     return Session(config=config)
 
 
-def test_create_file_token_round_trip_preserves_the_real_secret(tmp_path: Path) -> None:
+def test_create_file_token_round_trip_preserves_the_real_secret(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The read/create loop: a `[[SECRET:...]]` token echoed in CreateFile's content resolves
     to the real secret before writing, and the real secret -- never the literal token text --
     is what ends up on disk."""
-    session = _session(tmp_path)
+    session = _session(tmp_path, make_session_config)
     try:
         # Write a source file containing a secret, then read it to get a token.
         src = tmp_path / "creds.env"

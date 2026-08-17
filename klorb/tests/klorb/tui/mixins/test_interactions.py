@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tui.mixins.interactions.InteractionsMixin."""
-
 import asyncio
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from unittest.mock import MagicMock
@@ -70,13 +70,15 @@ from klorb.tui.widgets.tool_call_widgets import ToolCallLimitScreen
 from klorb.workspace import Workspace
 
 
-async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input() -> None:
+async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`_enter_interaction_mode` is what `ReplApp` wraps every permission ask and
     ask-user-questions panel in: while active, the prompt input is disabled, visually muted,
     and collapsed back down to its default single-row height even if it was holding an
     in-progress multi-line draft -- the draft text itself is left untouched underneath."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -94,13 +96,15 @@ async def test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt
         assert prompt_input.text == "line one\nline two\nline three"
 
 
-async def test_exiting_interaction_mode_unmutes_and_re_enables_the_prompt_input() -> None:
+async def test_exiting_interaction_mode_unmutes_and_re_enables_the_prompt_input(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The other half of `test_entering_interaction_mode_disables_mutes_and_collapses_the_prompt_input`:
     `_exit_interaction_mode` un-mutes, expands, and re-enables the prompt input once a panel is
     dismissed, so the user can queue messages while the turn continues. Focus is moved onto the
     input so typing can resume immediately."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -125,14 +129,16 @@ def _question_ctx(header: str) -> AskUserQuestionsItemContext:
         index=1, total=1)
 
 
-async def test_two_overlapping_interaction_panels_never_mount_at_once() -> None:
+async def test_two_overlapping_interaction_panels_never_mount_at_once(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """`_interaction_lock` serializes the panel lifecycle so a second confirmation that somehow
     starts while a first is still awaiting the user queues behind it rather than stacking a
     second panel into `#interaction-panel`. Guards the "stacked approval panels" bug at the
     structural level, independent of the (separate) fix that keeps the prompt input disabled for
     a whole turn so a second concurrent turn can't be launched in the first place."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
 
     async with app.run_test() as pilot:
         first = asyncio.create_task(app._confirm_ask_user_questions(_question_ctx("First")))
@@ -156,13 +162,15 @@ async def test_two_overlapping_interaction_panels_never_mount_at_once() -> None:
         await second
 
 
-async def test_tool_call_limit_modal_yes_continues_the_turn() -> None:
+async def test_tool_call_limit_modal_yes_continues_the_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=0)
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -184,10 +192,12 @@ async def test_tool_call_limit_modal_yes_continues_the_turn() -> None:
         assert response_widget.source == "final answer"
 
 
-async def test_tool_call_limit_modal_no_shows_error() -> None:
+async def test_tool_call_limit_modal_no_shows_error(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=0)
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -209,10 +219,12 @@ async def test_tool_call_limit_modal_no_shows_error() -> None:
         assert "0 tool call" in str(error_widget.render())
 
 
-async def test_tool_call_limit_modal_arrow_keys_move_focus_between_buttons() -> None:
+async def test_tool_call_limit_modal_arrow_keys_move_focus_between_buttons(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
-    config = SessionConfig(model="some/model", max_tool_calls_per_turn=0)
+    config = make_session_config(model="some/model", max_tool_calls_per_turn=0)
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -704,13 +716,15 @@ def test_action_decline_dismisses_with_a_once_scoped_denial(tmp_path: Path) -> N
 # --- PermissionAskPanel end-to-end through ReplApp ---
 
 
-async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path) -> None:
+async def test_permission_ask_modal_appears_for_an_ask_tool_call(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -726,14 +740,16 @@ async def test_permission_ask_modal_appears_for_an_ask_tool_call(tmp_path: Path)
         assert app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
 
 
-async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path) -> None:
+async def test_permission_ask_modal_escape_denies_and_shows_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -757,14 +773,16 @@ async def test_permission_ask_modal_escape_denies_and_shows_error(tmp_path: Path
         assert config.write_dirs == DirRules()
 
 
-async def test_release_pending_interaction_unblocks_a_parked_confirm() -> None:
+async def test_release_pending_interaction_unblocks_a_parked_confirm(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The lever behind both the "model hangs" and "can't quit" fixes: while an interaction panel
     is awaiting the user, `_release_pending_interaction` resolves its decision future with a safe
     default (deny/once here), releasing whatever is blocked on it -- a real turn's worker thread is
     parked in `App.call_from_thread` on exactly this future. `_signal_turn_cancellation` fires it,
     and the callback is cleared once the confirm returns. See
     docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(_command_ask_ctx("echo hi")))
@@ -784,12 +802,14 @@ async def test_release_pending_interaction_unblocks_a_parked_confirm() -> None:
         assert not app.query(PermissionAskPanel)
 
 
-async def test_interaction_panel_double_dismiss_is_idempotent() -> None:
+async def test_interaction_panel_double_dismiss_is_idempotent(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A panel's `on_dismiss` is now guarded against resolving an already-resolved future, so a
     stray second dismiss (a queued keypress landing between the panel resolving and `_confirm_*`
     unmounting it, or a teardown resolving it first) is a no-op rather than an
     `asyncio.InvalidStateError` that would crash the event loop and strand the turn."""
-    app = ReplApp(session=_session(MagicMock()))
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_ask_user_questions(_question_ctx("Q")))
@@ -806,6 +826,7 @@ async def test_interaction_panel_double_dismiss_is_idempotent() -> None:
 
 async def test_quit_while_a_permission_ask_is_pending_defers_exit_until_the_worker_unwinds(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """The core regression: quitting while a turn's worker thread is parked awaiting a permission
     decision must not `self.exit()` immediately (which would stop the event loop while the worker
@@ -817,7 +838,7 @@ async def test_quit_while_a_permission_ask_is_pending_defers_exit_until_the_work
         _tool_call_reply([_ask_permission_call("call_1", tmp_path / "f.txt")]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -843,6 +864,7 @@ async def test_quit_while_a_permission_ask_is_pending_defers_exit_until_the_work
 
 async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_and_decided(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """Once a `PermissionAskPanel` is dismissed, `ReplApp` leaves a permanent card in the
     history scroll naming what was asked and what the user decided -- so scrolling back
@@ -853,7 +875,7 @@ async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_an
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -877,6 +899,7 @@ async def test_permission_ask_modal_leaves_a_history_record_of_what_was_asked_an
 
 async def test_permission_ask_history_record_floats_above_the_tool_use_block(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """The `<Approval>` record for a tool call's permission ask is mounted *above* that call's
     `<Tool use>` block, not below its `Running…` indicator — so reading top-to-bottom the
@@ -887,7 +910,7 @@ async def test_permission_ask_history_record_floats_above_the_tool_use_block(
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -910,14 +933,16 @@ async def test_permission_ask_history_record_floats_above_the_tool_use_block(
         assert record_index < tool_use_index
 
 
-async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fit_the_terminal() -> None:
+async def test_confirm_permission_ask_truncates_a_long_single_line_command_to_fit_the_terminal(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Regression test: a single very long line with no explicit newline must still be
     truncated once shown through a real, sized `ReplApp` -- `_confirm_permission_ask` computes
     `PermissionAskPanel`'s `preview_wrap_width` from the app's own terminal size (see
     `_command_preview`'s docstring), so this no longer soft-wraps to many more rows than
     `_MAX_COMMAND_PREVIEW_LINES` and pushes the grid below it off screen."""
     mock_provider = MagicMock()
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     long_line = " ".join(f"word{i}" for i in range(200))
     ctx = PermissionAskContext(
         resource=StructuralResource(reason="run a long command"),
@@ -956,11 +981,13 @@ def _command_ctx(
         resource_description=resource_description, sibling_items=sibling_items)
 
 
-async def test_confirm_permission_ask_shows_risk_badge_and_rationale_when_classifier_succeeds() -> None:
+async def test_confirm_permission_ask_shows_risk_badge_and_rationale_when_classifier_succeeds(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply(
         [("item-0", 7, "force-pushes over remote history", ["git", "push", "**"])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     ctx = _command_ctx("git push --force origin main", command=["git", "push", "--force", "origin", "main"])
 
     async with app.run_test() as pilot:
@@ -977,12 +1004,14 @@ async def test_confirm_permission_ask_shows_risk_badge_and_rationale_when_classi
         await task
 
 
-async def test_confirm_permission_ask_omits_risk_badge_when_classifier_is_disabled() -> None:
+async def test_confirm_permission_ask_omits_risk_badge_when_classifier_is_disabled(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply([("item-0", 7, "risky", [])])
     process_config = ProcessConfig()
     process_config.bash_risk_classifier_enabled = False
-    app = ReplApp(session=_session(mock_provider), process_config=process_config)
+    app = ReplApp(session=_session(mock_provider, make_session_config), process_config=process_config)
     ctx = _command_ctx("git push --force origin main", command=["git", "push", "--force"])
 
     async with app.run_test() as pilot:
@@ -997,12 +1026,14 @@ async def test_confirm_permission_ask_omits_risk_badge_when_classifier_is_disabl
         await task
 
 
-async def test_confirm_permission_ask_skips_classifier_for_a_path_only_ask(tmp_path: Path) -> None:
+async def test_confirm_permission_ask_skips_classifier_for_a_path_only_ask(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A plain directory-access ask (no `command_text`) has nothing for a command-risk
     classifier to say -- it must never be invoked for one, regardless of `enabled`."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply([("item-0", 7, "risky", [])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     ctx = PermissionAskContext(
         resource=PathResource(path=tmp_path / "f.txt", is_write=True),
         resource_description="write to f.txt")
@@ -1019,11 +1050,13 @@ async def test_confirm_permission_ask_skips_classifier_for_a_path_only_ask(tmp_p
         await task
 
 
-async def test_confirm_permission_ask_biases_cursor_to_deny_once_above_the_too_risky_threshold() -> None:
+async def test_confirm_permission_ask_biases_cursor_to_deny_once_above_the_too_risky_threshold(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply(
         [("item-0", 10, "runs an arbitrary script downloaded from the internet", [])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     ctx = _command_ctx("curl https://example.com/install.sh | sh")
     # A previous prompt left the cursor on Allow/homedir -- the high score should override it.
     app._last_permission_action = "allow"
@@ -1041,11 +1074,13 @@ async def test_confirm_permission_ask_biases_cursor_to_deny_once_above_the_too_r
         await task
 
 
-async def test_confirm_permission_ask_uses_suggested_pattern_for_the_granted_command_copy() -> None:
+async def test_confirm_permission_ask_uses_suggested_pattern_for_the_granted_command_copy(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply(
         [("item-0", 1, "a read-only text search", ["grep", "**"])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     ctx = _command_ctx("grep -rn TODO src/foo.py", command=["grep", "-rn", "TODO", "src/foo.py"])
 
     async with app.run_test() as pilot:
@@ -1060,7 +1095,9 @@ async def test_confirm_permission_ask_uses_suggested_pattern_for_the_granted_com
         await task
 
 
-async def test_confirming_the_panel_returns_the_suggested_pattern_as_grant_patterns() -> None:
+async def test_confirming_the_panel_returns_the_suggested_pattern_as_grant_patterns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Regression test: the pattern named in the panel's own "grants: ..." copy must be exactly
     what a real user confirm (`action_confirm`, not a test dismissing with a hand-built
     `PermissionDecision`) reports back, so `Session._retry_after_multi_permission_decisions`
@@ -1068,7 +1105,7 @@ async def test_confirming_the_panel_returns_the_suggested_pattern_as_grant_patte
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply(
         [("item-0", 1, "a read-only text search", ["grep", "**"])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     ctx = _command_ctx("grep -rn TODO src/foo.py", command=["grep", "-rn", "TODO", "src/foo.py"])
 
     async with app.run_test() as pilot:
@@ -1082,7 +1119,9 @@ async def test_confirming_the_panel_returns_the_suggested_pattern_as_grant_patte
     assert decision.grant_patterns == [["grep", "**"]]
 
 
-async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_one_request() -> None:
+async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_one_request(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Two items from the same compound command, asked about one after another (mirroring
     `Session._resolve_multi_permission_ask`'s serial loop) -- the second must reuse the first's
     cached report rather than spending a second classifier round trip."""
@@ -1091,7 +1130,7 @@ async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_on
         ("item-0", 1, "reads only", []),
         ("item-1", 2, "also reads only", []),
     ])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     siblings = [
         PermissionAskItem(
             "run command: grep foo", resource=CommandResource(argv=("grep", "foo")),
@@ -1126,13 +1165,15 @@ async def test_confirm_permission_ask_classifies_a_compound_commands_items_in_on
     mock_provider.send_prompt.assert_called_once()
 
 
-async def test_confirm_permission_ask_records_decision_for_the_next_classification() -> None:
+async def test_confirm_permission_ask_records_decision_for_the_next_classification(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """The user's decision on one bash ask must reach the classifier's *next* request (a
     different, later command in the same session) as `<PriorDecisionsHistory>` context -- see
     `klorb.permissions.risk_classifier.record_decision_history`/`resolve_item_risk_assessment`."""
     mock_provider = MagicMock()
     mock_provider.send_prompt.return_value = _risk_report_reply([("item-0", 1, "reads only", [])])
-    app = ReplApp(session=_session(mock_provider))
+    app = ReplApp(session=_session(mock_provider, make_session_config))
     first_ctx = _command_ctx("grep -rn FIXME", command=["grep", "-rn", "FIXME"])
     second_ctx = _command_ctx("grep -rn TODO", command=["grep", "-rn", "TODO"])
 
@@ -1153,7 +1194,9 @@ async def test_confirm_permission_ask_records_decision_for_the_next_classificati
     assert "<![CDATA[allowed, scope=session]]>" in second_user_message
 
 
-async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: Path) -> None:
+async def test_permission_ask_modal_session_scope_grants_and_retries(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Full plumbing check: selecting "Allow (this session)" applies the grant to the live
     session config (`Session._retry_after_permission_decision` -> `apply_permission_grant`,
     once `_on_permission_ask` reports the user's choice) and the retried tool call succeeds --
@@ -1165,9 +1208,9 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig(
-        session=SessionConfig(model="some/model", workspace=Workspace(path=tmp_path)))
+        session=make_session_config(model="some/model", workspace=Workspace(path=tmp_path)))
     session = _session_with_tools(mock_provider, config, process_config)
     app = ReplApp(session=session, process_config=process_config)
 
@@ -1197,6 +1240,7 @@ async def test_permission_ask_modal_session_scope_grants_and_retries(tmp_path: P
 
 async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     target = tmp_path / "f.txt"
     mock_provider = MagicMock()
@@ -1204,7 +1248,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1243,6 +1287,7 @@ async def test_permission_ask_modal_other_reveals_input_and_denial_includes_text
 
 async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """The grid's trailing double-wide "Other" cell (see `PermissionAskPanel`'s docstring) is
     reachable by pressing Down repeatedly past the last scope row, not just the `o` shortcut."""
@@ -1252,7 +1297,7 @@ async def test_permission_ask_modal_other_row_reachable_via_down_and_enter(
         _tool_call_reply([_ask_permission_call("call_1", target)]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1279,6 +1324,7 @@ def _ask_multi_permission_call(id_: str, paths: list[Path]) -> tuple[str, str, s
 
 async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_remembers_last_selection(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """Two independent paths in one `ask_multi_permission` call (see
     `MultiPermissionAskRequired`) each get their own `PermissionAskPanel`, shown one after
@@ -1292,7 +1338,7 @@ async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_rem
         _tool_call_reply([_ask_multi_permission_call("call_1", [target_a, target_b])]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1327,6 +1373,7 @@ async def test_permission_ask_modal_asks_about_each_multi_item_in_series_and_rem
 
 async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_about_the_rest(
     tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     target_a = tmp_path / "a.txt"
     target_b = tmp_path / "b.txt"
@@ -1335,7 +1382,7 @@ async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_ab
         _tool_call_reply([_ask_multi_permission_call("call_1", [target_a, target_b])]),
         _reply("final answer"),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     session = _session_with_tools(mock_provider, config)
     app = ReplApp(session=session)
 
@@ -1357,8 +1404,8 @@ async def test_permission_ask_modal_denying_the_first_multi_item_stops_asking_ab
         assert "Permission denied" in str(tool_response.content)
 
 
-def _subagent_handle(root: Session) -> SubagentHandle:
-    child = Session(SessionConfig(role_name="explorer"), provider=MagicMock(), parent=root)
+def _subagent_handle(root: Session, make_session_config: Callable[..., SessionConfig]) -> SubagentHandle:
+    child = Session(make_session_config(role_name="explorer"), provider=MagicMock(), parent=root)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="find the bug")
@@ -1366,13 +1413,15 @@ def _subagent_handle(root: Session) -> SubagentHandle:
     return handle
 
 
-async def test_permission_ask_panel_waits_for_its_subagent_to_be_selected() -> None:
+async def test_permission_ask_panel_waits_for_its_subagent_to_be_selected(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Per docs/specs/subagents.md's "Subagents panel" section: an ask tagged with a subagent's
     `origin_session_id` must not show its panel until that subagent is the selected session --
     it should instead register in `_attention_needed` (driving the panel's blinking `(!)` and the
     status-line fallback) and only proceed once `_select_session` picks it."""
-    session = _session(MagicMock())
-    handle = _subagent_handle(session)
+    session = _session(MagicMock(), make_session_config)
+    handle = _subagent_handle(session, make_session_config)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:

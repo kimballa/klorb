@@ -35,8 +35,10 @@ from klorb.workspace import input_history as input_history_module
 TEST_SESSION_ID = "test-session-id"
 
 
-def _session(provider: MagicMock, model: str = "some/model") -> Session:
-    return Session(SessionConfig(model=model), provider=provider, session_id=TEST_SESSION_ID)
+def _session(
+    provider: MagicMock, make_session_config: Callable[..., SessionConfig], model: str = "some/model"
+) -> Session:
+    return Session(make_session_config(model=model), provider=provider, session_id=TEST_SESSION_ID)
 
 
 def _session_with_tools(
@@ -240,15 +242,18 @@ def _isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return data_dir
 
 
-def _process_config_for_workspace(workspace: Workspace, model: str = "some/model") -> ProcessConfig:
-    return ProcessConfig(session=SessionConfig(model=model, workspace=workspace))
+def _process_config_for_workspace(
+    workspace: Workspace, make_session_config: Callable[..., SessionConfig], model: str = "some/model"
+) -> ProcessConfig:
+    return ProcessConfig(session=make_session_config(model=model, workspace=workspace))
 
 
 def _repl_app_for_workspace(
-    workspace: Workspace, trust_manager: TrustManager | None, model: str = "some/model",
+    workspace: Workspace, make_session_config: Callable[..., SessionConfig],
+    trust_manager: TrustManager | None, model: str = "some/model",
     *, skip_session_restore: bool = False,
 ) -> ReplApp:
-    process_config = _process_config_for_workspace(workspace, model)
+    process_config = _process_config_for_workspace(workspace, make_session_config, model)
     session = Session(
         process_config.session.model_copy(), provider=MagicMock(), session_id=TEST_SESSION_ID,
         process_config=process_config)

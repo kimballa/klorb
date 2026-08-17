@@ -2,10 +2,10 @@
 """Tests for klorb.session_naming: LLM-derived session titles. See
 docs/specs/session-and-turns.md's "Session naming" section.
 """
-
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -159,14 +159,18 @@ def test_response_format_sets_additional_properties_false() -> None:
 # --- default_naming_model ---
 
 
-def test_default_naming_model_picks_the_capability_tagged_model() -> None:
-    session = Session(SessionConfig(), provider=MagicMock())
+def test_default_naming_model_picks_the_capability_tagged_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
 
     assert default_naming_model(session) == "openai/gpt-5-nano"
 
 
-def test_default_naming_model_falls_back_when_no_model_declares_the_capability() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+def test_default_naming_model_falls_back_when_no_model_declares_the_capability(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), model_registry=sample_model_registry())
 
     assert default_naming_model(session) == DEFAULT_SESSION_CLASSIFIER_MODEL
 
@@ -174,19 +178,25 @@ def test_default_naming_model_falls_back_when_no_model_declares_the_capability()
 # --- thinking_effort_for ---
 
 
-def test_thinking_effort_for_returns_low_effort_for_a_thinking_capable_model() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+def test_thinking_effort_for_returns_low_effort_for_a_thinking_capable_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), model_registry=sample_model_registry())
 
     assert thinking_effort_for(session, "beta") == {"effort": "low"}
 
 
-def test_thinking_effort_for_returns_none_for_a_non_thinking_model() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+def test_thinking_effort_for_returns_none_for_a_non_thinking_model(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), model_registry=sample_model_registry())
 
     assert thinking_effort_for(session, "alpha") is None
 
 
-def test_thinking_effort_for_returns_none_for_an_unregistered_model_name() -> None:
-    session = Session(SessionConfig(), provider=MagicMock(), model_registry=sample_model_registry())
+def test_thinking_effort_for_returns_none_for_an_unregistered_model_name(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock(), model_registry=sample_model_registry())
 
     assert thinking_effort_for(session, "not/a-registered-model") is None

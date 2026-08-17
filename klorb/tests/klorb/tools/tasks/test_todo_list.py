@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.tasks.todo_list."""
-
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -20,17 +20,21 @@ requires_chainlink = pytest.mark.skipif(
     reason="chainlink binary not found on PATH or ~/.cargo/bin")
 
 
-def _context(tmp_path: Path, role_name: str = "operator") -> ToolSetupContext:
+def _context(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], role_name: str = "operator"
+) -> ToolSetupContext:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(exist_ok=True)
-    config = SessionConfig(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
+    config = make_session_config(role_name=role_name, workspace=Workspace(path=workspace_root, trusted=True))
     session = Session(config=config)
     return ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=session)
 
 
 @requires_chainlink
-def test_empty_workspace_returns_no_issues(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_empty_workspace_returns_no_issues(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
 
     result = TodoListTool(context).apply({})
 
@@ -38,8 +42,10 @@ def test_empty_workspace_returns_no_issues(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_lists_open_issues_by_default(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_lists_open_issues_by_default(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     a = TodoCreateTool(context).apply({"title": "A"})
     b = TodoCreateTool(context).apply({"title": "B"})
     TodoUpdateTool(context).apply({"id": b["id"], "close": True})
@@ -50,8 +56,10 @@ def test_lists_open_issues_by_default(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_include_closed_returns_closed_issues_sorted_last(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_include_closed_returns_closed_issues_sorted_last(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     a = TodoCreateTool(context).apply({"title": "A"})
     b = TodoCreateTool(context).apply({"title": "B"})
     TodoUpdateTool(context).apply({"id": b["id"], "close": True})
@@ -63,8 +71,10 @@ def test_include_closed_returns_closed_issues_sorted_last(tmp_path: Path) -> Non
 
 
 @requires_chainlink
-def test_single_id_uses_show_directly(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_single_id_uses_show_directly(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     created = TodoCreateTool(context).apply({"title": "Solo lookup", "description": "detail"})
 
     result = TodoListTool(context).apply({"ids": [created["id"]]})
@@ -74,8 +84,10 @@ def test_single_id_uses_show_directly(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_multiple_ids_filters_the_sorted_result(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_multiple_ids_filters_the_sorted_result(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     a = TodoCreateTool(context).apply({"title": "A"})
     TodoCreateTool(context).apply({"title": "B"})
     c = TodoCreateTool(context).apply({"title": "C"})
@@ -86,8 +98,10 @@ def test_multiple_ids_filters_the_sorted_result(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_sorts_unblocked_before_blocked(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_sorts_unblocked_before_blocked(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     blocker = TodoCreateTool(context).apply({"title": "Blocker"})
     blocked = TodoCreateTool(context).apply({
         "title": "Blocked", "blocked_by": [blocker["id"]],
@@ -102,8 +116,10 @@ def test_sorts_unblocked_before_blocked(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_sorts_by_priority_descending(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_sorts_by_priority_descending(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     low = TodoCreateTool(context).apply({"title": "Low", "priority": "low"})
     critical = TodoCreateTool(context).apply({"title": "Critical", "priority": "critical"})
 
@@ -114,10 +130,12 @@ def test_sorts_by_priority_descending(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_a_closed_blockers_blocked_issue_no_longer_counts_as_blocked(tmp_path: Path) -> None:
+def test_a_closed_blockers_blocked_issue_no_longer_counts_as_blocked(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """chainlink's own `blocked_by` list is never pruned as a blocker closes -- `TodoList` must
     compute "still in the way" itself (see `klorb.tools.tasks.common.open_blocker_count`)."""
-    context = _context(tmp_path)
+    context = _context(tmp_path, make_session_config)
     blocker = TodoCreateTool(context).apply({"title": "Blocker"})
     blocked = TodoCreateTool(context).apply({
         "title": "Formerly blocked", "blocked_by": [blocker["id"]],
@@ -131,8 +149,10 @@ def test_a_closed_blockers_blocked_issue_no_longer_counts_as_blocked(tmp_path: P
 
 
 @requires_chainlink
-def test_self_scope_is_the_default_and_excludes_an_all_labeled_issue(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_self_scope_is_the_default_and_excludes_an_all_labeled_issue(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     TodoCreateTool(context).apply({"title": "Mine"})
     TodoCreateTool(context).apply({"title": "Unclaimed", "assign_to": "all"})
 
@@ -142,8 +162,10 @@ def test_self_scope_is_the_default_and_excludes_an_all_labeled_issue(tmp_path: P
 
 
 @requires_chainlink
-def test_group_scope_returns_every_issue_regardless_of_assignment(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_group_scope_returns_every_issue_regardless_of_assignment(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     TodoCreateTool(context).apply({"title": "Mine"})
     TodoCreateTool(context).apply({"title": "Unclaimed", "assign_to": "all"})
 
@@ -153,16 +175,18 @@ def test_group_scope_returns_every_issue_regardless_of_assignment(tmp_path: Path
 
 
 @requires_chainlink
-def test_group_scope_requires_see_group_tasks_capability(tmp_path: Path) -> None:
-    context = _context(tmp_path, role_name="explorer")
+def test_group_scope_requires_see_group_tasks_capability(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, role_name="explorer")
 
     with pytest.raises(ToolCallError, match="may not view the whole group's tasks"):
         TodoListTool(context).apply({"scope": "group"})
 
 
 @requires_chainlink
-def test_name_and_parameters(tmp_path: Path) -> None:
-    tool = TodoListTool(_context(tmp_path))
+def test_name_and_parameters(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    tool = TodoListTool(_context(tmp_path, make_session_config))
 
     assert tool.name() == "TodoList"
     assert tool.category() == "TASKS"
@@ -171,8 +195,8 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_summary(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_summary(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    context = _context(tmp_path, make_session_config)
     tool = TodoListTool(context)
 
     result = tool.apply({})
@@ -182,8 +206,10 @@ def test_summary(tmp_path: Path) -> None:
 
 
 @requires_chainlink
-def test_summary_special_cases_a_single_issue_with_title_and_description(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_summary_special_cases_a_single_issue_with_title_and_description(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     TodoCreateTool(context).apply({"title": "Only task", "description": "the full detail"})
     tool = TodoListTool(context)
 
@@ -193,8 +219,10 @@ def test_summary_special_cases_a_single_issue_with_title_and_description(tmp_pat
 
 
 @requires_chainlink
-def test_summary_single_issue_without_description_omits_the_dash(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_summary_single_issue_without_description_omits_the_dash(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     TodoCreateTool(context).apply({"title": "Only task"})
     tool = TodoListTool(context)
 

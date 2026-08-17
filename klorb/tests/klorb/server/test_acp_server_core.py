@@ -34,15 +34,18 @@ def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int
 
 
 @pytest.fixture
-async def make_harness(tmp_path: Path):
+async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture: `await make_harness(provider=...)` returns a running `AcpHarness`
     wired to an isolated `TrustManager` (so no test touches the real `KLORB_DATA_DIR`), closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
 
-    async def _make(provider: ApiProvider | None = None) -> AcpHarness:
+    async def _make(
+        provider: ApiProvider | None = None
+    ) -> AcpHarness:
         trust_manager = TrustManager(path=tmp_path / "projects.json")
-        harness = await build_acp_harness(ProcessConfig(), provider=provider, trust_manager=trust_manager)
+        harness = await build_acp_harness(ProcessConfig(session=make_session_config()), provider=provider,
+            trust_manager=trust_manager)
         harnesses.append(harness)
         return harness
 
@@ -103,10 +106,11 @@ async def test_second_new_session_closes_the_first_and_returns_a_different_id(
 
 async def test_list_sessions_returns_saved_sessions_for_workspace(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    write_session_state(workspace, "sess-1", make_session_config(workspace=workspace), [])
     touch_recent_session(workspace, "sess-1", "sess-1", "Saved session")
 
     harness = await make_harness(provider=MagicMock())
@@ -122,11 +126,12 @@ async def test_list_sessions_returns_saved_sessions_for_workspace(
 
 async def test_list_sessions_reports_last_modified_timestamp_as_updated_at(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
     timestamp = datetime(2026, 7, 19, 1, 50, 0)
-    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    write_session_state(workspace, "sess-1", make_session_config(workspace=workspace), [])
     touch_recent_session(
         workspace, "sess-1", "sess-1", "Saved session", last_modified_timestamp=timestamp)
 
@@ -150,6 +155,7 @@ async def test_list_sessions_raises_when_cwd_is_omitted(
 
 async def test_load_session_replaces_the_live_session_and_restores_messages(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
@@ -157,7 +163,7 @@ async def test_load_session_replaces_the_live_session_and_restores_messages(
         content="hi", role="user", num_tokens=1, processing_state="complete",
         timestamp=datetime.now())
     write_session_state(
-        workspace, "sess-1", SessionConfig(model="restored/model", workspace=workspace),
+        workspace, "sess-1", make_session_config(model="restored/model", workspace=workspace),
         [saved_message], session_id="sess-1", session_name="Restored")
     touch_recent_session(workspace, "sess-1", "sess-1", "Restored")
 
@@ -201,13 +207,14 @@ async def test_load_session_raises_for_unknown_session_id(
 
 async def test_load_session_raises_when_the_session_is_locked(
     make_harness: Callable[..., Any], tmp_path: Path,
+    make_session_config: Callable[..., SessionConfig],
 ) -> None:
     from klorb.lockfile import create_lockfile
     from klorb.workspace.session_store import session_lock_path
 
     trust_manager = TrustManager(path=tmp_path / "projects.json")
     workspace = trust_manager.register_project(tmp_path, trusted=True)
-    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [])
+    write_session_state(workspace, "sess-1", make_session_config(workspace=workspace), [])
     touch_recent_session(workspace, "sess-1", "sess-1", "Locked session")
     lock = create_lockfile(session_lock_path(workspace, "sess-1"))
     assert lock.try_acquire()

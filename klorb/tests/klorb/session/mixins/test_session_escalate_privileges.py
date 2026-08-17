@@ -1,8 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for Session._resolve_escalate_privileges / the EscalatePrivilegesRequired branch of
 Session._run_tool_calls."""
-
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -57,10 +57,13 @@ def _tool_call_reply(calls: list[tuple[str, str, str]]) -> ProviderResponse:
     )
 
 
-def _session(mock_provider: MagicMock, *, process_config: ProcessConfig | None = None,
-             workspace_path: Path | None = None) -> Session:
+def _session(
+    mock_provider: MagicMock, make_session_config: Callable[..., SessionConfig], *,
+    process_config: ProcessConfig | None = None,
+    workspace_path: Path | None = None,
+) -> Session:
     pc = process_config if process_config is not None else ProcessConfig()
-    config = SessionConfig(
+    config = make_session_config(
         model="some/model",
         workspace=Workspace(path=workspace_path or Path("/tmp/fake-workspace")),
     )
@@ -84,13 +87,13 @@ def _tool_response_content(session: Session) -> str:
     return json.dumps(envelope["response_body"])
 
 
-def test_no_callback_fails_closed() -> None:
+def test_no_callback_fails_closed(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
 
     response = session.send_turn("try it")
 
@@ -101,13 +104,15 @@ def test_no_callback_fails_closed() -> None:
     assert "not approved" in _tool_response_content(session)
 
 
-def test_invalid_scope_reports_error_without_invoking_callback() -> None:
+def test_invalid_scope_reports_error_without_invoking_callback(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1", scope="invalid_scope")]),
         _reply(),
     ]
-    session = _session(mock_provider)
+    session = _session(mock_provider, make_session_config)
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
 
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
@@ -120,14 +125,16 @@ def test_invalid_scope_reports_error_without_invoking_callback() -> None:
     on_escalate.assert_not_called()
 
 
-def test_approved_records_scope_into_session_config() -> None:
+def test_approved_records_scope_into_session_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1", reason="need to write session state")]),
         _reply(),
     ]
     process_config = ProcessConfig()
-    session = _session(mock_provider, process_config=process_config)
+    session = _session(mock_provider, make_session_config, process_config=process_config)
     assert "workspace" not in session.config.approved_scopes
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
 
@@ -146,14 +153,16 @@ def test_approved_records_scope_into_session_config() -> None:
     assert ctx.reason == "need to write session state"
 
 
-def test_homedir_approved_records_scope_into_session_config() -> None:
+def test_homedir_approved_records_scope_into_session_config(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1", scope="homedir")]),
         _reply(),
     ]
     process_config = ProcessConfig()
-    session = _session(mock_provider, process_config=process_config)
+    session = _session(mock_provider, make_session_config, process_config=process_config)
     assert "homedir" not in session.config.approved_scopes
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))
 
@@ -172,14 +181,14 @@ def test_homedir_approved_records_scope_into_session_config() -> None:
     assert str(get_klorb_state_dir()) in ctx.description
 
 
-def test_denied_does_not_record_scope() -> None:
+def test_denied_does_not_record_scope(make_session_config: Callable[..., SessionConfig]) -> None:
     mock_provider = MagicMock()
     mock_provider.send_prompt.side_effect = [
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
     process_config = ProcessConfig()
-    session = _session(mock_provider, process_config=process_config)
+    session = _session(mock_provider, make_session_config, process_config=process_config)
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=False))
 
     response = session.send_turn("try it", TurnEventHandlers(on_escalate_privileges=on_escalate))
@@ -192,7 +201,9 @@ def test_denied_does_not_record_scope() -> None:
     assert "denied" in _tool_response_content(session)
 
 
-def test_escalation_succeeds_without_process_config(tmp_path: Path) -> None:
+def test_escalation_succeeds_without_process_config(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """Escalation is session-scoped: `approved_scopes` lives on `SessionConfig`, so a
     `Session` constructed without a `ProcessConfig` can still record an approval into its
     own `config.approved_scopes` and report success back to the model."""
@@ -201,7 +212,7 @@ def test_escalation_succeeds_without_process_config(tmp_path: Path) -> None:
         _tool_call_reply([_escalate_call("call_1")]),
         _reply(),
     ]
-    config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    config = make_session_config(model="some/model", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     session = Session(config, provider=mock_provider, tool_registry=tool_registry)
     on_escalate = MagicMock(return_value=EscalatePrivilegesDecision(approved=True))

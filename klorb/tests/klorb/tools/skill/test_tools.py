@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for the skill tools: SearchSkills, ActivateSkill, ReadSkillFile."""
-
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -36,13 +36,14 @@ def _write_skill(base: Path, name: str, description: str, *, body: str = "instru
 
 
 def _context(
-    tmp_path: Path, *, skill_rules: SkillRules | None = None,
-    override: PermissionOverride | None = None, claude_skills: bool = False,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig], *,
+        skill_rules: SkillRules | None = None,
+        override: PermissionOverride | None = None, claude_skills: bool = False,
 ) -> ToolSetupContext:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
     process_config = ProcessConfig(compatibility_claude_skills=claude_skills)
-    session_config = SessionConfig(
+    session_config = make_session_config(
         workspace=Workspace(path=ws, trusted=True),
         skill_rules=skill_rules if skill_rules is not None else SkillRules())
     session = Session(session_config, provider=MagicMock(), process_config=process_config)
@@ -58,8 +59,10 @@ def _workspace_skills_dir(context: ToolSetupContext) -> Path:
 # --- SearchSkills ---
 
 
-def test_search_matches_name_and_body(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_search_matches_name_and_body(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     _write_skill(_workspace_skills_dir(context), "birds", "about birds", body="tweet tweet")
     _write_skill(_workspace_skills_dir(context), "cars", "about cars", body="vroom")
 
@@ -73,15 +76,20 @@ def test_search_matches_name_and_body(tmp_path: Path) -> None:
     assert [r["name"] for r in body_hit["results"]] == ["cars"]
 
 
-def test_search_excludes_denied_skill(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(deny=[("workspace", "birds")]))
+def test_search_excludes_denied_skill(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(deny=[("workspace", "birds")]))
     _write_skill(_workspace_skills_dir(context), "birds", "about birds")
     result = SearchSkillsTool(context).apply({"queries": ["bird"]})
     assert result["match_count"] == 0
 
 
-def test_search_excludes_disable_model_invocation_skill(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
+def test_search_excludes_disable_model_invocation_skill(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(
+        tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
     skill_dir = _workspace_skills_dir(context) / "user-only"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -93,8 +101,10 @@ def test_search_excludes_disable_model_invocation_skill(tmp_path: Path) -> None:
 # --- ActivateSkill ---
 
 
-def test_activate_allow_returns_content_and_manifest(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "s")]))
+def test_activate_allow_returns_content_and_manifest(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
     skill_dir = _write_skill(_workspace_skills_dir(context), "s", "do the thing", body="step one")
     (skill_dir / "ref.md").write_text("reference")
 
@@ -107,22 +117,26 @@ def test_activate_allow_returns_content_and_manifest(tmp_path: Path) -> None:
     assert result["tokens"] > 0
 
 
-def test_activate_pre_denied_skill_raises_value_error_not_found(tmp_path: Path) -> None:
+def test_activate_pre_denied_skill_raises_value_error_not_found(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A skill already `"deny"`-verdicted when the catalog is first built is excluded from the
     catalog entirely (see docs/specs/skills.md), so activating it reads the same as an unknown
     name -- there's no permission question to raise, since the skill was never resolvable."""
-    context = _context(tmp_path, skill_rules=SkillRules(deny=[("workspace", "s")]))
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(deny=[("workspace", "s")]))
     _write_skill(_workspace_skills_dir(context), "s", "d")
     with pytest.raises(ValueError, match="no such skill"):
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
 
 
-def test_activate_deny_after_catalog_built_raises_permission_error(tmp_path: Path) -> None:
+def test_activate_deny_after_catalog_built_raises_permission_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A skill denied *after* the catalog was already built (e.g. an interactive ask answered
     "deny" mid-session) stays resolvable in memory until an explicit reload, so its `skillRules`
     verdict is still checked at every use -- this path still raises `PermissionError`, unlike the
     pre-denied case above."""
-    context = _context(tmp_path)  # empty rules -> ask
+    context = _context(tmp_path, make_session_config)  # empty rules -> ask
     _write_skill(_workspace_skills_dir(context), "s", "d")
     assert context.session is not None
     # Force the catalog to build while the skill is merely "ask"-verdicted.
@@ -134,8 +148,10 @@ def test_activate_deny_after_catalog_built_raises_permission_error(tmp_path: Pat
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
 
 
-def test_activate_ask_raises_permission_ask_with_skill(tmp_path: Path) -> None:
-    context = _context(tmp_path)  # empty rules -> ask
+def test_activate_ask_raises_permission_ask_with_skill(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)  # empty rules -> ask
     _write_skill(_workspace_skills_dir(context), "s", "the description")
     with pytest.raises(PermissionAskRequired) as exc:
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
@@ -143,34 +159,43 @@ def test_activate_ask_raises_permission_ask_with_skill(tmp_path: Path) -> None:
     assert "the description" in str(exc.value)
 
 
-def test_activate_once_override_bypasses_ask(tmp_path: Path) -> None:
+def test_activate_once_override_bypasses_ask(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     override = PermissionOverride(skills=frozenset({("workspace", "s")}))
-    context = _context(tmp_path, override=override)
+    context = _context(tmp_path, make_session_config, override=override)
     _write_skill(_workspace_skills_dir(context), "s", "d", body="loaded")
     result = ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
     assert "loaded" in result["content"]
 
 
-def test_activate_unknown_skill_raises_value_error(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_activate_unknown_skill_raises_value_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     with pytest.raises(ValueError, match="no such skill"):
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "ghost"})
 
 
-def test_activate_bad_name_raises_value_error(tmp_path: Path) -> None:
-    context = _context(tmp_path)
+def test_activate_bad_name_raises_value_error(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
     with pytest.raises(ValueError, match="skill name"):
         ActivateSkillTool(context).apply({"namespace": "workspace", "name": "../escape"})
 
 
-def test_activate_over_long_name_resolves_via_truncated_identity(tmp_path: Path) -> None:
+def test_activate_over_long_name_resolves_via_truncated_identity(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A skill directory whose basename is longer than `MAX_SKILL_NAME_DISPLAY_LENGTH` is
     catalogued under its truncated form -- the same name every advertised listing shows -- so
     calling `ActivateSkill` with exactly that (truncated) name always resolves, even though the
     real directory name on disk is longer."""
     long_name = "b" * (MAX_SKILL_NAME_DISPLAY_LENGTH + 15)
     truncated_name = long_name[:MAX_SKILL_NAME_DISPLAY_LENGTH]
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", truncated_name)]))
+    context = _context(
+        tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", truncated_name)]))
     _write_skill(_workspace_skills_dir(context), long_name, "d", body="the steps")
 
     result = ActivateSkillTool(context).apply({"namespace": "workspace", "name": truncated_name})
@@ -183,13 +208,14 @@ def test_activate_over_long_name_resolves_via_truncated_identity(tmp_path: Path)
 
 
 def test_activate_disable_model_invocation_skill_refuses_with_tailored_message(
-    tmp_path: Path,
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """The one legitimate way into a `disable-model-invocation` skill is the user's own message
     starting with `/<name>` (`UserSkillActivation`) -- a model that guesses the name and calls
     ActivateSkill directly must get a specific, actionable refusal, not the generic "no such
     skill" a genuinely-unknown name gets."""
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
+    context = _context(
+        tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "user-only")]))
     skill_dir = _workspace_skills_dir(context) / "user-only"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -202,8 +228,8 @@ def test_activate_disable_model_invocation_skill_refuses_with_tailored_message(
 # --- ReadSkillFile ---
 
 
-def test_read_skill_file_allow(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "s")]))
+def test_read_skill_file_allow(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
     skill_dir = _write_skill(_workspace_skills_dir(context), "s", "d")
     (skill_dir / "ref.md").write_text("line1\nline2\nline3\n")
 
@@ -215,9 +241,11 @@ def test_read_skill_file_allow(tmp_path: Path) -> None:
     assert result["path"] == "ref.md"
 
 
-def test_read_skill_file_gated_by_verdict(tmp_path: Path) -> None:
+def test_read_skill_file_gated_by_verdict(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     # An un-activated ask-verdict skill raises the activation ask on ReadSkillFile too.
-    context = _context(tmp_path)
+    context = _context(tmp_path, make_session_config)
     skill_dir = _write_skill(_workspace_skills_dir(context), "s", "d")
     (skill_dir / "ref.md").write_text("x")
     with pytest.raises(PermissionAskRequired) as exc:
@@ -225,14 +253,16 @@ def test_read_skill_file_gated_by_verdict(tmp_path: Path) -> None:
     assert exc.value.skill == ("workspace", "s")
 
 
-def test_read_internal_skill_file_via_resource_loader(tmp_path: Path) -> None:
+def test_read_internal_skill_file_via_resource_loader(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
     # An internal-tier skill's supporting file is read through the resource loader
     # (ReadFileCore.apply_readable), not the builtin open() — so it works even for a
     # zip/wheel-installed klorb whose packaged resources aren't plain filesystem paths.
     internal_dir = tmp_path / "internal-skills"  # where _empty_internal_tier points the tier
     skill_dir = _write_skill(internal_dir, "builtin", "a built-in skill")
     (skill_dir / "ref.md").write_text("packaged content\n")
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("internal", "builtin")]))
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("internal", "builtin")]))
 
     result = ReadSkillFileTool(context).apply(
         {"namespace": "internal", "name": "builtin", "path": "ref.md"})
@@ -240,16 +270,20 @@ def test_read_internal_skill_file_via_resource_loader(tmp_path: Path) -> None:
     assert result["namespace"] == "internal"
 
 
-def test_read_skill_file_rejects_escape(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "s")]))
+def test_read_skill_file_rejects_escape(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
     _write_skill(_workspace_skills_dir(context), "s", "d")
     with pytest.raises(ValueError, match="path must"):
         ReadSkillFileTool(context).apply(
             {"namespace": "workspace", "name": "s", "path": "../../secret"})
 
 
-def test_read_skill_file_preview_open_full_rereads_the_whole_file(tmp_path: Path) -> None:
-    context = _context(tmp_path, skill_rules=SkillRules(allow=[("workspace", "s")]))
+def test_read_skill_file_preview_open_full_rereads_the_whole_file(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
     skill_dir = _write_skill(_workspace_skills_dir(context), "s", "d")
     (skill_dir / "ref.md").write_text("line1\nline2\nline3\n")
     tool = ReadSkillFileTool(context)

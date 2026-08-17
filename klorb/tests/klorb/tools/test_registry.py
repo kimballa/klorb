@@ -1,5 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.registry."""
+from collections.abc import Callable
 
 import fixtures.sample_tools as sample_tools_package
 import pytest
@@ -114,12 +115,14 @@ def test_registry_has_no_session_before_one_is_constructed() -> None:
     assert registry.instantiate_tool("echo").context.session is None
 
 
-def test_session_construction_backfills_the_registrys_session_reference() -> None:
+def test_session_construction_backfills_the_registrys_session_reference(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
     """A ToolRegistry is always built before the Session it's passed into, so the back-reference
     has to be set post-construction by Session.__init__ -- confirm it actually happens, and that
     every ToolSetupContext built afterward carries it."""
     registry = _registry()
-    session = Session(config=SessionConfig(), tool_registry=registry)
+    session = Session(config=make_session_config(), tool_registry=registry)
 
     assert registry.session is session
     assert registry.instantiate_tool("echo").context.session is session
