@@ -92,7 +92,7 @@
   * /clear to create a new session keeps the same model name (and thus model, provider) as last session.
 
 * More tools:
-  * Add Evals for GrepTool and FindFileTool.
+  * Add Evals for GrepTool, SemanticSearchTool, and FindFileTool.
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
