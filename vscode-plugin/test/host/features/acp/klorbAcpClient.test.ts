@@ -79,6 +79,7 @@ function makeListener(): {
       onMessageQueued: (text: string) => messagesQueued.push(text),
       onQueuedMessageSent: (text: string) => queuedMessagesSent.push(text),
       onNotice: (text: string) => notices.push(text),
+      onServerLogNotice: () => undefined,
       onSessionReplay: (entries: SessionReplayEntry[]) => sessionReplays.push(entries),
       onSessionReset: () => undefined,
     },

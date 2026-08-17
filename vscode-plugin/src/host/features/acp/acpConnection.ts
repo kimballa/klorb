@@ -11,6 +11,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
+import { WARNING_LEVEL_VALUE, logLevelValue } from 'shared/logLevels';
 import type { ImageAttachment } from 'shared/webviewMessages';
 
 import {
@@ -47,6 +48,38 @@ export function errorMessage(err: unknown): string {
     }
   }
   return String(err);
+}
+
+/** One record from `klorb server`'s JSON-formatted stderr. */
+interface ServerLogRecord {
+  ts: string;
+  level: string;
+  log: string;
+  msg: string;
+}
+
+/** Parses one `klorb server` stderr line as a `ServerLogRecord`, or `undefined` if it isn't
+ * valid JSON matching that shape. */
+function parseServerLogRecord(line: string): ServerLogRecord | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    typeof record.ts === 'string' &&
+    typeof record.level === 'string' &&
+    typeof record.log === 'string' &&
+    typeof record.msg === 'string'
+  ) {
+    return record as unknown as ServerLogRecord;
+  }
+  return undefined;
 }
 
 /** Reads one boolean flag from `initResult.agentCapabilities._meta.klorb`, `false` if the
@@ -91,17 +124,23 @@ export class AcpConnection {
   /** Whether the connected server advertised `agentCapabilities._meta.klorb.subagents` at
    * `initialize()` -- same lifetime/threading as `_enqueueMessageCapable`. */
   private _subagentsCapable = false;
+  /** Returns the minimum level a `ServerLogRecord` must reach to escalate into the history
+   * scroll; called fresh per record so a live config change takes effect without reconstructing
+   * the connection. */
+  private readonly _historyLogLevelThreshold: () => number;
 
   public constructor(
     serverProcess: KlorbServerProcess,
     listener: SessionUpdateListener,
     log: LogFn = (message: string) => console.log(message),
-    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS
+    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS,
+    historyLogLevelThreshold: () => number = () => WARNING_LEVEL_VALUE
   ) {
     this._serverProcess = serverProcess;
     this._listener = listener;
     this._log = log;
     this._initializeTimeoutMs = initializeTimeoutMs;
+    this._historyLogLevelThreshold = historyLogLevelThreshold;
   }
 
   /** True once the handshake completed and a live session id is held. */
@@ -446,11 +485,11 @@ export class AcpConnection {
     reject(new Error(rejectionMessage));
   }
 
-  /** Forwards the child's stderr -- where klorb's Python `logging` output goes -- to `_log`
-   * line-by-line, so it lands in the extension's output channel instead of an unread pipe
-   * (an unread stderr pipe can eventually fill its OS buffer and block the child on write).
-   * Buffers a trailing partial line (and multi-byte characters split across chunk boundaries,
-   * via `StringDecoder`) until a newline or stream close completes it. */
+  /** Forwards the child's stderr -- one JSON `ServerLogRecord` per line -- to `_log`
+   * line-by-line, so it lands in the extension's output channel instead of an unread pipe (an
+   * unread stderr pipe can eventually fill its OS buffer and block the child on write). Buffers
+   * a trailing partial line (and multi-byte characters split across chunk boundaries, via
+   * `StringDecoder`) until a newline or stream close completes it. */
   private _pipeStderr(stderr: Readable): void {
     const decoder = new StringDecoder('utf8');
     let buffer = '';
@@ -459,16 +498,32 @@ export class AcpConnection {
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) {
-        this._log(line);
+        this._handleStderrLine(line);
       }
     });
     stderr.on('close', () => {
       buffer += decoder.end();
       if (buffer.length > 0) {
-        this._log(buffer);
+        this._handleStderrLine(buffer);
         buffer = '';
       }
     });
+  }
+
+  /** Parses one `klorb server` stderr line as a `ServerLogRecord` and reformats it for `_log`,
+   * escalating sufficiently urgent records into the history scroll via `onServerLogNotice`. A
+   * line that isn't valid JSON is forwarded to `_log` verbatim instead. */
+  private _handleStderrLine(line: string): void {
+    const record = parseServerLogRecord(line);
+    if (record === undefined) {
+      this._log(`[server] ${line}`);
+      return;
+    }
+    this._log(`[server] ${record.ts} - ${record.level}:${record.log}:${record.msg}`);
+    const levelValue = logLevelValue(record.level);
+    if (levelValue >= this._historyLogLevelThreshold()) {
+      this._listener.onServerLogNotice(record.msg, levelValue);
+    }
   }
 
   /** Races `request` against the connection closing, so a request against a dead server

@@ -1,4 +1,5 @@
 // © Copyright 2026 Aaron Kimball
+import { ERROR_LEVEL_VALUE } from 'shared/logLevels';
 import type {
   AttachedImageMeta,
   BashToolMeta,
@@ -363,6 +364,15 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
       return applyQueuedMessageSent(entries, message.text);
     case 'notice':
       return [...entries, { kind: 'notice', text: message.text, streaming: false }];
+    case 'serverLog':
+      return [
+        ...entries,
+        {
+          kind: message.level >= ERROR_LEVEL_VALUE ? 'error' : 'notice',
+          text: message.text,
+          streaming: false,
+        },
+      ];
     case 'sessionReset':
       return [];
     case 'toolCallStarted':

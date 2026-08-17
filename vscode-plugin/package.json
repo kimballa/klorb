@@ -135,6 +135,27 @@
           "default": "",
           "description": "Override the log level for the `klorb server` process via the `KLORB_LOG_LEVEL` environment variable."
         },
+        "klorb.historyLogLevel": {
+          "type": "string",
+          "enum": [
+            "",
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL"
+          ],
+          "enumDescriptions": [
+            "Use the default threshold (WARNING).",
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL"
+          ],
+          "default": "",
+          "description": "Minimum level a `klorb server` stderr record must reach to be shown in the session panel's history."
+        },
         "klorb.promptHistory.maxItems": {
           "type": "number",
           "default": 100,
