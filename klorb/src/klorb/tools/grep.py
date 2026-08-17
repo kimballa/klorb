@@ -107,38 +107,34 @@ class GrepTool(InterruptibleTool):
 
     def description(self) -> str:
         return (
-            "Recursively searches a directory tree for lines matching any of the given "
-            "queries, so you can find where a piece of text or code appears without reading "
-            "every file yourself. Each entry in queries is matched as a literal substring by "
-            "default; set is_regex to treat every entry as a distinct Python regular "
-            "expression instead. A line matching any one query counts as a hit — equivalent to "
+            "Recursively searches a directory for matches of any of the given "
+            "queries, so you can find where text or code appears without reading "
+            "each file yourself. Each entry in queries is matched as a literal substring by "
+            "default; set is_regex to treat entries as distinct regular expressions instead. "
+            "A line matching any query counts as a hit — equivalent to "
             "`grep -e query1 -e query2 ...`. Optionally filter which files are searched with a "
-            "filename glob (e.g. '*.py'). path empty means search the whole project root. "
-            "Results are grouped by file under 'files'; "
-            "each line is a string like '*42|matched text' or ' 41|context text', where the "
-            "leading '*' marks a matching line and the number is its 1-based line number (a gap "
-            "in those numbers marks a break between context windows). "
-            "Line numbers can be used directly as input to EditFile start_line / end_line. "
+            "filename glob (e.g. '*.py'). path empty means search the whole project. "
+            "Results grouped by file under 'files'. "
+            "Each line is a string like '*42|matched text' or ' 41|context text'. "
+            "Leading '*' marks a matching line. The number is its line number. (Gap "
+            "in those numbers marks a break between matches). "
             "Returns at most "
-            f"{self._max_results} matching lines per call; a 'truncated' flag in the result "
-            "means more matches exist than were returned. A subdirectory your readDirs "
-            "permissions deny, or that "
-            "requires confirmation, is silently skipped rather than failing the whole search "
-            "— only the path itself raises if it isn't allowed. Files excluded by the project's "
-            ".gitignore rules are skipped without being searched by default; when that happens "
-            "the result sets 'gitignored_hidden' to true and includes a 'note', and you can "
+            f"{self._max_results} matches; If 'truncated' is true, then "
+            "more matches exist than were returned. A permission-denied subdirectory "
+            "is silently skipped. If 'path' is permission-denied, this fails. "
+            "Files excluded by gitignore rules are skipped by default; "
+            "the result sets 'gitignored_hidden' to true. You can "
             "re-call with use_gitignore=false to search gitignored files too. "
-            "Use outputStyle to control the level of detail: \"ListFiles\" returns just "
-            "deduplicated filenames, \"Matches\" returns only the hit lines (default), and "
+            "Use outputStyle to control output detail: \"ListFiles\" returns just "
+            "filenames, \"Matches\" (default) returns only the hit lines, "
             "\"FullContext\" returns hit lines plus surrounding context. "
             "Each reported line is truncated to "
             f"{self._max_line_length} characters (marked with a trailing "
-            f"'{_TRUNCATION_SUFFIX}'). If the 'files' result would be very large, it's "
-            "written to a file instead and the result carries 'results_data_file' (a path "
-            "you can ReadFile) in place of 'files'. "
-            "A line that looks like it holds a credential may come back with the secret "
-            "replaced by a `[[SECRET:<type>:<hash>]]` token, same convention as ReadFile -- "
-            "copy the token verbatim into EditFile to match or preserve that line."
+            f"'{_TRUNCATION_SUFFIX}'). If 'files' result would be very large, it's "
+            "written to a file instead and the result carries 'results_data_file'. Use ReadFile. "
+            "Lines including likely passwords have credentials replaced with token: "
+            "`[[SECRET:<type>:<hash>]]`. "
+            "Copy the token verbatim into EditFile to match or preserve that line."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -149,9 +145,8 @@ class GrepTool(InterruptibleTool):
                     "type": "string",
                     "description": (
                         "File or directory to search, relative to the project root unless "
-                        "absolute. An empty string or null means the whole project root. "
-                        "If a file, only that file is searched; if a directory, the search "
-                        "is recursive."
+                        "absolute. Empty / null means the whole project. "
+                        "If filename, only the file is searched; directory search is recursive."
                     ),
                 },
                 "queries": {
@@ -159,27 +154,27 @@ class GrepTool(InterruptibleTool):
                     "items": {"type": "string"},
                     "minItems": 1,
                     "description": (
-                        "One or more strings to search for in each line; a line matching any "
-                        "one of them is returned. Each is a literal substring unless is_regex "
-                        "is true, in which case each is its own Python regular expression."
+                        "One or more strings to search for. Lines matching any "
+                        "query are returned. Each is a literal substring unless is_regex, "
+                        "then each is its own regular expression."
                     ),
                 },
                 "is_regex": {
                     "type": "boolean",
                     "description": (
-                        "Treat every entry in queries as a Python regular expression. "
-                        "Defaults to false."
+                        "Treat queries as list of regular expressions. "
+                        "Default false."
                     ),
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "Match queries case-insensitively. Defaults to false.",
+                    "description": "Match queries case-insensitively. Default false.",
                 },
                 "file_glob": {
                     "type": "string",
                     "description": (
-                        "Optional filename glob (e.g. '*.py') restricting which files are "
-                        "searched, matched against each file's bare name."
+                        "Optional filename glob (e.g. '*.py') restricting files searched, "
+                        "matched against each file's bare name."
                     ),
                 },
                 "outputStyle": {
@@ -193,9 +188,9 @@ class GrepTool(InterruptibleTool):
                 "use_gitignore": {
                     "type": "boolean",
                     "description": (
-                        "Skip files and directories excluded by the project's .gitignore "
-                        "rules. Defaults to true; set false to search gitignored files too. "
-                        "Ignored only when path names a single file to search."
+                        "Skip files and directories excluded by gitignore rules. Default true. "
+                        "Set false to search gitignored files too. "
+                        "Ignored if path names a specific filename."
                     ),
                 },
             },

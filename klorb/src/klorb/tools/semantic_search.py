@@ -55,21 +55,19 @@ class SemanticSearchTool(Tool):
 
     def description(self) -> str:
         return (
-            "Searches the workspace's local semantic search index for code and documentation "
-            "related to any of the given queries by meaning rather than exact wording — useful "
-            "when you don't know the exact string to search for. Complements Grep, which finds "
-            "exact literal or regex matches. Optionally scope the search to a file or directory "
-            "with path (empty means the whole project root), or restrict which files count with "
-            "a filename glob (e.g. '*.py') via file_glob. Returns up to top_k chunk hits ranked "
-            "by relevance, grouped by file under 'files' as {'filename', 'lines', 'score'}; "
-            "each line is a string like '*42|matched text', where the leading '*' marks every "
-            "line of the matched chunk (the whole chunk is the unit of relevance, not one exact "
-            "line) and the number is its 1-based line number. Line numbers can be used directly "
-            "as input to EditFile start_line / end_line. Use outputStyle \"ListFiles\" to get "
-            "just deduplicated filenames instead of chunk lines. "
-            "A line that looks like it holds a credential may come back with the secret "
-            "replaced by a `[[SECRET:<type>:<hash>]]` token, same convention as ReadFile -- "
-            "copy the token verbatim into EditFile to match or preserve that line."
+            "Searches the workspace for code and documentation "
+            "related to the given queries by meaning rather than literal match — useful "
+            "when you don't know the exact string to search for. Use Grep for literal or regex. "
+            "Optionally scope search to a file or directory "
+            "with path (empty means whole project), or restrict files with "
+            "a filename glob (e.g. '*.py'). Returns up to top_k chunk hits ranked "
+            "by relevance, grouped under 'files' as {'filename', 'lines', 'score'}; "
+            "each line is a string like '*42|matched text'. All lines marked with '*'. "
+            "Number is the line number. Use outputStyle \"ListFiles\" to get "
+            "just filenames. "
+            "Lines with passwords have secrets "
+            "replaced by `[[SECRET:<type>:<hash>]]` token. "
+            "Copy token verbatim into EditFile to match or preserve that line."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -79,9 +77,8 @@ class SemanticSearchTool(Tool):
                 "path": {
                     "type": "string",
                     "description": (
-                        "File or directory to scope the search to, relative to the project "
-                        "root unless absolute. An empty string or null means the whole project "
-                        "root."
+                        "File or directory scope for search. Absolute or relative to project "
+                        "root. Empty or null means whole project."
                     ),
                 },
                 "queries": {
@@ -100,16 +97,16 @@ class SemanticSearchTool(Tool):
                 "file_glob": {
                     "type": "string",
                     "description": (
-                        "Optional filename glob (e.g. '*.py') restricting which files count, "
-                        "matched against each file's bare name."
+                        "Optional filename glob (e.g. '*.py') restricting files, "
+                        "matched against file's bare name."
                     ),
                 },
                 "outputStyle": {
                     "type": "string",
                     "enum": ["ListFiles", "Matches"],
                     "description": (
-                        "\"ListFiles\" returns just deduplicated filenames; \"Matches\" "
-                        "(default) returns the matched chunk lines."
+                        "\"ListFiles\" returns filenames; \"Matches\" "
+                        "(default) returns lines of matched chunks."
                     ),
                 },
             },
