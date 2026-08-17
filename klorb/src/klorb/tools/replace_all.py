@@ -31,7 +31,7 @@ class ReplaceAllTool(Tool):
     def is_read_only(self) -> bool:
         return False
 
-    def default_visible(self) -> bool:
+    def default_described(self) -> bool:
         return False
 
     def description(self) -> str:

@@ -51,6 +51,13 @@ def test_default_aliases_returns_none() -> None:
     assert tool.aliases() is None
 
 
+def test_default_described_returns_true() -> None:
+    context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
+    tool = EchoTool(context)
+
+    assert tool.default_described() is True
+
+
 def test_default_summary_on_success_is_just_the_tool_name() -> None:
     context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
     tool = EchoTool(context)

@@ -181,6 +181,13 @@ def test_instantiate_tool_resolves_glob_alias_to_find_file() -> None:
     assert tool.name() == "FindFile"
 
 
+def test_instantiate_tool_resolves_tool_search_alias_to_search_tools() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    tool = registry.instantiate_tool("ToolSearch")
+    assert tool.name() == "SearchTools"
+
+
 def test_instantiate_tool_resolves_write_memory_alias() -> None:
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 
@@ -327,9 +334,10 @@ def test_canonical_name_still_works_when_aliases_exist() -> None:
     assert tool.name() == "CreateFile"
 
 
-def test_default_visible_excludes_replace_all_from_tool_definitions() -> None:
-    """ReplaceAllTool.default_visible() returns False, so it must not appear in the
-    tool definitions advertised to the model by default."""
+def test_default_described_excludes_replace_all_from_tool_definitions() -> None:
+    """ReplaceAllTool.default_described() returns False, so it must not appear in the
+    tool definitions advertised to the model by default -- even though it stays
+    default_visible() (see `test_replace_all_is_visible_but_not_described`)."""
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 
     definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
@@ -340,12 +348,41 @@ def test_default_visible_excludes_replace_all_from_tool_definitions() -> None:
     assert tool.name() == "ReplaceAll"
 
 
-def test_extra_visible_tools_includes_non_default_visible_in_definitions() -> None:
+def test_replace_all_is_visible_but_not_described() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    tool = registry.instantiate_tool("ReplaceAll")
+
+    assert tool.default_visible() is True
+    assert tool.default_described() is False
+
+
+def test_extra_visible_tools_includes_non_described_tool_in_definitions() -> None:
     """Setting `extra_visible_tools` on a registry makes those tools appear in
-    `tool_definitions()` even when `default_visible()` returns `False`."""
+    `tool_definitions()` even when `default_described()` returns `False`."""
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
     registry.extra_visible_tools = frozenset({"ReplaceAll"})
 
     definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
 
     assert "ReplaceAll" in definition_names
+
+
+def test_additional_tool_summaries_includes_visible_but_undescribed_tools() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    summaries = {s["name"]: s["description"] for s in registry.additional_tool_summaries()}
+
+    assert "ReplaceAll" in summaries
+    assert len(summaries["ReplaceAll"]) <= 80
+    assert "ReplaceAll" not in {d["function"]["name"] for d in registry.tool_definitions()}
+
+
+def test_additional_tool_summaries_excludes_extra_visible_tools() -> None:
+    """A tool named in `extra_visible_tools` gets its full schema in `tool_definitions()`
+    instead, so it must not also show up in `additional_tool_summaries()`."""
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+    registry.extra_visible_tools = frozenset({"ReplaceAll"})
+
+    summaries = {s["name"] for s in registry.additional_tool_summaries()}
+
+    assert "ReplaceAll" not in summaries

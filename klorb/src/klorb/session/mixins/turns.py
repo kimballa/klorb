@@ -577,6 +577,11 @@ class SessionTurnsMixin(SessionBase):
         memory's filename and topic (via `ListMemories` -- see `_build_memories_interjection`)
         is also prepended (see `self._memories_seeded`).
 
+        On the first turn only, a one-shot `AdditionalTools` interjection naming every
+        `default_visible()` tool the tool definitions omit a full schema for (see
+        `_build_additional_tools_interjection` and `ToolRegistry.additional_tool_summaries`) is
+        also prepended (see `self._additional_tools_seeded`).
+
         On the first turn only, a one-shot `metadata` interjection carrying the session
         start time and workspace root name is also prepended (see `self._metadata_seeded`).
 
@@ -656,6 +661,11 @@ class SessionTurnsMixin(SessionBase):
             memories_body = self._build_memories_interjection()
             if memories_body is not None:
                 prompt = f"{wrap_system_interjection('Memories', memories_body)}\n{prompt}"
+        if not self._additional_tools_seeded:
+            self._additional_tools_seeded = True
+            additional_tools_body = self._build_additional_tools_interjection()
+            if additional_tools_body is not None:
+                prompt = f"{wrap_system_interjection('AdditionalTools', additional_tools_body)}\n{prompt}"
         if not self._metadata_seeded:
             self._metadata_seeded = True
             started_at = self._session_started_at.strftime("%Y-%m-%d %H:%M:%S %Z").strip()

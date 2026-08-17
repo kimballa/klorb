@@ -22,6 +22,11 @@ from klorb.tools.tool import Tool
 
 _TASKS_CATEGORY = "TASKS"
 
+ADDITIONAL_TOOL_DESCRIPTION_LIMIT = 80
+"""Max length of a tool's `description()` as summarized in `additional_tool_summaries()` --
+hard-truncated, not word-wrapped, since it's only meant to help the model decide whether a
+`SearchTools` lookup is worth making."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,6 +159,13 @@ class ToolRegistry:
             process_config=self._process_config, session_config=self._session_config,
             session=self.session, permission_override=permission_override)
 
+    def resolve_name(self, name: str) -> str | None:
+        """Return the canonical tool name `name` refers to -- itself, if it's already a
+        canonical name, or the canonical name it's an alias for -- or `None` if `name` matches
+        neither. Used by `SearchToolsTool` to detect an exact name/alias query before falling
+        back to a keyword search."""
+        return self._alias_map.get(name)
+
     def instantiate_tool(self, name: str, *, permission_override: PermissionOverride | None = None) -> Tool:
         """Factory method: construct a fresh instance of the named tool from a `ToolSetupContext`
         built from this registry's current `process_config`/`session_config`, raising
@@ -181,14 +193,23 @@ class ToolRegistry:
         constructor) from a subset of this one's classes, without re-scanning any package."""
         return dict(self._tool_classes)
 
+    def _fully_described(self, tool: Tool) -> bool:
+        """Return whether `tool`'s full schema belongs in `tool_definitions()`: both
+        `default_visible()` and `default_described()` return `True`, or its name is in
+        `extra_visible_tools` (which bypasses both gates at once -- the eval harness uses it to
+        advertise a specific hidden or undescribed tool's full schema for one eval case)."""
+        if tool.name() in self.extra_visible_tools:
+            return True
+        return tool.default_visible() and tool.default_described()
+
     def tool_definitions(self) -> list[dict[str, Any]]:
         """Build the OpenAI-style tool definitions to send to the model alongside a prompt.
-        Only tools whose `default_visible()` returns `True`, or whose name is in
-        `extra_visible_tools`, are included.
+        Only tools `_fully_described()` returns `True` for are included -- a tool that's
+        visible but not described is summarized instead in `additional_tool_summaries()`.
         """
         definitions: list[dict[str, Any]] = []
         for tool in self.tools():
-            if not tool.default_visible() and tool.name() not in self.extra_visible_tools:
+            if not self._fully_described(tool):
                 continue
             parameters = tool.parameters()
             if isinstance(parameters, type) and issubclass(parameters, BaseModel):
@@ -204,3 +225,23 @@ class ToolRegistry:
                 },
             })
         return definitions
+
+    def additional_tool_summaries(self) -> list[dict[str, str]]:
+        """Return `{"name", "description"}` for every tool that's advertised to the model by
+        name only -- `default_visible()` (or in `extra_visible_tools`) but not
+        `_fully_described()` -- so a `<SystemInterjection>` can tell the model these tools
+        exist without paying their full schema's token cost. A tool that's neither visible nor
+        in `extra_visible_tools` is omitted entirely, same as `tool_definitions()`.
+        `description` is hard-truncated to `ADDITIONAL_TOOL_DESCRIPTION_LIMIT` characters.
+        """
+        summaries: list[dict[str, str]] = []
+        for tool in self.tools():
+            if self._fully_described(tool):
+                continue
+            if not tool.default_visible() and tool.name() not in self.extra_visible_tools:
+                continue
+            summaries.append({
+                "name": tool.name(),
+                "description": tool.description()[:ADDITIONAL_TOOL_DESCRIPTION_LIMIT],
+            })
+        return summaries

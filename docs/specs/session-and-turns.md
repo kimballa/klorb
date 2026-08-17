@@ -144,6 +144,12 @@ config) has one place to live.
     recording what was offered. That message is bookkeeping only: it's never
     sent to the model as a chat message, since `tools=` is what actually offers them (see
     [[tool-framework]] and [[message-model]]).
+  * Also on the first turn only, if `ToolRegistry.additional_tool_summaries()` is non-empty, an
+    `AdditionalTools` `<SystemInterjection>` naming those tools (with a truncated description
+    and a pointer to `SearchTools`) is prepended onto that turn's prompt
+    (`_build_additional_tools_interjection()`; idempotent via `self._additional_tools_seeded`).
+    Unlike the `tool_defs` bookkeeping message above, this one *is* real prompt text — it's how
+    the model learns a visible-but-undescribed tool exists at all. See [[tool-framework]].
   * Also on the very first call to `send_turn()`, and only when the workspace is trusted, a
     `ProjectGuidance` `<SystemInterjection>` carrying the workspace's context-instruction files
     (`.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and `CLAUDE.md` when `compatibility.claudeMarkdown`
