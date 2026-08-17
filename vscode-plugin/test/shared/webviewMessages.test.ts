@@ -19,6 +19,8 @@ describe('parseHostMessage', () => {
       { type: 'turnEnded', stopReason: 'end_turn' },
       { type: 'turnError', message: 'boom' },
       { type: 'notice', text: 'hook fired' },
+      { type: 'serverLog', text: 'careful', error: false },
+      { type: 'serverLog', text: 'boom', error: true },
       { type: 'sessionReset' },
       {
         type: 'toolCallStarted',
@@ -246,6 +248,8 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ type: 'agentChunk' })).toBeUndefined();
     expect(parseHostMessage({ type: 'agentChunk', text: 42 })).toBeUndefined();
     expect(parseHostMessage({ type: 'notice', text: 42 })).toBeUndefined();
+    expect(parseHostMessage({ type: 'serverLog', text: 'careful' })).toBeUndefined();
+    expect(parseHostMessage({ type: 'serverLog', text: 42, error: false })).toBeUndefined();
     expect(parseHostMessage({ type: 'turnEnded' })).toBeUndefined();
     expect(parseHostMessage({ type: 'turnError', message: null })).toBeUndefined();
     expect(parseHostMessage({ type: 'submitPrompt', text: 'wrong direction' })).toBeUndefined();

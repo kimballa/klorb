@@ -172,13 +172,6 @@
 
 ### Feature backlog
 
-* Convert `klorb server`'s stderr logging to JSON formatting (like the session log file's
-  `JsonLogFormatter`, see `klorb.logging_config`), so the vscode plugin can unpack each line
-  instead of treating it as opaque text. `AcpConnection._pipeStderr` should parse each line and
-  reformat it into its own console/output-channel logging, and escalate `WARNING`+ records into
-  the HistoryView the same way `TuiHistoryLogHandler` surfaces them in the TUI's conversation
-  history.
-
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
 * The task panel div has style `.task-panel-list` which specifies `max-height: 40vh;`.

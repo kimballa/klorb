@@ -363,6 +363,11 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
       return applyQueuedMessageSent(entries, message.text);
     case 'notice':
       return [...entries, { kind: 'notice', text: message.text, streaming: false }];
+    case 'serverLog':
+      return [
+        ...entries,
+        { kind: message.error ? 'error' : 'notice', text: message.text, streaming: false },
+      ];
     case 'sessionReset':
       return [];
     case 'toolCallStarted':

@@ -1,4 +1,6 @@
 // © Copyright 2026 Aaron Kimball
+import type { Writable } from 'stream';
+
 import * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +42,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onMessageQueued: (text) => messagesQueued.push(text),
     onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
     onNotice: (text) => events.push(`notice:${text}`),
+    onServerLogNotice: (text, error) => events.push(`serverLogNotice:${error}:${text}`),
     onSessionReplay: (entries) => events.push(`sessionReplay:${entries.length}`),
     onSessionReset: () => events.push('sessionReset'),
   };
@@ -363,8 +366,14 @@ describe('AcpConnection', () => {
     await expect(connection.start(OPTIONS, '/work')).rejects.toThrow(/protocol version/);
   });
 
-  it('forwards child stderr to the log, line-by-line, buffering partial lines', async () => {
+  function makeStderrHarness(): {
+    connection: AcpConnection;
+    stderr: Writable;
+    logs: string[];
+    serverLogNotices: { text: string; error: boolean }[];
+  } {
     const logs: string[] = [];
+    const serverLogNotices: { text: string; error: boolean }[] = [];
     const { child, stderr } = createMockAgentChild();
     const serverProcess = new KlorbServerProcess(() => child);
     const listener: SessionUpdateListener = {
@@ -383,6 +392,7 @@ describe('AcpConnection', () => {
       onMessageQueued: () => undefined,
       onQueuedMessageSent: () => undefined,
       onNotice: () => undefined,
+      onServerLogNotice: (text, error) => serverLogNotices.push({ text, error }),
       onSessionReplay: () => undefined,
       onSessionReset: () => undefined,
     };
@@ -392,14 +402,92 @@ describe('AcpConnection', () => {
       (message: string) => logs.push(message),
       500
     );
+    return { connection, stderr, logs, serverLogNotices };
+  }
+
+  it('parses JSON-formatted stderr lines and reformats them for the log, buffering partial lines', async () => {
+    const { connection, stderr, logs } = makeStderrHarness();
     await connection.start(OPTIONS, '/work');
 
-    stderr.write('DEBUG one\nDEBUG two\nDEBUG thr');
-    await vi.waitFor(() => expect(logs).toContain('DEBUG two'));
-    expect(logs).not.toContain('DEBUG thr');
+    const one = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'DEBUG',
+      log: 'klorb',
+      msg: 'one',
+    });
+    const two = JSON.stringify({
+      ts: '2026-08-17 10:00:01',
+      level: 'DEBUG',
+      log: 'klorb',
+      msg: 'two',
+    });
+    stderr.write(`${one}\n${two.slice(0, 10)}`);
+    await vi.waitFor(() =>
+      expect(logs).toContain('[server] 2026-08-17 10:00:00 - DEBUG:klorb:one')
+    );
+    expect(logs.join('\n')).not.toContain('two');
 
-    stderr.write('ee\n');
-    await vi.waitFor(() => expect(logs).toContain('DEBUG three'));
+    stderr.write(`${two.slice(10)}\n`);
+    await vi.waitFor(() =>
+      expect(logs).toContain('[server] 2026-08-17 10:00:01 - DEBUG:klorb:two')
+    );
+  });
+
+  it('forwards a non-JSON stderr line to the log verbatim (prefixed)', async () => {
+    const { connection, stderr, logs } = makeStderrHarness();
+    await connection.start(OPTIONS, '/work');
+
+    stderr.write('Traceback (most recent call last):\n');
+
+    await vi.waitFor(() => expect(logs).toContain('[server] Traceback (most recent call last):'));
+  });
+
+  it('escalates a WARNING record to onServerLogNotice as a non-error notice', async () => {
+    const { connection, stderr, serverLogNotices } = makeStderrHarness();
+    await connection.start(OPTIONS, '/work');
+
+    const record = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'WARNING',
+      log: 'klorb',
+      msg: 'careful',
+    });
+    stderr.write(`${record}\n`);
+
+    await vi.waitFor(() =>
+      expect(serverLogNotices).toContainEqual({ text: 'careful', error: false })
+    );
+  });
+
+  it('escalates an ERROR record to onServerLogNotice as an error', async () => {
+    const { connection, stderr, serverLogNotices } = makeStderrHarness();
+    await connection.start(OPTIONS, '/work');
+
+    const record = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'ERROR',
+      log: 'klorb',
+      msg: 'boom',
+    });
+    stderr.write(`${record}\n`);
+
+    await vi.waitFor(() => expect(serverLogNotices).toContainEqual({ text: 'boom', error: true }));
+  });
+
+  it('does not escalate an INFO record to onServerLogNotice', async () => {
+    const { connection, stderr, logs, serverLogNotices } = makeStderrHarness();
+    await connection.start(OPTIONS, '/work');
+
+    const record = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'INFO',
+      log: 'klorb',
+      msg: 'fyi',
+    });
+    stderr.write(`${record}\n`);
+
+    await vi.waitFor(() => expect(logs).toContain('[server] 2026-08-17 10:00:00 - INFO:klorb:fyi'));
+    expect(serverLogNotices).toEqual([]);
   });
 
   it('newSession() interrupts an in-flight prompt, cancelling the old session', async () => {

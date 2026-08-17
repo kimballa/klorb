@@ -35,6 +35,7 @@ const NOOP_LISTENER: SessionUpdateListener = {
   onMessageQueued: () => undefined,
   onQueuedMessageSent: () => undefined,
   onNotice: () => undefined,
+  onServerLogNotice: () => undefined,
   onSessionReplay: () => undefined,
   onSessionReset: () => undefined,
 };

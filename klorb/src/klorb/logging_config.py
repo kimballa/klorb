@@ -272,7 +272,7 @@ class SecretRedactionFilter(logging.Filter):
 
 
 def configure_minimal_logging(is_server: bool = False) -> None:
-    """Install a bare-bones stderr text handler as a stopgap until `configure_logging()` runs.
+    """Install a bare-bones stderr handler as a stopgap until `configure_logging()` runs.
 
     `klorb.cli.main()` calls this immediately after `load_dotenv()`, before argument parsing or
     subcommand dispatch, so any log call made in that window (which can be arbitrarily long: it
@@ -280,12 +280,14 @@ def configure_minimal_logging(is_server: bool = False) -> None:
     etc.) is still visible on stderr instead of silently falling through to `logging`'s built-in
     `lastResort` handler. `configure_logging()` (`force=True`) replaces these handlers once the
     caller knows enough about the invocation (subcommand, `repl_mode`, `log_path`) to configure
-    logging properly.
+    logging properly. `is_server` selects `JsonLogFormatter` instead of `TEXT_LOG_FORMAT`, so a
+    record logged during `klorb server` startup is already valid JSON.
     """
-    prefix = "[server] " if is_server else ""
-    logging.basicConfig(
-        level=_resolve_klorb_log_level(), handlers=[logging.StreamHandler()],
-        format=f"{prefix}{TEXT_LOG_FORMAT}", datefmt=TEXT_LOG_DATEFMT, force=True)
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        JsonLogFormatter(datefmt=TEXT_LOG_DATEFMT) if is_server
+        else logging.Formatter(fmt=TEXT_LOG_FORMAT, datefmt=TEXT_LOG_DATEFMT))
+    logging.basicConfig(level=_resolve_klorb_log_level(), handlers=[handler], force=True)
 
 
 def configure_logging(
@@ -294,7 +296,7 @@ def configure_logging(
     log_path: Path | None,
     max_log_files: int = DEFAULT_MAX_SESSION_LOG_FILES,
     max_log_bytes: int = DEFAULT_MAX_SESSION_LOG_BYTES,
-    stderr_prefix: str = "",
+    stderr_json: bool = False,
 ) -> None:
     """Configure the root logger.
 
@@ -309,12 +311,10 @@ def configure_logging(
     The console handler (`TextualHandler`/`StreamHandler`) and the `TuiHistoryLogHandler` (when
     present) both use the same plain human-readable `TEXT_LOG_FORMAT`, since one is stderr read
     by a person at a terminal and the other is mounted directly into the conversation history for
-    a person to read. `stderr_prefix` is prepended to the console handler's format string only
-    (e.g. `"[server] "` for `klorb server`, whose stderr may be interleaved with other processes'
-    output by a client that captures it) -- the `TuiHistoryLogHandler` never takes a prefix, since
-    `repl_mode` and a non-empty `stderr_prefix` are never both true in practice. The file handler
-    (when `log_path` is given) always gets `JsonLogFormatter`, so session-log records stay valid
-    JSON regardless of what a logged message contains, for machine parsing.
+    a person to read. `stderr_json` switches the console handler to `JsonLogFormatter` instead,
+    so each stderr record is written as one JSON object rather than a `TEXT_LOG_FORMAT` line. The
+    file handler (when `log_path` is given) always gets `JsonLogFormatter`, so session-log records
+    stay valid JSON regardless of what a logged message contains, for machine parsing.
 
     The root logger's level is `klorb_log_level`, overridable via the `KLORB_LOG_LEVEL`
     environment variable (see `_resolve_klorb_log_level()`). The chatty third-party loggers in
@@ -331,8 +331,9 @@ def configure_logging(
     the session log file.
     """
     console_handler: logging.Handler = TextualHandler() if repl_mode else logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter(
-        fmt=f"{stderr_prefix}{TEXT_LOG_FORMAT}", datefmt=TEXT_LOG_DATEFMT))
+    console_handler.setFormatter(
+        JsonLogFormatter(datefmt=TEXT_LOG_DATEFMT) if stderr_json
+        else logging.Formatter(fmt=TEXT_LOG_FORMAT, datefmt=TEXT_LOG_DATEFMT))
     handlers: list[logging.Handler] = [console_handler]
 
     if repl_mode:

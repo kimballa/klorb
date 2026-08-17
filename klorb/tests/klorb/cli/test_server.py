@@ -105,9 +105,9 @@ def test_run_server_cli_logs_config_warnings(
 def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> None:
     """`repl_mode=False` sends records to a plain `StreamHandler` (stderr) in addition to the
     session log file, so a client that captures the server subprocess's stderr (e.g. the
-    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md. Each
-    stderr line is prefixed with `"[server] "` so it's distinguishable from other processes'
-    output a client may interleave with it."""
+    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md.
+    `stderr_json=True` formats each stderr line as one JSON object so that client can parse
+    each record instead of treating it as opaque text."""
     with patch("klorb.cli.server.generate_session_id", return_value="some-session-id"):
         with patch("klorb.cli.server.configure_logging") as mock_configure_logging:
             with patch("klorb.cli.server.ServerStreams") as mock_streams_cls:
@@ -119,4 +119,4 @@ def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> N
 
     mock_configure_logging.assert_called_once_with(
         repl_mode=False, log_path=session_log_path("server-some-session-id"),
-        stderr_prefix="[server] ")
+        stderr_json=True)

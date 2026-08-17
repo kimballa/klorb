@@ -67,13 +67,13 @@ def run_server_cli(argv: list[str]) -> int:
     would for any other Python script. It's caught here so the process exits cleanly with
     status 0 instead of printing a traceback.
 
-    Configures logging (`configure_logging(repl_mode=False, log_path=..., stderr_prefix="[server]
-    ")`) before anything else runs, so every subsequent log call -- including
+    Configures logging (`configure_logging(repl_mode=False, log_path=..., stderr_json=True)`)
+    before anything else runs, so every subsequent log call -- including
     `process_config.config_warnings` below -- is captured. `repl_mode=False` sends records to
     stderr (visible to a client, e.g. the VSCode plugin, that captures the server subprocess's
-    stderr) in addition to the session log file; the `"[server] "` prefix marks each stderr line
-    as coming from this process when a client interleaves it with output from others. Unlike a
-    one-shot prompt (see
+    stderr) in addition to the session log file; `stderr_json=True` formats each stderr line as
+    one JSON object (`JsonLogFormatter`) so a client parses each record instead of treating it
+    as opaque text. Unlike a one-shot prompt (see
     docs/adrs/00007-one-shot-prompts-log-to-stderr-without-a-session-file-by-default.md), a server
     process has no interactive/headless distinction to key that default off of and no single
     `Session` whose id could name the log file -- `KlorbAcpAgent.new_session` may replace it
@@ -84,7 +84,7 @@ def run_server_cli(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     log_path = session_log_path(f"server-{generate_session_id()}")
-    configure_logging(repl_mode=False, log_path=log_path, stderr_prefix="[server] ")
+    configure_logging(repl_mode=False, log_path=log_path, stderr_json=True)
     logger.debug("klorb server logging to %s", log_path)
 
     cwd = Path.cwd()

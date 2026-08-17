@@ -49,6 +49,62 @@ export function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/** One record from `klorb server`'s JSON-formatted stderr. */
+interface ServerLogRecord {
+  ts: string;
+  level: string;
+  log: string;
+  msg: string;
+}
+
+/** Parses one `klorb server` stderr line as a `ServerLogRecord`, or `undefined` if it isn't
+ * valid JSON matching that shape. */
+function parseServerLogRecord(line: string): ServerLogRecord | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    typeof record.ts === 'string' &&
+    typeof record.level === 'string' &&
+    typeof record.log === 'string' &&
+    typeof record.msg === 'string'
+  ) {
+    return record as unknown as ServerLogRecord;
+  }
+  return undefined;
+}
+
+/** Python `logging` module level value for `WARNING`. */
+const WARNING_LEVEL_VALUE = 30;
+/** Python `logging` module level value for `ERROR`. */
+const ERROR_LEVEL_VALUE = 40;
+
+/** Maps a `ServerLogRecord.level` name to its Python `logging` module numeric value, or `0` for
+ * an unrecognized name (so it never escalates). */
+function serverLogLevelValue(level: string): number {
+  switch (level) {
+    case 'DEBUG':
+      return 10;
+    case 'INFO':
+      return 20;
+    case 'WARNING':
+      return WARNING_LEVEL_VALUE;
+    case 'ERROR':
+      return ERROR_LEVEL_VALUE;
+    case 'CRITICAL':
+      return 50;
+    default:
+      return 0;
+  }
+}
+
 /** Reads one boolean flag from `initResult.agentCapabilities._meta.klorb`, `false` if the
  * server's `initialize()` reply carried no such flag at all (an older/non-klorb server, or one
  * that hasn't grown this capability yet). */
@@ -446,11 +502,11 @@ export class AcpConnection {
     reject(new Error(rejectionMessage));
   }
 
-  /** Forwards the child's stderr -- where klorb's Python `logging` output goes -- to `_log`
-   * line-by-line, so it lands in the extension's output channel instead of an unread pipe
-   * (an unread stderr pipe can eventually fill its OS buffer and block the child on write).
-   * Buffers a trailing partial line (and multi-byte characters split across chunk boundaries,
-   * via `StringDecoder`) until a newline or stream close completes it. */
+  /** Forwards the child's stderr -- one JSON `ServerLogRecord` per line -- to `_log`
+   * line-by-line, so it lands in the extension's output channel instead of an unread pipe (an
+   * unread stderr pipe can eventually fill its OS buffer and block the child on write). Buffers
+   * a trailing partial line (and multi-byte characters split across chunk boundaries, via
+   * `StringDecoder`) until a newline or stream close completes it. */
   private _pipeStderr(stderr: Readable): void {
     const decoder = new StringDecoder('utf8');
     let buffer = '';
@@ -459,16 +515,32 @@ export class AcpConnection {
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
       for (const line of lines) {
-        this._log(line);
+        this._handleStderrLine(line);
       }
     });
     stderr.on('close', () => {
       buffer += decoder.end();
       if (buffer.length > 0) {
-        this._log(buffer);
+        this._handleStderrLine(buffer);
         buffer = '';
       }
     });
+  }
+
+  /** Parses one `klorb server` stderr line as a `ServerLogRecord` and reformats it for `_log`,
+   * escalating a `WARNING`+ record into the history scroll via `onServerLogNotice`. A line that
+   * isn't valid JSON is forwarded to `_log` verbatim instead. */
+  private _handleStderrLine(line: string): void {
+    const record = parseServerLogRecord(line);
+    if (record === undefined) {
+      this._log(`[server] ${line}`);
+      return;
+    }
+    this._log(`[server] ${record.ts} - ${record.level}:${record.log}:${record.msg}`);
+    const levelValue = serverLogLevelValue(record.level);
+    if (levelValue >= WARNING_LEVEL_VALUE) {
+      this._listener.onServerLogNotice(record.msg, levelValue >= ERROR_LEVEL_VALUE);
+    }
   }
 
   /** Races `request` against the connection closing, so a request against a dead server

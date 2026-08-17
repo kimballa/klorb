@@ -482,6 +482,16 @@ describe('queued messages', () => {
     const entries = applyHostMessage([], { type: 'notice', text: 'hook fired' });
     expect(entries).toEqual([{ kind: 'notice', text: 'hook fired', streaming: false }]);
   });
+
+  it('applyHostMessage appends a notice entry for a non-error serverLog record', () => {
+    const entries = applyHostMessage([], { type: 'serverLog', text: 'careful', error: false });
+    expect(entries).toEqual([{ kind: 'notice', text: 'careful', streaming: false }]);
+  });
+
+  it('applyHostMessage appends an error entry for an error serverLog record', () => {
+    const entries = applyHostMessage([], { type: 'serverLog', text: 'boom', error: true });
+    expect(entries).toEqual([{ kind: 'error', text: 'boom', streaming: false }]);
+  });
 });
 
 describe('applyInterruptedMarker', () => {

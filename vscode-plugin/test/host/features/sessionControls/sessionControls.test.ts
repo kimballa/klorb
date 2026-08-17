@@ -40,6 +40,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onMessageQueued: () => undefined,
     onQueuedMessageSent: () => undefined,
     onNotice: () => undefined,
+    onServerLogNotice: () => undefined,
     onSessionReplay: () => undefined,
     onSessionReset: () => undefined,
   };

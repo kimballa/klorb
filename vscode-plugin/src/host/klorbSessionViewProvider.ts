@@ -208,6 +208,10 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
     this.postHostMessage({ type: 'notice', text });
   }
 
+  public onServerLogNotice(text: string, error: boolean): void {
+    this.postHostMessage({ type: 'serverLog', text, error });
+  }
+
   public onSessionReplay(entries: SessionReplayEntry[]): void {
     this.postHostMessage({ type: 'sessionReplay', entries });
   }

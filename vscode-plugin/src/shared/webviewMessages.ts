@@ -79,6 +79,14 @@ export interface NoticeMessage {
   text: string;
 }
 
+/** A `WARNING`+ record parsed from `klorb server`'s JSON-formatted stderr, surfaced in the
+ * history scroll as an `'error'` entry when `error` is true, or a plain `'notice'` otherwise. */
+export interface ServerLogMessage {
+  type: 'serverLog';
+  text: string;
+  error: boolean;
+}
+
 /** One file location a tool call names, e.g. the file a read/edit call touched. */
 export interface ToolCallLocation {
   path: string;
@@ -540,6 +548,7 @@ export type HostMessage =
   | MessageQueuedMessage
   | QueuedMessageSentMessage
   | NoticeMessage
+  | ServerLogMessage
   | SessionResetMessage
   | ToolCallStartedMessage
   | ToolCallUpdatedMessage
@@ -1391,6 +1400,13 @@ function parseTextWithImages(
   return { text: record.text, images: record.images };
 }
 
+function parseServerLog(record: Record<string, unknown>): ServerLogMessage | undefined {
+  if (typeof record.text === 'string' && typeof record.error === 'boolean') {
+    return record as unknown as ServerLogMessage;
+  }
+  return undefined;
+}
+
 function parseWebviewError(record: Record<string, unknown>): WebviewErrorMessage | undefined {
   if (
     typeof record.message !== 'string' ||
@@ -1424,6 +1440,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseQuestionAsk(record);
     case 'toolCallLimitAsk':
       return parseToolCallLimitAsk(record);
+    case 'serverLog':
+      return parseServerLog(record);
     case 'statusUpdate':
       return parseStatusUpdate(record);
     case 'sessionStats':
