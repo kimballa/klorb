@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """`SessionPromptSetupMixin`: resolves the active turn's system prompt and reasoning/cache
-request shape, and ensures the session's bookkeeping-only `system`/`tool_defs` messages are
-inserted before the first turn is dispatched."""
+request shape, ensures the session's bookkeeping-only `system`/`tool_defs` messages are inserted
+before the first turn is dispatched, and builds the first-turn `AdditionalTools` interjection."""
 
 import json
 from datetime import datetime
@@ -109,3 +109,21 @@ class SessionPromptSetupMixin(SessionBase):
             processing_state="complete",
             timestamp=datetime.now(),
         ))
+
+    def _build_additional_tools_interjection(self) -> str | None:
+        """Return the body `send_turn()` wraps in an `AdditionalTools` `<SystemInterjection>`
+        and prepends onto the first turn's prompt, or `None` if this session has no
+        `ToolRegistry` or no tool is visible-but-undescribed (see `Tool.default_described` and
+        `ToolRegistry.additional_tool_summaries`).
+        """
+        if self._tool_registry is None:
+            return None
+        summaries = self._tool_registry.additional_tool_summaries()
+        if not summaries:
+            return None
+        return (
+            "The following tools also exist, named here without their full description or "
+            "parameter schema to save context. Call `SearchTools(queries=[...])` with a tool's "
+            "exact name to retrieve its full definition before calling it.\n\n"
+            + json.dumps({"additional_tools": summaries}, ensure_ascii=False)
+        )

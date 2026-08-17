@@ -204,6 +204,13 @@ class Tool(ABC):
         """
         return True
 
+    def default_described(self) -> bool:
+        """Return whether this tool's full description and parameter schema should be
+        included in the tool definitions sent to the model. A tool that's `default_visible()`
+        but not `default_described()` is instead named in `additional_tools`.
+        """
+        return True
+
     def aliases(self) -> Sequence[str] | None:
         """Return alternative names this tool can be invoked by, or `None` (the default).
         Aliases are not advertised to the model, but if it guesses one, the tool is dispatched

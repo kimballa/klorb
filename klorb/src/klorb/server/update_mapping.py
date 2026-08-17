@@ -85,6 +85,7 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "SearchMemories": "search",
     "SearchScratchpad": "search",
     "SearchSkills": "search",
+    "SearchTools": "search",
     "SemanticSearch": "search",
     "ListMemories": "search",
     "Bash": "execute",

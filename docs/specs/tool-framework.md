@@ -51,7 +51,19 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     Defaults to `None`. Aliases are not advertised to the model in tool definitions, but if
     the model guesses one, `ToolRegistry.instantiate_tool` resolves it to the canonical tool
     as if called by `name()`. Currently assigned: `CreateFile` accepts `WriteFile`,
-    `CreateMemory` accepts `WriteMemory`, `FindFile` accepts `Glob`.
+    `CreateMemory` accepts `WriteMemory`, `FindFile` accepts `Glob`, `SearchTools` accepts
+    `ToolSearch`.
+  * `default_visible() -> bool` — whether this tool is advertised to the model at all.
+    Defaults to `True`. A tool returning `False` is still dispatched if the model calls it by
+    name (see `ToolRegistry.instantiate_tool`), it just doesn't cost tokens in every prompt.
+  * `default_described() -> bool` — whether this tool's full description and parameter schema
+    belong in `ToolRegistry.tool_definitions()`. Defaults to `True`. A `default_visible()` tool
+    that returns `False` here is instead named (with a truncated description) in
+    `ToolRegistry.additional_tool_summaries()` and the `AdditionalTools` interjection (see
+    [[session-and-turns]]) — the model has to call `SearchTools` to see its full schema before
+    it can be invoked correctly. `ReplaceAll` is the one tool that overrides this, since its
+    regex/case/multiline schema is disproportionately large for how rarely it's needed. See
+    [the ADR](../adrs/00201-visible-but-undescribed-tools-summarized-via-searchtools.md).
 
   Two further methods are concrete, not abstract, so every `Tool` has a usable default and a
   subclass only overrides them for a nicer rendering:
@@ -122,7 +134,21 @@ feature: individual tools (file search, shell exec, etc.) will be added under
   * `tool_definitions() -> list[dict[str, Any]]` — builds the OpenAI/OpenRouter
     function-calling `tools` array: each entry is
     `{"type": "function", "function": {"name", "description", "parameters"}}`, with
-    pydantic parameter schemas converted to JSON schema via `model_json_schema()`.
+    pydantic parameter schemas converted to JSON schema via `model_json_schema()`. Only
+    includes a tool that's both `default_visible()` and `default_described()`, or whose name
+    is in `extra_visible_tools` (see below).
+  * `additional_tool_summaries() -> list[dict[str, str]]` — `{"name", "description"}` for
+    every tool that's `default_visible()` (or in `extra_visible_tools`) but excluded from
+    `tool_definitions()` because `default_described()` is `False`. `description` is hard-
+    truncated to `ADDITIONAL_TOOL_DESCRIPTION_LIMIT` (80) characters. Feeds the `AdditionalTools`
+    interjection — see [[session-and-turns]].
+  * `resolve_name(name: str) -> str | None` — the canonical tool name `name` refers to, whether
+    `name` is already canonical or one of its aliases, or `None` if it matches neither. Used by
+    `SearchToolsTool` to detect an exact name/alias query.
+  * `extra_visible_tools: frozenset[str]` — tool names whose full schema belongs in
+    `tool_definitions()` regardless of `default_visible()`/`default_described()`, bypassing
+    `additional_tool_summaries()` too. Set by the eval harness to exercise one tool's actual
+    schema for a specific eval case.
 
 ## Malformed tool-call arguments
 
@@ -334,6 +360,17 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `{"file": path}` or `{"dir": path}` entries — a directory match doesn't stop the walk from
   descending into it), and `truncated`. `summary()` names the pattern, root, and match count;
   `detail_view()` caps `matches` the same way `Grep`'s does.
+
+* `klorb.tools.search_tools.SearchToolsTool` (`klorb/src/klorb/tools/search_tools.py`), name
+  `SearchTools`. Looks up the full definition (`name`, `description`, `parameters`) of one or
+  more registered tools by `queries`. If `queries` has exactly one entry and it's the exact
+  canonical name or alias of a registered tool (via `ToolRegistry.resolve_name()`), that tool's
+  definition is returned directly with no keyword search. Otherwise every query is matched,
+  case-insensitively, as a literal substring against every registered tool's name, description,
+  and parameter schema (as JSON text); a tool matching any query is included once. Searches
+  every registered tool, not only the ones an `AdditionalTools` interjection names, since a model
+  may also want to confirm a fully-described tool's exact schema. The result is a dict:
+  `queries`, `match_count`, and `results` (a list of `{name, description, parameters}`).
 
 ## Recursive tree walks
 

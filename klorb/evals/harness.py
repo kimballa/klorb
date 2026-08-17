@@ -65,9 +65,9 @@ class EvalCase:
     proving a long-span edit used `old_text_start`/`old_text_end` rather than a token-wasteful
     `old_text`. `None` (the default) means no shape check runs for this case."""
     extra_tool_names: frozenset[str] | None = None
-    """Tool names that should be advertised to the model for this case even though their
-    `Tool.default_visible()` returns `False` -- e.g. `ReplaceAll`. Wired to
-    `ToolRegistry.extra_visible_tools` in `run_case()`."""
+    """Tool names that should be advertised to the model with a full schema for this case even
+    though `Tool.default_visible()`/`default_described()` would otherwise omit or summarize
+    them -- e.g. `ReplaceAll`. Wired to `ToolRegistry.extra_visible_tools` in `run_case()`."""
     global_memory_files: dict[str, str] = field(default_factory=dict)
     """Bare filename to initial content, written into the `global` memory namespace before
     `prompt` is sent. `run_case()` always points the `global` namespace at a case-private temp

@@ -316,6 +316,7 @@ class SessionCoreMixin(SessionBase):
         self._skills_seeded = False
         self._context_files_seeded = False
         self._memories_seeded = False
+        self._additional_tools_seeded = False
         self._metadata_seeded = False
         self._session_started_at = datetime.now()
         self._pending_permission_framework_interjection: str | None = None

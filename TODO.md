@@ -97,8 +97,9 @@
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
   * Improve ability to use MessageSubagent for peer to peer 1:1 messaging while agent loops are ongoing?
-  * ToolSearch tool to do case-insensitive literal match + semantic index search of tool
-    name/description/parameter schema docs. (Requires json- or tool-specific chunker.)
+  * SearchTools currently only does case-insensitive literal match over tool
+    name/description/parameter schema docs. Add semantic index search too (requires a
+    json- or tool-specific chunker).
 
 * Improvements to Skills:
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
