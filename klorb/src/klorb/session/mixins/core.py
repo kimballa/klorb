@@ -276,7 +276,8 @@ class SessionCoreMixin(SessionBase):
         `session.lock`) -- see `SessionPersistenceMixin.claim_session_directory`."""
         self._workspace_indexer = (
             parent.workspace_indexer if parent is not None
-            else self._create_workspace_indexer(config)
+            else self._create_workspace_indexer(
+                config, claude_skills_compat=self._compatibility_claude_skills)
         )
         """The local search index backing semantic search, or `None` if this is an untrusted
         workspace or construction failed. Built once per root session and shared with subagents. Not
@@ -339,12 +340,17 @@ class SessionCoreMixin(SessionBase):
         self.register_teardown("Scratchpad", self.scratchpad.cleanup)
 
     @staticmethod
-    def _create_workspace_indexer(config: SessionConfig) -> "WorkspaceIndexer | None":
+    def _create_workspace_indexer(
+        config: SessionConfig, *, claude_skills_compat: bool,
+    ) -> "WorkspaceIndexer | None":
         """Construct and `start()` a `WorkspaceIndexer` for `config.workspace.path`, or return
         `None` if `search_workspace_index_enabled` is off, the workspace is untrusted, the bundled
         embedding model isn't installed (`klorb init` never ran), or construction itself fails.
         `index_memories` (from `search_memories_index_enabled`) governs whether the indexer also
-        covers the `memories-workspace`/`memories-global` catalogs."""
+        covers the `memories-workspace`/`memories-global` catalogs; `index_skills` (from
+        `search_skills_index_enabled`) likewise governs the `skills-*` catalogs, and
+        `claude_skills_compat` governs whether their `workspace` tier also covers
+        `.claude/skills/`."""
         if not config.search_workspace_index_enabled or not config.workspace.trusted:
             return None
         from klorb.search_index.embedding import embedding_model_available
@@ -358,7 +364,9 @@ class SessionCoreMixin(SessionBase):
         try:
             indexer = WorkspaceIndexer(
                 config.workspace.path, use_gpu=config.search_indexer_gpu_enabled,
-                index_memories=config.search_memories_index_enabled)
+                index_memories=config.search_memories_index_enabled,
+                index_skills=config.search_skills_index_enabled,
+                claude_skills_compat=claude_skills_compat)
         except OSError:
             logger.warning("Could not construct workspace search index.", exc_info=True)
             return None

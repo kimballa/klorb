@@ -303,6 +303,7 @@ SESSION_KEY_MAP: dict[str, str] = {
     "search.workspaceIndex.enabled": "search_workspace_index_enabled",
     "search.indexer.gpuEnabled": "search_indexer_gpu_enabled",
     "search.memoriesIndex.enabled": "search_memories_index_enabled",
+    "search.skillsIndex.enabled": "search_skills_index_enabled",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always

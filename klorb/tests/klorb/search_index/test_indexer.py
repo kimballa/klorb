@@ -12,6 +12,7 @@ import pytest
 from klorb.search_index import indexer as indexer_module
 from klorb.search_index.embedding import EMBEDDING_DIMENSIONS, EMBEDDING_THREADS
 from klorb.search_index.indexer import WorkspaceIndexer, _file_hash, _read_text, _walk_indexable_files
+from klorb.tools.skill import common as skill_common
 from klorb.tools.util.gitignore import GitignoreFilter
 
 
@@ -691,5 +692,139 @@ def test_watcher_picks_up_a_newly_created_global_memory_file(
         assert _wait_until(
             lambda: len(
                 workspace_indexer.hybrid_search("freshly created", 10, "memories-global")) > 0)
+    finally:
+        workspace_indexer.close()
+
+
+# --- skills catalog ---
+#
+# The global `_reset_skill_catalog` autouse fixture (tests/conftest.py) already points the
+# `internal`/`user` skill tiers at empty temp dirs, so these tests only need to populate whichever
+# tier they're covering.
+
+
+def _write_skill(base: Path, name: str, body: str) -> Path:
+    skill_dir = base / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(f"---\ndescription: test skill\n---\n\n{body}\n")
+    return skill_dir
+
+
+def test_run_foreground_scan_indexes_a_workspace_skill_and_its_resource_files(
+    tmp_path: Path,
+) -> None:
+    skill_dir = _write_skill(tmp_path / ".klorb" / "skills", "my-skill", "a debouncing skill")
+    (skill_dir / "resources").mkdir()
+    (skill_dir / "resources" / "notes.md").write_text("Topic\nnotes about throttling input\n")
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 2
+        assert workspace_indexer._store.file_records().keys() == {
+            ".klorb/skills-index/my-skill/SKILL.md",
+            ".klorb/skills-index/my-skill/resources/notes.md",
+        }
+        assert workspace_indexer.hybrid_search("debouncing", 10, "skills-workspace")
+        assert workspace_indexer.hybrid_search("throttling", 10, "skills-workspace")
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_indexes_a_user_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_data_dir = tmp_path.parent / f"{tmp_path.name}-user-data"
+    monkeypatch.setattr(skill_common, "get_klorb_data_dir", lambda: user_data_dir)
+    _write_skill(user_data_dir / "skills", "homedir-skill", "a debouncing skill")
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1
+        assert workspace_indexer._store.file_records().keys() == {
+            ".klorb/skills-index/homedir-skill/SKILL.md"}
+        assert workspace_indexer.hybrid_search("debouncing", 10, "skills-user")
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_indexes_an_internal_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    internal_dir = tmp_path.parent / f"{tmp_path.name}-internal"
+    monkeypatch.setattr(skill_common, "internal_skills_dir", lambda: internal_dir)
+    _write_skill(internal_dir, "builtin-skill", "a debouncing skill")
+
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1
+        assert workspace_indexer._store.file_records().keys() == {
+            ".klorb/skills-index/builtin-skill/SKILL.md"}
+        assert workspace_indexer.hybrid_search("debouncing", 10, "skills-internal")
+    finally:
+        workspace_indexer.close()
+
+
+def test_index_skills_false_skips_the_skills_catalog(tmp_path: Path) -> None:
+    _write_skill(tmp_path / ".klorb" / "skills", "my-skill", "a debouncing skill")
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+
+    workspace_indexer = WorkspaceIndexer(tmp_path, index_skills=False)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1  # only a.py
+        assert workspace_indexer._store.file_records().keys() == {"a.py"}
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_skips_reembedding_a_skill_whose_content_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_skill(tmp_path / ".klorb" / "skills", "my-skill", "unchanged content")
+    embed_calls = 0
+    original_embed_passages = _FakeEmbeddingModel.embed_passages
+
+    class _CountingEmbeddingModel(_FakeEmbeddingModel):
+        def embed_passages(self, texts: list[str]) -> list[np.ndarray]:
+            nonlocal embed_calls
+            embed_calls += 1
+            return original_embed_passages(self, texts)
+
+    monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _CountingEmbeddingModel())
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        first = workspace_indexer.run_foreground_scan()
+        assert first.files_indexed == 1
+        assert embed_calls == 1
+
+        second = workspace_indexer.run_foreground_scan()
+        assert second.files_indexed == 0  # content hash unchanged -- no rescan work
+        assert embed_calls == 1
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_reindexes_a_changed_skill_file(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path / ".klorb" / "skills", "my-skill", "original content")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.run_foreground_scan()
+        source_path = ".klorb/skills-index/my-skill/SKILL.md"
+        original_hash = workspace_indexer._store.file_records()[source_path].content_hash
+
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: test skill\n---\n\nnow about reticulating splines\n")
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1
+        assert workspace_indexer._store.file_records()[source_path].content_hash != original_hash
+        assert workspace_indexer.hybrid_search("reticulating", 10, "skills-workspace")
     finally:
         workspace_indexer.close()

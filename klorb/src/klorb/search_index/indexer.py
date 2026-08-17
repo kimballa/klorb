@@ -10,6 +10,7 @@ import time
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -19,7 +20,12 @@ from watchdog.observers.api import BaseObserver
 from klorb.lockfile import Lockfile, create_lockfile
 from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import KLORB_PROJECT_DIR_NAME, workspace_klorb_dir
-from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
+from klorb.search_index.catalogs import (
+    MEMORIES_GLOBAL_CATALOG,
+    MEMORIES_WORKSPACE_CATALOG,
+    skill_source_path,
+    skills_catalog_for_namespace,
+)
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.chunkers.base import CATALOG
 from klorb.search_index.chunkers.router import get_chunker_router
@@ -32,6 +38,7 @@ from klorb.search_index.embedding import (
 )
 from klorb.search_index.store import FileIndexRecord, SearchIndexStore, WriteLock
 from klorb.tools.memory.common import MEMORIES_DIRNAME
+from klorb.tools.skill.common import resolve_all_skills, resolve_skill_file, skill_file_manifest
 from klorb.tools.util.gitignore import GitignoreFilter
 
 logger = logging.getLogger(__name__)
@@ -163,6 +170,36 @@ def _global_memory_entries() -> list[tuple[Path, str]]:
     ]
 
 
+def _skill_markdown_entries(
+    workspace_root: Path, claude_skills_compat: bool,
+) -> list[tuple[Traversable, str, str]]:
+    """Every markdown file (`SKILL.md` and any nested resource file) across every discoverable
+    skill in every tier, as `(target, catalog, source_path)` triples. Trust is hardcoded `True`:
+    a `WorkspaceIndexer` only ever exists for a trusted workspace (see
+    `SessionCoreMixin._create_workspace_indexer`)."""
+    entries: list[tuple[Traversable, str, str]] = []
+    for resolved in resolve_all_skills(
+            workspace_root=workspace_root, workspace_trusted=True,
+            claude_skills_compat=claude_skills_compat):
+        catalog = skills_catalog_for_namespace(resolved.namespace)
+        for relative_path in skill_file_manifest(resolved):
+            if not relative_path.endswith(".md"):
+                continue
+            target = resolve_skill_file(resolved, relative_path)
+            entries.append((target, catalog, skill_source_path(resolved.name, relative_path)))
+    return entries
+
+
+def _read_skill_text(target: Traversable) -> str | None:
+    """`target`'s decoded text, or `None` if it's unreadable or not valid UTF-8. Unlike
+    `_read_text`, applies no size gate -- `target` may be a packaged `importlib.resources`
+    `Traversable` with no `.stat()`, and skill files are small authored docs regardless of tier."""
+    try:
+        return target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 @dataclass
 class _DirtyFile:
     """One file `_scan_dirty_files` found changed or new, queued for (re)chunking/(re)embedding."""
@@ -204,10 +241,13 @@ class WorkspaceIndexer:
 
     def __init__(
         self, workspace_root: Path, *, use_gpu: bool = True, index_memories: bool = True,
+        index_skills: bool = True, claude_skills_compat: bool = False,
     ) -> None:
         self._workspace_root = workspace_root.resolve()
         self._use_gpu = use_gpu
         self._index_memories = index_memories
+        self._index_skills = index_skills
+        self._claude_skills_compat = claude_skills_compat
         self._global_memories_dir = (get_klorb_data_dir() / MEMORIES_DIRNAME).resolve(strict=False)
         index_dir = workspace_klorb_dir(self._workspace_root) / INDEX_DIR_NAME
         index_dir.mkdir(parents=True, exist_ok=True)
@@ -340,6 +380,9 @@ class WorkspaceIndexer:
 
         files_indexed = 0
         chunks_indexed = 0
+        if self._index_skills:
+            files_indexed, chunks_indexed = self._scan_skills(existing, seen, write_lock)
+
         counts_lock = threading.Lock()
         thread_local = threading.local()
         timings = _ScanPhaseTimings()
@@ -461,6 +504,8 @@ class WorkspaceIndexer:
                     return
                 seen.add(rel_path)
                 self._scan_one_file(rel_path, abs_path, catalog, existing, write_lock)
+        if self._index_skills:
+            self._scan_skills(existing, seen, write_lock)
         stale_paths = set(existing) - seen
         for rel_path in stale_paths:
             self._store.delete_for_path(rel_path, write_lock)
@@ -491,6 +536,33 @@ class WorkspaceIndexer:
             self._store.set_file_hash(rel_path, content_hash, mtime, write_lock)
             return
         self._reindex_file(rel_path, text, content_hash, mtime, write_lock, catalog=catalog)
+
+    def _scan_skills(
+        self, existing: dict[str, FileIndexRecord], seen: set[str],
+        write_lock: WriteLock | None = None,
+    ) -> tuple[int, int]:
+        """(Re)index every discoverable skill's markdown files into their `SKILLS_*_CATALOG`,
+        adding each one's synthetic `source_path` to `seen`. No mtime fast path: a skill file may
+        come from a packaged `importlib.resources` `Traversable` with no `.stat()`, and the total
+        skill file count is small enough that reading and hashing all of them every scan is
+        cheaper than special-casing tiers that do have a real mtime. Returns
+        `(files_indexed, chunks_indexed)`."""
+        files_indexed = 0
+        chunks_indexed = 0
+        for target, catalog, source_path in _skill_markdown_entries(
+                self._workspace_root, self._claude_skills_compat):
+            seen.add(source_path)
+            text = _read_skill_text(target)
+            if text is None:
+                continue
+            content_hash = _file_hash(text)
+            existing_record = existing.get(source_path)
+            if existing_record is not None and existing_record.content_hash == content_hash:
+                continue
+            chunks_indexed += self._reindex_file(
+                source_path, text, content_hash, 0.0, write_lock, catalog=catalog)
+            files_indexed += 1
+        return files_indexed, chunks_indexed
 
     def _reindex_file(
         self, rel_path: str, text: str, content_hash: str, last_modified_ts: float,

@@ -139,6 +139,9 @@ class SessionConfig(BaseModel):
     `search_workspace_index_enabled` in name only: both catalogs share `WorkspaceIndexer` with
     `workspace`, so this flag is moot unless the `workspace` catalog itself is also enabled and
     the workspace is trusted."""
+    search_skills_index_enabled: bool = True
+    """Whether `WorkspaceIndexer` also covers the `skills-user`/`skills-workspace`/
+    `skills-internal` catalogs `SearchSkills` draws its semantic hits from."""
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
     (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult

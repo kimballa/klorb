@@ -5,12 +5,13 @@
 `klorb.search_index` is a local, SQLite-backed hybrid (BM25 lexical + vector KNN) search index over
 several catalogs: the `workspace` catalog (source code, docs, and markdown across a trusted
 workspace's filesystem, backing `SemanticSearch` — see
-docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md) and the
+docs/adrs/00195-revert-grep-search-mode-semantic-search-becomes-its-own-tool.md), the
 `memories-global`/`memories-workspace` catalogs (each namespace's memory `.md` files, backing
-`SearchMemories`'s semantic hits — see "Memories catalogs" below and docs/specs/memories.md).
-Embeddings run fully locally via a bundled ONNX model (`fastembed`); no network call is ever made
-at index or query time. A Skills catalog is anticipated follow-up work reusing this same
-chunk/embed/store/rank pipeline — not built yet.
+`SearchMemories`'s semantic hits — see "Memories catalogs" below and docs/specs/memories.md), and
+the `skills-user`/`skills-workspace`/`skills-internal` catalogs (every discoverable skill's
+markdown files, backing `SearchSkills`'s semantic hits — see "Skills catalogs" below and
+docs/specs/skills.md). Embeddings run fully locally via a bundled ONNX model (`fastembed`); no
+network call is ever made at index or query time.
 
 ## Chunking
 
@@ -33,8 +34,8 @@ per catalog.
   assignments get no special synopsis treatment — they fall into the leftover-statement grouping.
 * **`.md`/`.markdown`** — `chunkers.markdown.MarkdownChunker`: one chunk per ATX-heading-delimited
   section; a section larger than `MAX_SECTION_TOKENS` (400) splits further into one chunk per
-  blank-line-delimited paragraph. Shared verbatim by the memories catalogs, since a memory body is
-  itself markdown, and by the anticipated Skills catalog.
+  blank-line-delimited paragraph. Shared verbatim by the memories and skills catalogs, since both
+  index markdown content.
 * **Every file** (including ones with no structural/markdown chunker) — `chunkers.windowed.
   WindowedChunker`: a fixed-size (60 lines, 10-line overlap) sliding window over raw lines,
   independent of any structural boundary — a fallback recall net for content that doesn't parse
@@ -117,9 +118,9 @@ mode, `synchronous=NORMAL` — each commit's fsync is deferred to the next WAL c
 paid immediately, trading a small durability window (an OS crash or power loss, not an application
 crash, can roll back the most recent transactions) for much cheaper per-file commits during a scan).
 A single store can hold more than one catalog's chunks — `WorkspaceIndexer`'s own
-`${workspace_root}/.klorb/index/workspace.db` holds the `workspace`, `memories-workspace`, and
-`memories-global` catalogs, all three — since every query that matters at multi-catalog scale is
-scoped to one `catalog` (see
+`${workspace_root}/.klorb/index/workspace.db` holds the `workspace`, `memories-workspace`,
+`memories-global`, `skills-workspace`, `skills-user`, and `skills-internal` catalogs, all six —
+since every query that matters at multi-catalog scale is scoped to one `catalog` (see
 docs/adrs/00198-memories-catalogs-share-search-index-storage-scoped-by-catalog-partition-key.md):
 
 * **`chunks`** — plain metadata table, one row per `Chunk`.
@@ -157,13 +158,17 @@ once per file.
 ## Indexing: `WorkspaceIndexer`
 
 `klorb.search_index.indexer.WorkspaceIndexer` owns one workspace's index end to end: the initial
-scan, the background filesystem watcher, and cross-process ownership, covering all three
+scan, the background filesystem watcher, and cross-process ownership, covering all six
 catalogs — `workspace` (the recursive, gitignore-aware tree walk below), `memories-workspace`
 (`${workspace_root}/.klorb/memories/`, a flat `.md`-only directory the tree walk otherwise skips as
-part of `.klorb`), and `memories-global` (`KLORB_DATA_DIR/memories/`, outside the workspace root
-entirely) — one indexer, one store, one owner lock, one thread pool for all three. `index_memories`
-(a constructor flag, `True` by default, threaded from `SessionConfig.
-search_memories_index_enabled`) turns the latter two off without affecting the `workspace` catalog.
+part of `.klorb`), `memories-global` (`KLORB_DATA_DIR/memories/`, outside the workspace root
+entirely), and `skills-workspace`/`skills-user`/`skills-internal` (every discoverable skill's
+markdown files across all three skill tiers — see "Skills catalogs" below) — one indexer, one
+store, one owner lock, one thread pool for all six. `index_memories` (a constructor flag, `True`
+by default, threaded from `SessionConfig.search_memories_index_enabled`) turns the memories
+catalogs off without affecting `workspace`; `index_skills`/`claude_skills_compat` (from
+`SessionConfig.search_skills_index_enabled`/`ProcessConfig.compatibility_claude_skills`)
+similarly govern the skills catalogs.
 
 * **Cross-process ownership.** A TUI session and a vscode-plugin ACP session both open on the same
   workspace is the normal case, not an edge case — two unrelated indexer threads racing to reindex
@@ -188,13 +193,17 @@ search_memories_index_enabled`) turns the latter two off without affecting the `
   `@`-mention index), skipping `.git`/`.klorb` unconditionally, symlinks, and any file over
   `MAX_INDEXED_FILE_BYTES` (500KB) or that fails to decode as UTF-8 (the same silent-skip `Grep` gives
   an undecodable file), then (when `index_memories`) separately walks `.klorb/memories/` and
-  `KLORB_DATA_DIR/memories/` (each flat, `.md`-only, no gitignore, no recursion). All three walks
-  share one `existing`/`seen` bookkeeping pass so a file removed from any of them is cleaned up the
-  same way. A file whose mtime matches its stored `FileIndexRecord.last_modified_ts` is skipped
-  without being read or hashed. Otherwise its whole-content hash is compared against the stored
-  `content_hash`: an unchanged hash (e.g. a `git checkout` that only bumps mtimes) just refreshes
-  the stored mtime, while a changed hash rechunks and re-embeds it. A previously-indexed path no
-  longer seen is deleted.
+  `KLORB_DATA_DIR/memories/` (each flat, `.md`-only, no gitignore, no recursion), then (when
+  `index_skills`) walks every markdown file across every discoverable skill via
+  `klorb.tools.skill.common.resolve_all_skills()`/`skill_file_manifest()` — see "Skills catalogs"
+  below. These walks share one `existing`/`seen` bookkeeping pass so a file removed from any of
+  them is cleaned up the same way. For the `workspace`/memories catalogs, a file whose mtime
+  matches its stored `FileIndexRecord.last_modified_ts` is skipped without being read or hashed;
+  otherwise its whole-content hash is compared against the stored `content_hash`: an unchanged hash
+  (e.g. a `git checkout` that only bumps mtimes) just refreshes the stored mtime, while a changed
+  hash rechunks and re-embeds it. The skills catalogs skip the mtime check entirely (see "Skills
+  catalogs" below) and go straight to the content-hash compare. A previously-indexed path no longer
+  seen is deleted.
 * **The watcher** — a `watchdog` `Observer` + debounce-`Timer`, the same idiom
   `klorb.hooks.fs_events.FileSystemWatcher`/`klorb.tui.workspace_file_index.WorkspaceFileIndex` use —
   is scheduled recursively on the whole workspace root (so it already receives events for
@@ -203,7 +212,8 @@ search_memories_index_enabled`) turns the latter two off without affecting the `
   directory to already exist). `_reindex_changed_path` special-cases a direct child of either
   memories directory into its catalog before falling back to the ordinary `.klorb`-skip check for
   everything else under `.klorb`. Reindexes (or deletes, if the path no longer exists or gitignore
-  now excludes it) each changed path once a 1-second-quiet debounce window settles.
+  now excludes it) each changed path once a 1-second-quiet debounce window settles. The skills
+  catalogs have no watcher coverage — see "Skills catalogs" below.
 
 A `workspace` catalog chunk's `Chunk.source_path` is workspace-root-relative (`docs/README.md`); a
 `memories-workspace` chunk's is too (`.klorb/memories/notes.md`), since both are real paths under
@@ -223,6 +233,39 @@ for why. This ties `memories-global`'s searchability to the same trust gate as e
 `WorkspaceIndexer` touches: an untrusted workspace has no semantic search over global memories
 either, even though reading/writing them directly (`ReadMemory`/`CreateMemory`/...) is never
 gated by workspace trust.
+
+### Skills catalogs
+
+Every skill's markdown files (`SKILL.md` and any nested resource file, e.g. under a `resources/`
+subdirectory) are indexed into one of `skills-user`/`skills-workspace`/`skills-internal`, by
+namespace (`klorb.search_index.catalogs.skills_catalog_for_namespace`) — see docs/specs/skills.md
+for the three discovery tiers. `WorkspaceIndexer` reuses `klorb.tools.skill.common.
+resolve_all_skills()`/`skill_file_manifest()`/`resolve_skill_file()` directly rather than
+reimplementing tier discovery, so a skills catalog's contents always match what `SearchSkills`'s
+literal search and the skill catalog builder already see.
+
+Every skills-catalog chunk's `Chunk.source_path` is a *synthetic* path, `.klorb/skills-index/
+<skill-name>/<relative-path-within-skill-dir>`, applied uniformly across all three tiers — even
+`skills-workspace`, whose files do have a real on-disk workspace-relative path — so a chunk's skill
+identity is always recovered the same way (`klorb.search_index.catalogs.
+skill_name_from_source_path`) regardless of which tier it came from. See
+docs/adrs/00200-skills-catalog-uses-three-catalogs-synthetic-paths-hash-only-staleness-no-watcher.md.
+
+Unlike every other catalog, the skills catalogs have **no mtime fast path**: the `internal` tier's
+root is a packaged `importlib.resources.Traversable`, which has no `.stat()`, so every scan reads
+and content-hashes every skill markdown file unconditionally rather than special-casing which
+tiers do have a real mtime. This is cheap in practice — the total skill file count across all
+tiers is small — and the existing "hash unchanged → skip rechunk/embed" short-circuit still makes
+a no-op rescan fast. The skills catalogs also have **no watcher coverage**: a skill added, edited,
+or removed on disk is invisible to semantic search until the next session's initial scan or an
+explicit `klorb index scan`, the same "stale until an explicit rescan" trade-off
+docs/specs/skills.md's "Known risks" already accepts for the *display* skill catalog
+(`>reload skills`).
+
+Indexing runs independent of `skillRules` — every discoverable skill is indexed regardless of its
+verdict, since indexing itself discloses nothing (a `SearchSkills` result is always
+`{namespace, name, description}`, never file content or a path). `skillRules`/precedence
+filtering is applied only at query time, in `SearchSkillsTool.apply()`.
 
 ## Session integration
 
@@ -253,10 +296,10 @@ feature itself construct or assign a `WorkspaceIndexer` directly instead of goin
 `WorkspaceIndexer.close()` is registered as a root-session teardown subject
 (`_WORKSPACE_INDEXER_TEARDOWN_SUBJECT`), added to `_INFRASTRUCTURE_TEARDOWN_SUBJECTS` so
 `reset_session()`/`/clear` never tears it down mid-process — a `/clear` keeps the same workspace, so
-there's nothing to rebuild. All three catalogs share this single teardown, since they share the one
+there's nothing to rebuild. All six catalogs share this single teardown, since they share the one
 `WorkspaceIndexer` instance.
 
-## `SemanticSearch`/`SearchMemories` integration
+## `SemanticSearch`/`SearchMemories`/`SearchSkills` integration
 
 `klorb.tools.util.semantic_search_core.SemanticSearchCore` is the mechanic both tools share:
 `merged_hits()` runs a list of queries through one or more `(HybridSearchable, catalog)` pairs
@@ -283,6 +326,19 @@ search always still runs. A semantic hit's on-disk path is resolved per namespac
 workspace-root-relative for `workspace`, relative to `KLORB_DATA_DIR/memories/` (stripping the
 synthetic `source_path` prefix) for `global`.
 
+`klorb.tools.skill.search_skills.SearchSkillsTool` calls `merged_hits()` against
+`context.session.workspace_indexer` paired with whichever of the three `SKILLS_*_CATALOG`s the
+requested `namespace` covers, with the same minimum-score floor and cap constants as
+`SearchMemories` (defined locally, not shared, since the two tools' result shapes differ). Unlike
+`SearchMemories`, a semantic hit never carries its own rendered content: `merged_hits()`'s chunks
+are resolved back to a `(namespace, name)` pair (`klorb.search_index.catalogs.
+skill_namespace_for_catalog`/`skill_name_from_source_path`) and reported only as `{namespace,
+name, description}` — the same shape the literal search already returns, since the only way to
+read a skill's actual content is `ActivateSkill`. A hit resolving to a skill no longer in the
+session's `discoverable()` set (removed, shadowed, or denied since the index was last scanned) is
+dropped silently, the same graceful-degradation posture `SearchMemories` applies to an unavailable
+index.
+
 ## CLI: `klorb index`
 
 `klorb index <action>` gives a human direct command-line access to the index, independent of any
@@ -300,10 +356,13 @@ sub-main functions in `klorb.search_index.cli`:
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`; `--gpu`/`--no-gpu`, default
   from the resolved `search.workspaceIndex.gpuEnabled` config value) — calls
   `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
-  scan: it walks the workspace tree, `.klorb/memories/`, and `KLORB_DATA_DIR/memories/` once,
-  (re)indexes every dirty file across all three catalogs, and returns before exiting rather than
-  continuing on a background thread. `--rebuild` clears the store first (`SearchIndexStore.
-  clear()`) so every file (all three catalogs) is treated as dirty. Every `TreeSitterChunker` keeps
+  scan: it walks the workspace tree, `.klorb/memories/`, `KLORB_DATA_DIR/memories/`, and every
+  discoverable skill's markdown files once, (re)indexes every dirty file across all six catalogs,
+  and returns before exiting rather than continuing on a background thread. `--rebuild` clears the
+  store first (`SearchIndexStore.clear()`) so every file (every catalog) is treated as dirty. This
+  is threaded from the loaded `ProcessConfig`, so `search.skillsIndex.enabled` and
+  `compatibility.claudeSkills` govern it the same way they govern a `Session`'s own indexer. Every
+  `TreeSitterChunker` keeps
   a lazily-constructed `Parser` per thread (`threading.local()`) rather than one shared instance,
   since a `Parser` isn't safe for concurrent use, so chunking genuinely parallelizes across
   `num_threads` rather than serializing behind a lock.
@@ -339,7 +398,7 @@ All three actions resolve the workspace root via `TrustManager().resolve_workspa
 unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
 an explicit `klorb index` invocation is itself the user's authorization, the same treatment
 `klorb init` gets. `run_scan_cli` additionally calls `load_process_config()` before parsing
-`argv`, to resolve `--gpu`'s config-driven default. `scan`/`stats` cover all three catalogs (they
+`argv`, to resolve `--gpu`'s config-driven default. `scan`/`stats` cover every catalog (they
 operate on `WorkspaceIndexer`/its store directly); `search` only ever queries the `workspace`
 catalog.
 
@@ -353,14 +412,22 @@ catalog.
   `SessionConfig.search_memories_index_enabled`, threaded into `WorkspaceIndexer`'s
   `index_memories` constructor flag. Gates the `memories-workspace`/`memories-global` catalogs
   together; moot unless `search_workspace_index_enabled` is also on and the workspace is trusted,
-  since all three catalogs share one `WorkspaceIndexer`.
+  since all these catalogs share one `WorkspaceIndexer`.
+* `sessionDefaults.search.skillsIndex.enabled` — `bool`, default `true`, backing
+  `SessionConfig.search_skills_index_enabled`, threaded into `WorkspaceIndexer`'s `index_skills`
+  constructor flag. Gates the `skills-user`/`skills-workspace`/`skills-internal` catalogs together;
+  same moot-unless caveat as `search.memoriesIndex.enabled`. `compatibility.claudeSkills` (see
+  docs/specs/skills.md) additionally governs whether the `skills-workspace` catalog's discovery
+  also covers `.claude/skills/`.
 
 ## Out of scope
 
-* **A Tools/Skills catalog.** `chunk.py`/`embedding.py`/`store.py`/`ranking.py` are
-  catalog-agnostic; each anticipated catalog needs only its own chunker (Skills reuses
-  `chunkers.markdown.MarkdownChunker` directly, like the memories catalogs already do) and a thin
-  `Search*` integration. Not built yet.
+* **Skills-catalog live filesystem watching.** The skills catalogs' three tiers span a real
+  workspace-relative dir, a real homedir-rooted dir, and a non-filesystem packaged resource, so
+  the existing `watchdog`-based watcher (which only watches real paths) doesn't cover them. A
+  skill added, edited, or removed on disk is invisible to semantic search until the next session's
+  initial scan or an explicit `klorb index scan` — see
+  docs/adrs/00200-skills-catalog-uses-three-catalogs-synthetic-paths-hash-only-staleness-no-watcher.md.
 * **A shared daemon.** Each klorb process opens the workspace's SQLite file directly; there is no
   subprocess/socket-RPC indexing service. Revisit if cross-process write contention on
   `.klorb/index/*.db` turns out to matter in practice — the owner-lock design already bounds it to at

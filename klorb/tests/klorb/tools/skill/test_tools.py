@@ -7,9 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from klorb.permissions.resource import PermissionOverride
-from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.skill_access import Namespace, SkillRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
+from klorb.search_index.catalogs import skill_source_path, skills_catalog_for_namespace
+from klorb.search_index.chunk import Chunk
 from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill import common as skill_common
@@ -96,6 +98,137 @@ def test_search_excludes_disable_model_invocation_skill(
         "---\ndescription: about birds\ndisable-model-invocation: true\n---\n")
     result = SearchSkillsTool(context).apply({"queries": ["bird"]})
     assert result["match_count"] == 0
+
+
+def test_search_skills_alias_is_dispatchable(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    assert "SkillSearch" in (SearchSkillsTool(
+        _context(tmp_path, make_session_config)).aliases() or ())
+
+
+def test_search_matches_a_nested_resource_file_not_just_skill_md(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    skill_dir = _write_skill(_workspace_skills_dir(context), "birds", "about birds")
+    (skill_dir / "resources").mkdir()
+    (skill_dir / "resources" / "notes.md").write_text("a note about migration patterns\n")
+
+    result = SearchSkillsTool(context).apply({"queries": ["migration patterns"]})
+
+    assert [r["name"] for r in result["results"]] == ["birds"]
+
+
+def test_search_namespace_filter_excludes_other_namespaces(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    _write_skill(_workspace_skills_dir(context), "birds", "about birds")
+
+    result = SearchSkillsTool(context).apply({"queries": ["bird"], "namespace": "internal"})
+    assert result["match_count"] == 0
+
+    result = SearchSkillsTool(context).apply({"queries": ["bird"], "namespace": "workspace"})
+    assert result["match_count"] == 1
+
+
+def test_search_namespace_none_or_empty_string_means_all(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    _write_skill(_workspace_skills_dir(context), "birds", "about birds")
+
+    for namespace_arg in (None, ""):
+        result = SearchSkillsTool(context).apply({"queries": ["bird"], "namespace": namespace_arg})
+        assert result["match_count"] == 1
+
+
+# --- SearchSkills: semantic hits ---
+
+
+class _FakeSkillIndexer:
+    """A stand-in for `klorb.search_index.indexer.WorkspaceIndexer` that returns a fixed set of
+    `(Chunk, score)` hits, filtered to the requested catalog, regardless of query text."""
+
+    def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
+        self._hits = hits
+
+    def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
+        return [(chunk, score) for chunk, score in self._hits if chunk.catalog == catalog][:limit]
+
+
+def _semantic_skill_chunk(
+    namespace: Namespace, skill_name: str, relative_path: str = "SKILL.md",
+) -> Chunk:
+    catalog = skills_catalog_for_namespace(namespace)
+    source_path = skill_source_path(skill_name, relative_path)
+    return Chunk.create(
+        catalog=catalog, source_path=source_path, kind="markdown_section",
+        start_line=1, end_line=2, text="ignored, only used to identify the skill")
+
+
+def test_semantic_only_hit_is_included(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    _write_skill(_workspace_skills_dir(context), "birds", "about birds")
+    assert context.session is not None
+    chunk = _semantic_skill_chunk("workspace", "birds")
+    context.session._workspace_indexer = _FakeSkillIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+
+    result = SearchSkillsTool(context).apply({"queries": ["unrelated literal phrase"]})
+
+    assert [r["name"] for r in result["results"]] == ["birds"]
+    assert result["results"][0]["namespace"] == "workspace"
+
+
+def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    _write_skill(_workspace_skills_dir(context), "birds", "about birds", body="tweet tweet")
+    assert context.session is not None
+    chunk = _semantic_skill_chunk("workspace", "birds")
+    context.session._workspace_indexer = _FakeSkillIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+
+    result = SearchSkillsTool(context).apply({"queries": ["tweet"]})
+
+    assert len(result["results"]) == 1
+
+
+def test_semantic_hit_for_a_skill_no_longer_discoverable_is_dropped(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A semantic hit for a skill removed, shadowed, or denied since the index was last scanned
+    is silently dropped -- the index isn't necessarily as fresh as the live skill catalog."""
+    context = _context(tmp_path, make_session_config)  # no "birds" skill written to disk
+    assert context.session is not None
+    chunk = _semantic_skill_chunk("workspace", "birds")
+    context.session._workspace_indexer = _FakeSkillIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+
+    result = SearchSkillsTool(context).apply({"queries": ["unrelated literal phrase"]})
+
+    assert result["results"] == []
+
+
+def test_semantic_hits_respect_the_namespace_filter(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config)
+    _write_skill(_workspace_skills_dir(context), "birds", "about birds")
+    assert context.session is not None
+    chunk = _semantic_skill_chunk("workspace", "birds")
+    context.session._workspace_indexer = _FakeSkillIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+
+    result = SearchSkillsTool(context).apply(
+        {"queries": ["unrelated literal phrase"], "namespace": "internal"})
+
+    assert result["results"] == []
 
 
 # --- ActivateSkill ---

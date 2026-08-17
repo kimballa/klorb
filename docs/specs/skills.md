@@ -371,17 +371,32 @@ stays stripped from the displayed message like any other.
 
 ## `SearchSkills`
 
-`SearchSkills(queries: list[str])` matches each query as a literal, case-insensitive substring
-against both a skill's `name` and its full `SKILL.md` body (frontmatter included) — the same
-construction `SearchMemories` uses. Its result is a flat list of `{namespace, name, description}`
-for every skill with a hit, no matched-line detail: since a skill's `name`/`description` are
-already exposed by the available-skills interjection, `SearchSkills` exists to *narrow*, not to
-reveal. It searches `SkillCatalogRegistry.canonical().discoverable(skill_rules)` — the same precedence-deduped,
+`SearchSkills(queries: list[str], namespace: str = "all")` (alias `SkillSearch`) matches each query
+as a literal, case-insensitive substring against a skill's `name` and every markdown file in its
+directory (`SKILL.md` and any nested resource file, e.g. under `resources/`) — the same
+construction `SearchMemories` uses, widened beyond just `SKILL.md` — plus a small number of
+high-confidence semantic hits from the `skills-*` search-index catalogs (see
+docs/specs/local-search-index.md's "Skills catalogs"). Its result is a flat list of `{namespace,
+name, description}` for every skill with a hit, never matched-line detail or file content: since a
+skill's `name`/`description` are already exposed by the available-skills interjection,
+`SearchSkills` exists to *narrow*, not to reveal — the only way to actually read a skill's content
+is `ActivateSkill`. `namespace` optionally restricts the search to `"internal"`, `"user"`, or
+`"workspace"`; `null`/`""`/`"all"` (the default) search every namespace.
+
+Both the literal and semantic passes are scoped to
+`SkillCatalogRegistry.canonical().discoverable(skill_rules)` — the same precedence-deduped,
 non-`"deny"` set the available-skills interjection lists (so a `disable-model-invocation` skill,
-never in `canonical()`, is unreachable here too) — reading each candidate's `SKILL.md` body fresh
-(the catalog doesn't cache skill bodies, only frontmatter) to match against the body text. Each
-result's `description` is capped the same way the available-skills interjection's is (see above);
-`name` needs no separate capping, since it's already the catalog's own identity.
+never in `canonical()`, is unreachable here too), further filtered to `namespace`. The literal pass
+reads each candidate's markdown files fresh (the catalog doesn't cache skill bodies, only
+frontmatter) to match against their text; the semantic pass resolves each search-index hit back to
+a `(namespace, name)` pair (`klorb.search_index.catalogs.skill_namespace_for_catalog`/
+`skill_name_from_source_path`) and drops it silently if that pair isn't in the current
+`discoverable()` set — the index may be a scan or two stale, so a hit for a skill that's since been
+removed, shadowed, or denied never reaches a result. An unavailable
+search index (no `WorkspaceIndexer`, e.g. an untrusted workspace) simply omits the semantic hits;
+the literal pass always still runs. Each result's `description` is capped the same way the
+available-skills interjection's is (see above); `name` needs no separate capping, since it's
+already the catalog's own identity.
 
 ## Activating a skill
 
@@ -621,8 +636,10 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
 
 ## Out of scope
 
-* **Vector-indexed skill search.** `SearchSkills` is a literal substring match; an embedding-based
-  index is separate follow-up work.
+* **Live filesystem watching for the skills search-index catalogs.** `SearchSkills`'s semantic
+  hits draw from a search index rescanned at session start or an explicit `klorb index scan`, not
+  a live watcher (see docs/specs/local-search-index.md's "Skills catalogs"). The literal search
+  path is unaffected -- it always reads from disk fresh.
 * **Pruning the available-skills list.** Every non-denied skill is compiled into the first-turn
   interjection regardless of count; a recency/frequency-based top-*k* cutoff is anticipated but not
   built.

@@ -22,6 +22,11 @@
 
 ### Feature backlog
 
+* `bin/klorb index search` should get `--catalog` arg to activate a particular catalog for the results,
+  and `--list-catalogs` to list available options for `--catalog`. There should be "virtual catalog"
+  options for `'skills'` and `'memory'` that act like the `all` option in each of the SearchSkills
+  and SearchMemories tools, respectively.
+
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point.
@@ -97,7 +102,8 @@
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
   * Improve ability to use MessageSubagent for peer to peer 1:1 messaging while agent loops are ongoing?
-  * ToolSearch tool to do case-insensitive literal match + semantic index search of tool name/description/parameter schema docs. (Requires json- or tool-specific chunker.)
+  * ToolSearch tool to do case-insensitive literal match + semantic index search of tool
+    name/description/parameter schema docs. (Requires json- or tool-specific chunker.)
 
 * Improvements to Skills:
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
@@ -121,36 +127,6 @@
 * Metacognition tools -- read config; update (in-memory) config; update config file(s)
 
 * Context auto-compaction
-
-Create another catalog in the vector database for skills. Like the existing catalogs, it's in the same
-single "store" (sqlite3 database) as the rest of them. This will contain all the skills visible
-to the workspace--including skills that are baked into the harness ("internal" namespace) or in the
-"user" namespace. Much like how global-namespace memories are indexed, we make up a "close enough"
-filename to store as the filename element within the database table to adapt the "foreign" directories
-into the ontology needed by the vector db.
-
-Also like global memories and workspace trust, we don't start the indexer in an untrusted workspace
-so we won't get semantic search over skills in an untrusted workspace. this is an acceptable tradeoff.
-
-When the harness starts up, we re-scan the skill namespace roots (for user namespace and internal
-namespace as well as .klorb/skills/ within the workspace.)
-
-The "internal" namespace is not actually visible as a filesystem -- we will need to adapt the iterator
-mechanism to be able to iterate over elements in the 'klorb.resources' package and read the contents
-in a filesystem-ish-like way without actually using `open()`.
-
-We index all the markdown files within a skill, not just SKILL.md itself. Skills may have subdirs
-like `resources/` and we descend into those and index markdown files we find in there too.
-
-Then create a SearchSkills tool.
-
-* This has `SkillSearch` as an alias
-* This takes a `queries` argument
-
-* Vector database indexing of skills for fuzzier search (see docs/specs/local-search-index.md's
-  "Out of scope" -- the workspace and memories catalogs are already built; `chunk.py`/
-  `embedding.py`/`store.py`/`ranking.py` are catalog-agnostic, so this needs only its own chunker
-  plus a thin `Search*` integration).
 
 * Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
   to remove all the extraneous stuff it adds. (see docs/specs/chainlink-task-tracking.md)

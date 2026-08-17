@@ -316,6 +316,7 @@
   "search.workspaceIndex.enabled": true,
   "search.indexer.gpuEnabled": true,
   "search.memoriesIndex.enabled": true,
+  "search.skillsIndex.enabled": true,
   "compatibility.claudeMarkdown": false,
   "compatibility.claudeSkills": false,
   "ui.sidebar": null,
