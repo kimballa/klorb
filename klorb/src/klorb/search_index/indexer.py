@@ -266,14 +266,15 @@ class WorkspaceIndexer:
         return self._owner_lock is not None
 
     def hybrid_search(
-        self, query_text: str, limit: int, catalog: str = CATALOG,
+        self, query_text: str, limit: int, catalog: str = CATALOG, *, update: bool = True,
     ) -> list[tuple[Chunk, float]]:
         """Fused BM25 + vector-KNN search, scoped to `catalog`, over whatever this workspace's
-        index currently holds. If no process currently owns the index, this call's process
-        claims ownership and starts indexing in the background, though the results returned
-        *this* call are still whatever was already committed. Raises `RuntimeError` if the
-        embedding model isn't available."""
-        if not self.is_owner():
+        index currently holds. If `update` is true (the default) and no process currently owns
+        the index, this call's process claims ownership and runs a full scan synchronously
+        before searching; if false, it searches whatever the index already holds without
+        claiming ownership or scanning. Raises `RuntimeError` if the embedding model isn't
+        available."""
+        if update and not self.is_owner():
             self._begin_ownership()
         query_embedding = get_embedding_model(use_gpu=self._use_gpu).embed_query(query_text)
         return self._store.hybrid_search(query_text, query_embedding, limit, catalog)

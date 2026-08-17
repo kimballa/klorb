@@ -38,6 +38,11 @@ def build_search_parser() -> argparse.ArgumentParser:
         "--json", action="store_true",
         help="Emit results as JSON, in the same shape a SemanticSearch tool result carries.",
     )
+    parser.add_argument(
+        "--update", dest="update", action=argparse.BooleanOptionalAction, default=False,
+        help="Synchronously reindex dirty files before searching. Defaults to false: search "
+        "whatever the index already holds.",
+    )
     return parser
 
 
@@ -119,9 +124,10 @@ def _render_search_results(query: str, entries: list[dict[str, Any]]) -> str:
 
 def run_search_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index search`) and print the `workspace`
-    catalog's top matches for `query` to stdout. If no process currently owns the workspace's
-    index, this call claims ownership and runs a full scan synchronously before searching.
-    Returns 0 on success, 1 if the embedding model isn't installed.
+    catalog's top matches for `query` to stdout. Searches whatever the index already holds
+    unless `--update` is passed, in which case it claims ownership (if unowned) and runs a full
+    scan synchronously before searching. Returns 0 on success, 1 if the embedding model isn't
+    installed.
     """
     parser = build_search_parser()
     args = parser.parse_args(argv)
@@ -133,7 +139,7 @@ def run_search_cli(argv: list[str]) -> int:
     workspace_path = _resolve_workspace_path()
     indexer = WorkspaceIndexer(workspace_path)
     try:
-        hits = indexer.hybrid_search(args.query, limit=args.limit)
+        hits = indexer.hybrid_search(args.query, limit=args.limit, update=args.update)
     finally:
         indexer.close()
 

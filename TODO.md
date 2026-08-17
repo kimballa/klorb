@@ -31,10 +31,6 @@
 
 ### Feature backlog
 
-* "bin/klorb index search" command should by default *not* synchronously reindex before returning the search result. Could add a "--update" arg that does the synchronous index refresh update first.
-
-* embedding should also use gpu in background-scanner mode.
-
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point.

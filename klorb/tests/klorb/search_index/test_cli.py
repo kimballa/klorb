@@ -59,12 +59,12 @@ def test_run_search_cli_returns_1_without_embedding_model(
     assert "klorb init" in capsys.readouterr().err
 
 
-def test_run_search_cli_finds_an_indexed_chunk(
+def test_run_search_cli_update_flag_finds_an_indexed_chunk(
     tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
 
-    exit_code = run_search_cli(["debounce"])
+    exit_code = run_search_cli(["debounce", "--update"])
 
     assert exit_code == 0
     out = capsys.readouterr().out
@@ -77,7 +77,7 @@ def test_run_search_cli_json_emits_semantic_search_shaped_result(
 ) -> None:
     (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
 
-    exit_code = run_search_cli(["debounce", "--json"])
+    exit_code = run_search_cli(["debounce", "--update", "--json"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -95,6 +95,32 @@ def test_run_search_cli_no_matches_reports_none(
 
     assert exit_code == 0
     assert "No semantic matches" in capsys.readouterr().out
+
+
+def test_run_search_cli_default_does_not_reindex_dirty_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+
+    exit_code = run_search_cli(["debounce"])
+
+    assert exit_code == 0
+    assert "No semantic matches" in capsys.readouterr().out
+
+
+def test_run_search_cli_default_searches_an_already_built_index(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+    run_scan_cli([])
+    capsys.readouterr()  # discard scan output
+
+    exit_code = run_search_cli(["debounce"])
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "a.py" in out
+    assert "debounce" in out
 
 
 def test_run_scan_cli_returns_1_without_embedding_model(

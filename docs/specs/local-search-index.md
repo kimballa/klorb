@@ -289,12 +289,14 @@ synthetic `source_path` prefix) for `global`.
 agent session. `klorb.cli.index.run_index_cli` is a thin dispatcher (by `argv[0]`) to the actual
 sub-main functions in `klorb.search_index.cli`:
 
-* **`search <query>`** (`-k`/`--limit`, default `DEFAULT_SEARCH_LIMIT`; `--json`) — runs
-  `WorkspaceIndexer.hybrid_search()` against the `workspace` catalog only and prints the results
-  grouped by file, in the same dense-line shape (`*line|text`, one entry per file with `score`)
-  `SemanticSearch` returns. `--json` emits that shape directly; otherwise each file's block is
-  pretty-printed with its score. If no process currently owns the workspace's index, this claims
-  ownership and runs a full scan synchronously first, per `hybrid_search()`'s own contract.
+* **`search <query>`** (`-k`/`--limit`, default `DEFAULT_SEARCH_LIMIT`; `--json`;
+  `--update`/`--no-update`, default `--no-update`) — runs `WorkspaceIndexer.hybrid_search()`
+  against the `workspace` catalog only and prints the results grouped by file, in the same
+  dense-line shape (`*line|text`, one entry per file with `score`) `SemanticSearch` returns.
+  `--json` emits that shape directly; otherwise each file's block is pretty-printed with its
+  score. By default this searches whatever the index already holds; `--update` claims ownership
+  (if no process currently owns the workspace's index) and runs a full scan synchronously first,
+  per `hybrid_search(update=True)`'s contract.
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`; `--gpu`/`--no-gpu`, default
   from the resolved `search.workspaceIndex.gpuEnabled` config value) — calls
   `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
