@@ -1,18 +1,31 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that searches every accessible memory file for lines containing any of several
-literal search strings, also treating each file's own filename as a search subject."""
+literal search strings, also treating each file's own filename as a search subject, folding in
+semantic hits from the memories catalogs' search indexes."""
 
 import logging
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, cast
 
+from klorb.search_index.catalogs import (
+    MEMORIES_GLOBAL_CATALOG,
+    MEMORIES_WORKSPACE_CATALOG,
+    namespace_for_catalog,
+)
+from klorb.search_index.chunk import Chunk
+from klorb.search_index.ranking import DEFAULT_RRF_K
 from klorb.tools.memory.common import Namespace, memory_namespace_dir, workspace_namespace_accessible
+from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
 from klorb.tools.util import (
+    HybridSearchable,
+    SemanticSearchCore,
     compile_queries,
     context_lines_for_matches,
     format_match_line,
+    get_or_create_secret_redactor,
     match_line_indices,
     matches_only,
     validate_output_style,
@@ -21,30 +34,47 @@ from klorb.tools.util import (
 
 logger = logging.getLogger(__name__)
 
+ALL_NAMESPACES: tuple[Namespace, ...] = ("global", "workspace")
+_VALID_NAMESPACE_FILTERS = frozenset({"global", "workspace", "all"})
+
+SEMANTIC_TOP_K = 5
+"""Cap on semantic hits folded into a result. A session isn't expected to accumulate many memory
+files, so a handful of confident hits is enough."""
+
+SEMANTIC_LIMIT_PER_QUERY = 10
+
+SEMANTIC_MIN_SCORE = 1.0 / (DEFAULT_RRF_K + 3)
+"""Minimum fused RRF score a semantic hit must clear to surface. Equivalent to ranking in the
+top 3 of at least one of the lexical/vector lists, a high bar appropriate for a small memory
+collection."""
+
+
+def _validate_namespace_filter(raw: Any) -> str:
+    if raw in (None, ""):
+        return "all"
+    if raw not in _VALID_NAMESPACE_FILTERS:
+        raise ValueError(f'namespace must be "global", "workspace", or "all", got {raw!r}')
+    return cast(str, raw)
+
+
+def _semantic_hit_filename(chunk: Chunk) -> str:
+    """A semantic hit's bare filename. Both catalogs' `source_path` are multi-segment `.klorb`
+    -rooted paths; only the final segment is the actual memory filename."""
+    return Path(chunk.source_path).name
+
 
 class SearchMemoriesTool(Tool):
-    """Searches every memory file in both the `global` and `workspace` namespaces (there is no
-    `namespace` argument to narrow this -- like `ListMemories`, it always covers every
-    accessible namespace) for lines containing any of `queries` -- each matched as a literal,
-    case-insensitive substring (never a regular expression), the same
-    `klorb.tools.util.search_core` construction `GrepTool` and `SearchScratchpadTool` use.
-
-    Each matching file is reported once in `result["results"]` as `{"namespace", "filename",
-    "lines"}`, where `lines` is a flat list of dense-format strings shared with `GrepTool` (a
-    leading `*` marks a matching line; each line carries its own 1-based number). There is no
-    surrounding context -- only the matching lines themselves are listed.
-
-    A file's own `filename` is also a search subject: when `filename` matches, the file is
-    reported as a hit even if none of its lines do, listing its first non-blank line (as an
-    unmatched ` `-prefixed line, since the content itself didn't match) so a query like "bird"
-    finds a file named `you-like-birds.md` by name alone. A file matched by both its filename
-    and its content is reported once, using its real content matches, never a duplicate
-    filename-only entry.
-
-    The `workspace` namespace is skipped entirely (not just filtered out of results) whenever
-    the current workspace is untrusted. Otherwise always allowed, with no further permission
-    check.
+    """Searches memory files for lines containing any of `queries` as a literal, case-insensitive
+    substring, plus a few high-confidence semantic hits when a memory search index is available.
+    `namespace` optionally restricts the search to `global` or `workspace`; defaults to `all`.
+    See docs/specs/memories.md.
     """
+
+    def __init__(self, context: ToolSetupContext) -> None:
+        super().__init__(context)
+        self._core = SemanticSearchCore(
+            max_line_length=context.process_config.grep_max_line_length,
+            secret_redactor=get_or_create_secret_redactor(context.session))
 
     def name(self) -> str:
         return "SearchMemories"
@@ -60,15 +90,17 @@ class SearchMemoriesTool(Tool):
 
     def description(self) -> str:
         return (
-            "Searches every memory file (both the global and workspace namespaces) for lines "
-            "containing any of the given search strings, each matched as a literal, "
-            "case-insensitive substring (not a regular expression) -- equivalent to "
-            "`grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's content. Results "
-            "are grouped by file under 'results'; each entry's 'lines' are strings like "
-            "'*42|matched text', where the leading '*' marks a matching line and the number is "
-            "its 1-based line number. A file's own filename is also searched: a query matching "
-            "a filename returns that file even if none of its lines match, listing its first "
-            "non-blank line. Use outputStyle to control the level of detail: \"ListFiles\" "
+            "Searches memory files for lines containing any of the given search strings, each "
+            "matched as a literal, case-insensitive substring, equivalent to "
+            "`grep -i -F -e 'seq1' -e 'seq2' ...` against every memory file's content, plus "
+            "high-confidence semantic hits. Results are grouped by "
+            "file under 'results'; each entry's 'lines' are strings like '*42|matched text', "
+            "where the leading '*' marks a matching line and the number is its 1-based line "
+            "number; a semantic hit additionally carries a 'score'. A file's own filename is "
+            "also searched: a query matching a filename returns that file even if none of its "
+            "lines match, listing its first non-blank line. Optionally restrict the search to "
+            "one namespace with namespace (\"global\" or \"workspace\"); defaults to \"all\", "
+            "searching both. Use outputStyle to control the level of detail: \"ListFiles\" "
             "returns just deduplicated filenames as \"<namespace>/<filename>\"; \"Matches\" "
             "returns only the hit lines (default); \"FullContext\" returns hit lines plus "
             "surrounding context."
@@ -85,6 +117,15 @@ class SearchMemoriesTool(Tool):
                     "description": (
                         "One or more literal search strings, matched case-insensitively (not "
                         "regular expressions) against both memory file content and filenames."
+                    ),
+                },
+                "namespace": {
+                    "type": "string",
+                    "enum": ["global", "workspace", "all"],
+                    "description": (
+                        "Restrict the search to one namespace: \"global\" (applies to every "
+                        "workspace) or \"workspace\" (this workspace only). Defaults to \"all\", "
+                        "searching both."
                     ),
                 },
                 "outputStyle": {
@@ -108,7 +149,10 @@ class SearchMemoriesTool(Tool):
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
         output_style = validate_output_style(args.get("outputStyle"))
-        logger.debug("SearchMemories %r (outputStyle=%s)", queries, output_style)
+        namespace_filter = _validate_namespace_filter(args.get("namespace"))
+        namespaces = self._namespaces_to_search(namespace_filter)
+        logger.debug(
+            "SearchMemories %r (namespace=%s, outputStyle=%s)", queries, namespace_filter, output_style)
 
         compiled = compile_queries(queries, case_insensitive=True)
 
@@ -116,11 +160,12 @@ class SearchMemoriesTool(Tool):
 
         if output_style == "ListFiles":
             list_files: list[str] = []
-            results: list[dict[str, Any]] = []
-            for namespace in cast(tuple[Namespace, ...], ("global", "workspace")):
-                if namespace == "workspace" and not workspace_namespace_accessible(self.context):
-                    continue
+            for namespace in namespaces:
                 list_files.extend(self._list_files_namespace(namespace, compiled))
+            for hit_namespace, chunk, _score in self._semantic_hits(namespaces, queries):
+                entry = f"{hit_namespace}/{_semantic_hit_filename(chunk)}"
+                if entry not in list_files:
+                    list_files.append(entry)
             # Count matches (each filename string is one hit).
             match_count = len(list_files)
             logger.debug("SearchMemories found %d hit(s) across %d file(s)", match_count, len(list_files))
@@ -131,10 +176,22 @@ class SearchMemoriesTool(Tool):
             }
 
         results = []
-        for namespace in cast(tuple[Namespace, ...], ("global", "workspace")):
-            if namespace == "workspace" and not workspace_namespace_accessible(self.context):
-                continue
+        for namespace in namespaces:
             results.extend(self._search_namespace(namespace, compiled, output_style, context_lines))
+
+        already_reported = {(result["namespace"], result["filename"]) for result in results}
+        for hit_namespace, chunk, score in self._semantic_hits(namespaces, queries):
+            filename = _semantic_hit_filename(chunk)
+            if (hit_namespace, filename) in already_reported:
+                continue
+            abs_path = self._resolve_semantic_hit_path(hit_namespace, chunk)
+            lines = self._core.render_chunk_lines(self.context.session, abs_path, chunk)
+            if lines is None:
+                continue
+            results.append({
+                "namespace": hit_namespace, "filename": filename, "lines": lines, "score": score,
+            })
+            already_reported.add((hit_namespace, filename))
 
         # A content match contributes one hit per matching (`*`-prefixed) line; a filename-only
         # match, whose sole listed line is unmatched, still counts as a single hit.
@@ -149,6 +206,44 @@ class SearchMemoriesTool(Tool):
             "match_count": match_count,
             "results": results,
         }
+
+    def _namespaces_to_search(self, namespace_filter: str) -> tuple[Namespace, ...]:
+        candidates = ALL_NAMESPACES if namespace_filter == "all" else (cast(Namespace, namespace_filter),)
+        return tuple(
+            namespace for namespace in candidates
+            if namespace == "global" or workspace_namespace_accessible(self.context))
+
+    def _semantic_hits(
+        self, namespaces: Sequence[Namespace], queries: list[str],
+    ) -> list[tuple[str, Chunk, float]]:
+        """Up to `SEMANTIC_TOP_K` `(namespace, chunk, score)` hits, scoring at least
+        `SEMANTIC_MIN_SCORE`, from whichever of `namespaces`' catalogs `session.workspace_indexer`
+        (shared by both the `memories-workspace` and `memories-global` catalogs) currently
+        covers."""
+        indexer = self.context.session.workspace_indexer if self.context.session is not None else None
+        if indexer is None:
+            return []
+        indexers: list[tuple[HybridSearchable, str]] = []
+        if "global" in namespaces:
+            indexers.append((indexer, MEMORIES_GLOBAL_CATALOG))
+        if "workspace" in namespaces:
+            indexers.append((indexer, MEMORIES_WORKSPACE_CATALOG))
+        if not indexers:
+            return []
+        hits = self._core.merged_hits(
+            indexers, queries, limit_per_query=SEMANTIC_LIMIT_PER_QUERY, min_score=SEMANTIC_MIN_SCORE)
+        hits.sort(key=lambda pair: pair[1], reverse=True)
+        return [
+            (namespace_for_catalog(chunk.catalog), chunk, score) for chunk, score in hits[:SEMANTIC_TOP_K]
+        ]
+
+    def _resolve_semantic_hit_path(self, namespace: str, chunk: Chunk) -> Path:
+        """The on-disk path a semantic hit's `chunk` was indexed from. A `memories-workspace`
+        chunk's `source_path` is workspace-root-relative and real; a `memories-global` chunk's is
+        a synthetic path standing in for a file under the global memories directory."""
+        if namespace == "workspace":
+            return self.context.session_config.workspace.path.resolve() / chunk.source_path
+        return memory_namespace_dir(self.context, cast(Namespace, namespace)) / _semantic_hit_filename(chunk)
 
     def _search_namespace(
         self, namespace: Namespace, compiled: re.Pattern[str],

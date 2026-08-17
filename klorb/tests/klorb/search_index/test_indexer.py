@@ -564,3 +564,132 @@ def test_hybrid_search_raises_without_an_embedding_model(
             workspace_indexer.hybrid_search("anything", 10)
     finally:
         workspace_indexer.close()
+
+
+# --- memories catalogs ---
+
+
+def _global_memories_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the indexer's global-memories directory at an isolated directory outside `tmp_path`
+    (the workspace root used as `WorkspaceIndexer`'s root in this file's other tests), so the
+    ordinary workspace tree walk never doubles up on it."""
+    data_dir = tmp_path.parent / f"{tmp_path.name}-klorb-data"
+    monkeypatch.setattr(indexer_module, "get_klorb_data_dir", lambda: data_dir)
+    memories_dir = data_dir / "memories"
+    memories_dir.mkdir(parents=True)
+    return memories_dir
+
+
+def test_run_foreground_scan_indexes_workspace_memories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _global_memories_dir(tmp_path, monkeypatch)
+    memories_dir = tmp_path / ".klorb" / "memories"
+    memories_dir.mkdir(parents=True)
+    (memories_dir / "notes.md").write_text("Topic\na line about debouncing input\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1
+        assert workspace_indexer._store.file_records().keys() == {".klorb/memories/notes.md"}
+        hits = workspace_indexer.hybrid_search("debouncing", 10, "memories-workspace")
+        assert hits
+    finally:
+        workspace_indexer.close()
+
+
+def test_run_foreground_scan_indexes_global_memories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global_dir = _global_memories_dir(tmp_path, monkeypatch)
+    (global_dir / "prefs.md").write_text("Topic\na line about debouncing input\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1
+        assert workspace_indexer._store.file_records().keys() == {
+            ".klorb/global-memories/prefs.md"}
+        hits = workspace_indexer.hybrid_search("debouncing", 10, "memories-global")
+        assert hits
+    finally:
+        workspace_indexer.close()
+
+
+def test_index_memories_false_skips_both_memory_catalogs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global_dir = _global_memories_dir(tmp_path, monkeypatch)
+    (global_dir / "prefs.md").write_text("Topic\ndebounce\n")
+    memories_dir = tmp_path / ".klorb" / "memories"
+    memories_dir.mkdir(parents=True)
+    (memories_dir / "notes.md").write_text("Topic\ndebounce\n")
+    (tmp_path / "a.py").write_text("def debounce(fn):\n    return fn\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path, index_memories=False)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 1  # only a.py
+        assert workspace_indexer._store.file_records().keys() == {"a.py"}
+    finally:
+        workspace_indexer.close()
+
+
+def test_memories_and_workspace_catalogs_do_not_crowd_out_each_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-named file in the `workspace` and `memories-global` catalogs must not collide in
+    the shared `files`/`chunks` bookkeeping -- their `Chunk.source_path`s live in disjoint
+    `.klorb`-rooted vs. real-path spaces."""
+    global_dir = _global_memories_dir(tmp_path, monkeypatch)
+    (global_dir / "notes.md").write_text("Topic\nglobal content here\n")
+    (tmp_path / "notes.md").write_text("workspace content here\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        stats = workspace_indexer.run_foreground_scan()
+
+        assert stats.files_indexed == 2
+        records = workspace_indexer._store.file_records()
+        assert records.keys() == {"notes.md", ".klorb/global-memories/notes.md"}
+        assert records["notes.md"].content_hash != records[".klorb/global-memories/notes.md"].content_hash
+    finally:
+        workspace_indexer.close()
+
+
+def test_watcher_picks_up_a_newly_created_workspace_memory_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _global_memories_dir(tmp_path, monkeypatch)
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.start()
+        assert _wait_until(workspace_indexer.is_owner)
+
+        memories_dir = tmp_path / ".klorb" / "memories"
+        memories_dir.mkdir(parents=True)
+        (memories_dir / "new.md").write_text("Topic\na freshly created memory\n")
+
+        assert _wait_until(
+            lambda: len(
+                workspace_indexer.hybrid_search("freshly created", 10, "memories-workspace")) > 0)
+    finally:
+        workspace_indexer.close()
+
+
+def test_watcher_picks_up_a_newly_created_global_memory_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global_dir = _global_memories_dir(tmp_path, monkeypatch)
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.start()
+        assert _wait_until(workspace_indexer.is_owner)
+
+        (global_dir / "new.md").write_text("Topic\na freshly created global memory\n")
+
+        assert _wait_until(
+            lambda: len(
+                workspace_indexer.hybrid_search("freshly created", 10, "memories-global")) > 0)
+    finally:
+        workspace_indexer.close()

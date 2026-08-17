@@ -10,22 +10,15 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_read
 from klorb.search_index.chunk import Chunk
+from klorb.search_index.chunkers.base import CATALOG
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import format_match_line, get_or_create_secret_redactor, validate_queries
+from klorb.tools.util import SemanticSearchCore, get_or_create_secret_redactor, validate_queries
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 25
-_TRUNCATION_SUFFIX = "[truncated...]"
-
-
-def _truncate_line(line: str, max_length: int) -> str:
-    """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut."""
-    if len(line) <= max_length:
-        return line
-    return line[:max_length] + _TRUNCATION_SUFFIX
 
 
 class SemanticSearchTool(Tool):
@@ -46,8 +39,10 @@ class SemanticSearchTool(Tool):
 
     def __init__(self, context: ToolSetupContext) -> None:
         super().__init__(context)
-        self._max_line_length = context.process_config.grep_max_line_length
         self._secret_redactor = get_or_create_secret_redactor(context.session)
+        self._core = SemanticSearchCore(
+            max_line_length=context.process_config.grep_max_line_length,
+            secret_redactor=self._secret_redactor)
 
     def name(self) -> str:
         return "SemanticSearch"
@@ -167,15 +162,10 @@ class SemanticSearchTool(Tool):
         search_queries = [
             self._secret_redactor.detokenize(self.context.session, query) for query in queries]
 
-        best_by_chunk_id: dict[str, tuple[Chunk, float]] = {}
-        for query in search_queries:
-            for chunk, score in indexer.hybrid_search(query, limit=top_k * 4):
-                existing = best_by_chunk_id.get(chunk.chunk_id)
-                if existing is None or score > existing[1]:
-                    best_by_chunk_id[chunk.chunk_id] = (chunk, score)
+        hits = self._core.merged_hits([(indexer, CATALOG)], search_queries, limit_per_query=top_k * 4)
 
         in_scope = [
-            (chunk, score) for chunk, score in best_by_chunk_id.values()
+            (chunk, score) for chunk, score in hits
             if self._chunk_in_scope(chunk, workspace_root, scope_path, scope_is_file, file_glob)
         ]
         in_scope.sort(key=lambda pair: pair[1], reverse=True)
@@ -187,7 +177,7 @@ class SemanticSearchTool(Tool):
         match_count = 0
         for chunk, score in in_scope[:top_k]:
             abs_path = workspace_root / chunk.source_path
-            dense_lines = self._render_chunk_lines(abs_path, chunk)
+            dense_lines = self._core.render_chunk_lines(self.context.session, abs_path, chunk)
             if dense_lines is None:
                 continue
             filename = str(abs_path)
@@ -234,23 +224,6 @@ class SemanticSearchTool(Tool):
             except ValueError:
                 return False
         return not file_glob or fnmatch.fnmatch(abs_path.name, file_glob)
-
-    def _render_chunk_lines(self, abs_path: Path, chunk: Chunk) -> list[str] | None:
-        """`chunk`'s line span rendered in dense format, every line marked `*` -- re-reading
-        `abs_path` fresh rather than reusing `chunk.text`, since a structural chunk's `text` is a
-        synthesized synopsis for some kinds, not necessarily the file's real content over that
-        line range. `None` if `abs_path` can no longer be read (deleted or changed since it was
-        indexed)."""
-        try:
-            text = abs_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return None
-        all_lines = text.splitlines()
-        start = max(0, chunk.start_line - 1)
-        end = min(len(all_lines), chunk.end_line)
-        dense_lines = [format_match_line(i + 1, all_lines[i], matched=True) for i in range(start, end)]
-        return [_truncate_line(line, self._max_line_length)
-                for line in self._redact_strings(dense_lines)]
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")

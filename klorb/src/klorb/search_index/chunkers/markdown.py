@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`MarkdownChunker`: splits a markdown file into one chunk per heading-delimited section, or, for a
 section too large to be one useful chunk, one chunk per blank-line-delimited paragraph within it.
-Shared by docs in the workspace catalog (e.g. READMEs) today, and by the Skills/Memories catalogs in
-a later phase (see docs/specs/local-search-index.md).
 """
 
 import re
@@ -19,7 +17,7 @@ _HEADING_PATTERN = re.compile(r"^#{1,6}\s")
 
 
 class MarkdownChunker(Chunker):
-    def chunk(self, source_path: str, text: str) -> list[Chunk]:
+    def chunk(self, source_path: str, text: str, catalog: str = CATALOG) -> list[Chunk]:
         lines = text.splitlines()
         if not lines:
             return []
@@ -28,12 +26,12 @@ class MarkdownChunker(Chunker):
             section_text = "\n".join(lines[start:end])
             if estimate_tokens(section_text) <= MAX_SECTION_TOKENS:
                 chunks.append(Chunk.create(
-                    catalog=CATALOG, source_path=source_path, kind="markdown_section",
+                    catalog=catalog, source_path=source_path, kind="markdown_section",
                     start_line=start + 1, end_line=end, text=section_text))
             else:
                 for para_start, para_end in _paragraphs(lines, start, end):
                     chunks.append(Chunk.create(
-                        catalog=CATALOG, source_path=source_path, kind="markdown_section",
+                        catalog=catalog, source_path=source_path, kind="markdown_section",
                         start_line=para_start + 1, end_line=para_end,
                         text="\n".join(lines[para_start:para_end])))
         return chunks

@@ -21,7 +21,7 @@ class WindowedChunker(Chunker):
         self._window_lines = window_lines
         self._stride = window_lines - overlap_lines
 
-    def chunk(self, source_path: str, text: str) -> list[Chunk]:
+    def chunk(self, source_path: str, text: str, catalog: str = CATALOG) -> list[Chunk]:
         lines = text.splitlines()
         if not lines:
             return []
@@ -31,7 +31,7 @@ class WindowedChunker(Chunker):
             end = min(start + self._window_lines, len(lines))
             chunk_text = "\n".join(lines[start:end])
             chunks.append(Chunk.create(
-                catalog=CATALOG, source_path=source_path, kind="window",
+                catalog=catalog, source_path=source_path, kind="window",
                 start_line=start + 1, end_line=end, text=chunk_text))
             if end == len(lines):
                 break

@@ -5,8 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
+from klorb.search_index.chunk import Chunk
+from klorb.session import Session, SessionConfig
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.search_memories import SearchMemoriesTool
@@ -25,12 +28,53 @@ def _context(
         session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
 
 
+def _context_with_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, trusted: bool = True,
+) -> tuple[Session, ToolSetupContext]:
+    """A `ToolSetupContext` backed by a real `Session`, so `context.session.workspace_indexer`
+    can be overridden. Caller must `session.close()` when done."""
+    monkeypatch.setattr(memory_common_module, "get_klorb_data_dir", lambda: tmp_path / "data")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(exist_ok=True)
+    session_config = SessionConfig(
+        workspace=Workspace(path=workspace_root, trusted=trusted),
+        read_dirs=DirRules(), write_dirs=DirRules())
+    session = Session(config=session_config)
+    context = ToolSetupContext(
+        process_config=ProcessConfig(), session_config=session_config, session=session)
+    return session, context
+
+
 def _write(context: ToolSetupContext, namespace: Namespace, filename: str, content: str) -> Path:
     namespace_dir = memory_namespace_dir(context, namespace)
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / filename
     path.write_text(content)
     return path
+
+
+class _FakeMemoryIndexer:
+    """A stand-in for `klorb.search_index.indexer.WorkspaceIndexer` that returns a fixed set of
+    `(Chunk, score)` hits, filtered to the requested catalog, regardless of query text."""
+
+    def __init__(self, hits: list[tuple[Chunk, float]]) -> None:
+        self._hits = hits
+
+    def hybrid_search(self, query_text: str, limit: int, catalog: str) -> list[tuple[Chunk, float]]:
+        return [(chunk, score) for chunk, score in self._hits if chunk.catalog == catalog][:limit]
+
+
+def _semantic_chunk(namespace: Namespace, filename: str, start_line: int, end_line: int) -> Chunk:
+    """A `Chunk` matching how `WorkspaceIndexer` would actually have indexed `filename`: both
+    catalogs use a `.klorb`-rooted `source_path` (real for `workspace`, synthetic for `global`),
+    since both share `WorkspaceIndexer`."""
+    if namespace == "global":
+        catalog, source_path = MEMORIES_GLOBAL_CATALOG, f".klorb/global-memories/{filename}"
+    else:
+        catalog, source_path = MEMORIES_WORKSPACE_CATALOG, f".klorb/memories/{filename}"
+    return Chunk.create(
+        catalog=catalog, source_path=source_path, kind="markdown_section",
+        start_line=start_line, end_line=end_line, text="ignored, rendered from disk")
 
 
 def test_finds_case_insensitive_content_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,7 +183,7 @@ def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     assert tool.name() == "SearchMemories"
     assert tool.parameters()["required"] == ["queries"]
-    assert "namespace" not in tool.parameters()["properties"]
+    assert tool.parameters()["properties"]["namespace"]["enum"] == ["global", "workspace", "all"]
 
 
 def test_summary_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,6 +295,172 @@ def test_invalid_output_style_raises_value_error(
     with pytest.raises(ValueError, match="outputStyle"):
         SearchMemoriesTool(context).apply(
             {"queries": ["hello"], "outputStyle": "bogus"})
+
+
+# --- namespace filter tests ---
+
+
+def test_namespace_filter_global_restricts_to_that_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nMATCH\n")
+    _write(context, "workspace", "b.md", "Topic\nMATCH\n")
+
+    result = SearchMemoriesTool(context).apply({"queries": ["MATCH"], "namespace": "global"})
+
+    assert {hit["namespace"] for hit in result["results"]} == {"global"}
+
+
+def test_namespace_filter_workspace_restricts_to_that_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nMATCH\n")
+    _write(context, "workspace", "b.md", "Topic\nMATCH\n")
+
+    result = SearchMemoriesTool(context).apply({"queries": ["MATCH"], "namespace": "workspace"})
+
+    assert {hit["namespace"] for hit in result["results"]} == {"workspace"}
+
+
+def test_namespace_filter_all_is_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "a.md", "Topic\nMATCH\n")
+    _write(context, "workspace", "b.md", "Topic\nMATCH\n")
+
+    result = SearchMemoriesTool(context).apply({"queries": ["MATCH"]})
+
+    assert {hit["namespace"] for hit in result["results"]} == {"global", "workspace"}
+
+
+def test_namespace_filter_rejects_an_unknown_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="namespace"):
+        SearchMemoriesTool(context).apply({"queries": ["x"], "namespace": "bogus"})
+
+
+def test_namespace_filter_workspace_in_untrusted_workspace_yields_no_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch, trusted=False)
+    _write(context, "workspace", "secret.md", "Topic\nMATCH\n")
+
+    result = SearchMemoriesTool(context).apply({"queries": ["MATCH"], "namespace": "workspace"})
+
+    assert result["results"] == []
+
+
+# --- semantic hit tests ---
+
+
+def test_semantic_only_hit_from_global_index_is_included(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
+    chunk = _semantic_chunk("global", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    finally:
+        session.close()
+
+    hit = next(r for r in result["results"] if r["filename"] == "notes.md")
+    assert hit["namespace"] == "global"
+    assert hit["score"] == 0.5
+    assert hit["lines"] == ["*1|Topic", "*2|a line about debouncing input"]
+
+
+def test_semantic_hit_is_not_duplicated_when_already_literally_matched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nMATCH here\n")
+    chunk = _semantic_chunk("global", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["MATCH"]})
+    finally:
+        session.close()
+
+    matching = [r for r in result["results"] if r["filename"] == "notes.md"]
+    assert len(matching) == 1
+    assert "score" not in matching[0]
+
+
+def test_semantic_hits_respect_the_namespace_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nsome unrelated content\n")
+    chunk = _semantic_chunk("global", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply(
+            {"queries": ["unrelated"], "namespace": "workspace"})
+    finally:
+        session.close()
+
+    assert result["results"] == []
+
+
+def test_semantic_hit_below_min_score_is_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
+    chunk = _semantic_chunk("global", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.0001)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    finally:
+        session.close()
+
+    assert result["results"] == []
+
+
+def test_semantic_hit_from_workspace_index_is_included(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "workspace", "notes.md", "Topic\na line about debouncing input\n")
+    chunk = _semantic_chunk("workspace", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply({"queries": ["unrelated literal phrase"]})
+    finally:
+        session.close()
+
+    hit = next(r for r in result["results"] if r["filename"] == "notes.md")
+    assert hit["namespace"] == "workspace"
+    assert hit["score"] == 0.5
+
+
+def test_semantic_hit_included_in_list_files_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, context = _context_with_session(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\na line about debouncing input\n")
+    chunk = _semantic_chunk("global", "notes.md", 1, 2)
+    session._workspace_indexer = _FakeMemoryIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SearchMemoriesTool(context).apply(
+            {"queries": ["unrelated literal phrase"], "outputStyle": "ListFiles"})
+    finally:
+        session.close()
+
+    assert result["files"] == ["global/notes.md"]
 
 
 def test_invalid_output_style_error_explains_enum_values(

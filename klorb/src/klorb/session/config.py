@@ -133,6 +133,12 @@ class SessionConfig(BaseModel):
     search_indexer_gpu_enabled: bool = True
     """Whether the background workspace search indexer may embed on GPU; false forces CPU-only
     embedding for it."""
+    search_memories_index_enabled: bool = True
+    """Whether `WorkspaceIndexer` also covers the `memories-workspace`/`memories-global` catalogs
+    `SearchMemories` draws its semantic hits from. Independent of
+    `search_workspace_index_enabled` in name only: both catalogs share `WorkspaceIndexer` with
+    `workspace`, so this flag is moot unless the `workspace` catalog itself is also enabled and
+    the workspace is trusted."""
     bash_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`bashDomains`-config-driven allow/ask/deny rules the sandboxed `Bash` network-egress proxy
     (`klorb.sandbox.network.ProxyBackend`) and `BashTool._classify`'s pre-flight scanner consult
