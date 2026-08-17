@@ -99,6 +99,19 @@ def test_summary_on_success(make_session_config: Callable[..., SessionConfig]) -
     assert "1 match" in tool.summary({"queries": ["ReplaceAll"]}, result)
 
 
+def test_summary_lists_matched_tool_names_one_per_line(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    tool = _tool(make_session_config)
+    result = tool.apply({"queries": ["backreferences"]})
+
+    summary = tool.summary({"queries": ["backreferences"]}, result)
+
+    names = {r["name"] for r in result["results"]}
+    lines = set(summary.splitlines()[1:])
+    assert lines == names
+
+
 def test_summary_on_failure_includes_the_error(
     make_session_config: Callable[..., SessionConfig],
 ) -> None:

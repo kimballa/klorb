@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that looks up another tool's full definition -- name, description, and parameter
-schema -- by exact name/alias or by keyword search, for a tool the model only knows about from
-an `additional_tools` summary (see `klorb.tools.registry.ToolRegistry.additional_tool_summaries`)."""
+"""A Tool that looks up another tool's full definition by exact name/alias or by keyword
+search."""
 
 import json
 import logging
@@ -33,17 +32,8 @@ def _searchable_text(tool: Tool) -> str:
 
 
 class SearchToolsTool(Tool):
-    """Looks up the full definition -- name, description, and parameter schema -- of one or
-    more registered tools, by exact name/alias or by keyword search.
-
-    When `queries` has exactly one entry and it's the exact canonical name or alias of a
-    registered tool, that tool's definition is returned directly with no keyword search.
-    Otherwise every query is matched, case-insensitively, as a literal substring against every
-    registered tool's name, description, and parameter schema (as JSON text) -- a tool matching
-    any query is included once. Searches every registered tool, not only the ones summarized in
-    `additional_tools`, since a model may also want to double-check a fully-described tool's
-    exact schema.
-    """
+    """Looks up the full definition of one or more registered tools, by exact name/alias or by
+    case-insensitive keyword search."""
 
     def name(self) -> str:
         return "SearchTools"
@@ -59,13 +49,10 @@ class SearchToolsTool(Tool):
 
     def description(self) -> str:
         return (
-            "Looks up the full definition (name, description, parameter schema) of one or "
-            "more tools. If queries has exactly one entry and it's the exact name or alias of "
-            "a registered tool, that tool's definition is returned directly. Otherwise each "
-            "query is matched case-insensitively as a literal substring against every "
-            "registered tool's name, description, and parameter schema; a tool matching any "
-            "query is returned. Use this to look up the full schema of a tool named in an "
-            "additional_tools list before calling it."
+            "Looks up the full definition of one or more tools. If queries is just the name "
+            "of a tool, returns only that tool's definition. Otherwise performs "
+            "case-insensitive search against all tool definitions. Use this to look up the "
+            "full schema of a tool named in additional_tools before calling it."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -76,11 +63,7 @@ class SearchToolsTool(Tool):
                     "type": "array",
                     "items": {"type": "string"},
                     "minItems": 1,
-                    "description": (
-                        "One or more search strings. A single entry that's the exact name or "
-                        "alias of a registered tool returns that tool directly; otherwise each "
-                        "is matched as a literal, case-insensitive substring."
-                    ),
+                    "description": "One or more search strings.",
                 },
             },
             "required": ["queries"],
@@ -120,6 +103,9 @@ class SearchToolsTool(Tool):
             return f"Search tools: {queries!r} failed: {error}"
         if not isinstance(result, dict):
             return f"Search tools: {queries!r}"
-        count = result.get("match_count", 0)
+        results = result.get("results", [])
+        count = result.get("match_count", len(results))
         plural = "s" if count != 1 else ""
-        return f"Search tools: {queries!r} ({count} match{plural})"
+        header = f"Search tools: {queries!r} ({count} match{plural})"
+        names = "\n".join(entry["name"] for entry in results)
+        return f"{header}\n{names}" if names else header

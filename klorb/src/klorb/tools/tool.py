@@ -207,9 +207,7 @@ class Tool(ABC):
     def default_described(self) -> bool:
         """Return whether this tool's full description and parameter schema should be
         included in the tool definitions sent to the model. A tool that's `default_visible()`
-        but not `default_described()` is instead named in the `additional_tools` summary list
-        `ToolRegistry.additional_tool_summaries()` builds, and the model has to call
-        `SearchTools` to retrieve its full definition before it can be invoked correctly.
+        but not `default_described()` is instead named in `additional_tools`.
         """
         return True
 
