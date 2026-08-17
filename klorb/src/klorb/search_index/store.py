@@ -45,6 +45,8 @@ class IndexStats:
     file_count: int
     chunk_count: int
     chunk_counts_by_kind: dict[str, int]
+    files_by_catalog: dict[str, int]
+    chunks_by_catalog: dict[str, int]
     db_size_bytes: int
 
 
@@ -232,12 +234,20 @@ class SearchIndexStore:
             chunk_count = self._conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             kind_rows = self._conn.execute(
                 "SELECT kind, COUNT(*) FROM chunks GROUP BY kind").fetchall()
+            catalog_file_rows = self._conn.execute(
+                "SELECT catalog, COUNT(DISTINCT source_path) FROM chunks GROUP BY catalog"
+            ).fetchall()
+            catalog_chunk_rows = self._conn.execute(
+                "SELECT catalog, COUNT(*) FROM chunks GROUP BY catalog").fetchall()
         db_size_bytes = sum(
             path.stat().st_size for path in self._db_path.parent.glob(f"{self._db_path.name}*")
             if path.is_file())
         return IndexStats(
             file_count=file_count, chunk_count=chunk_count,
-            chunk_counts_by_kind=dict(kind_rows), db_size_bytes=db_size_bytes)
+            chunk_counts_by_kind=dict(kind_rows),
+            files_by_catalog=dict(catalog_file_rows),
+            chunks_by_catalog=dict(catalog_chunk_rows),
+            db_size_bytes=db_size_bytes)
 
     def search_lexical(self, query: str, limit: int, catalog: str) -> list[str]:
         """Return up to `limit` `chunk_id`s matching `query` within `catalog` via FTS5, ranked by

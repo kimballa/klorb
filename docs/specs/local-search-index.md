@@ -346,13 +346,19 @@ agent session. `klorb.cli.index.run_index_cli` is a thin dispatcher (by `argv[0]
 sub-main functions in `klorb.search_index.cli`:
 
 * **`search <query>`** (`-k`/`--limit`, default `DEFAULT_SEARCH_LIMIT`; `--json`;
-  `--update`/`--no-update`, default `--no-update`) — runs `WorkspaceIndexer.hybrid_search()`
-  against the `workspace` catalog only and prints the results grouped by file, in the same
-  dense-line shape (`*line|text`, one entry per file with `score`) `SemanticSearch` returns.
-  `--json` emits that shape directly; otherwise each file's block is pretty-printed with its
-  score. By default this searches whatever the index already holds; `--update` claims ownership
-  (if no process currently owns the workspace's index) and runs a full scan synchronously first,
-  per `hybrid_search(update=True)`'s contract.
+  `--update`/`--no-update`, default `--no-update`; `--catalog`, default `workspace`;
+  `--list-catalogs`) — runs `WorkspaceIndexer.hybrid_search()` against the given `--catalog` and
+  prints the results grouped by file, in the same dense-line shape (`*line|text`, one entry per
+  file with `score` and `catalog`) `SemanticSearch` returns. `--catalog` accepts real catalog
+  names (`workspace`, `memories-global`, `memories-workspace`, `skills-user`, `skills-workspace`,
+  `skills-internal`) and virtual aliases (`all` — every real catalog; `memories` — both memory
+  catalogs; `skills` — all three skills catalogs). When a virtual alias is given, the search
+  deduplicates hits across its expanded catalogs, keeping each chunk's highest score.
+  `--list-catalogs` prints the available `--catalog` choices with descriptions and exits.
+  `--json` emits the result shape directly; otherwise each file's block is pretty-printed with
+  its score and catalog. By default this searches whatever the index already holds; `--update`
+  claims ownership (if no process currently owns the workspace's index) and runs a full scan
+  synchronously first, per `hybrid_search(update=True)`'s contract.
 * **`scan`** (`-j`/`--threads`, default `os.cpu_count()`; `--rebuild`; `--gpu`/`--no-gpu`, default
   from the resolved `search.workspaceIndex.gpuEnabled` config value) — calls
   `WorkspaceIndexer.run_foreground_scan()`, a synchronous counterpart to `start()`'s background
@@ -391,16 +397,18 @@ sub-main functions in `klorb.search_index.cli`:
   level alongside its usual scan-summary line, so a slow scan's dominant cost is visible directly
   (`KLORB_LOG_LEVEL=DEBUG klorb index scan ...`) instead of inferred from CPU usage.
 * **`stats`** (`--json`) — reads `SearchIndexStore.stats()` (file/chunk counts, chunk counts by
-  `kind`, on-disk size including WAL/SHM sidecars) without constructing a `WorkspaceIndexer`, so it
-  never creates an index that doesn't already exist.
+  `kind`, file and chunk counts by catalog, on-disk size including WAL/SHM sidecars) without
+  constructing a `WorkspaceIndexer`, so it never creates an index that doesn't already exist. The
+  human-readable output includes a per-catalog breakdown showing each catalog's file and chunk
+  counts alongside its label.
 
 All three actions resolve the workspace root via `TrustManager().resolve_workspace(cwd)` but,
 unlike `Session`'s own gate (see "Session integration" above), don't check `workspace.trusted` —
 an explicit `klorb index` invocation is itself the user's authorization, the same treatment
 `klorb init` gets. `run_scan_cli` additionally calls `load_process_config()` before parsing
 `argv`, to resolve `--gpu`'s config-driven default. `scan`/`stats` cover every catalog (they
-operate on `WorkspaceIndexer`/its store directly); `search` only ever queries the `workspace`
-catalog.
+operate on `WorkspaceIndexer`/its store directly); `search` defaults to `--catalog workspace` (the
+source-file catalog only) but can be narrowed or widened to any single real or virtual catalog name.
 
 ## Configuration
 

@@ -19,12 +19,12 @@ given — correctly, verifiably, and without collateral damage.
 
 ## Finding things
 
-* Use Grep when you know what you're looking for — a literal string or a regex. Use
-  SemanticSearch when you don't know the exact wording and want code or docs related to a
-  concept instead.
-* SemanticSearch draws on a local index that can lag behind very recent edits; confirm a hit
-  still looks right by reading the file, and fall back to Grep if it comes back empty or the
-  index isn't available.
+Use `Grep` when you know what you're looking for — a literal string or a regex. Use `SemanticSearch`
+when you don't know the exact wording and want code or docs related to a concept.
+
+`SemanticSearch` uses an index that may omit recent edits or represent source code differently from
+the literal file lines. Confirm any hits with `ReadFile` before editing. If the index is empty, just
+use `Grep`.
 
 ## Deciding vs. asking — one rule
 

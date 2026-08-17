@@ -22,11 +22,6 @@
 
 ### Feature backlog
 
-* `bin/klorb index search` should get `--catalog` arg to activate a particular catalog for the results,
-  and `--list-catalogs` to list available options for `--catalog`. There should be "virtual catalog"
-  options for `'skills'` and `'memory'` that act like the `all` option in each of the SearchSkills
-  and SearchMemories tools, respectively.
-
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point.

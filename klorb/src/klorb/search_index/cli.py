@@ -12,6 +12,7 @@ from typing import Any
 
 from klorb.permissions.directory_access import workspace_klorb_dir
 from klorb.process_config import load_process_config
+from klorb.search_index.catalogs import CATALOG_LABELS, WORKSPACE_CATALOG, resolve_catalogs
 from klorb.search_index.chunk import Chunk
 from klorb.search_index.embedding import MAX_GPU_INDEXING_THREADS, embedding_model_available
 from klorb.search_index.indexer import DB_FILENAME, DEFAULT_SEARCH_LIMIT, INDEX_DIR_NAME, WorkspaceIndexer
@@ -29,10 +30,18 @@ def build_search_parser() -> argparse.ArgumentParser:
         description="Search the workspace's local semantic search index, the same hybrid "
         "(BM25 + vector KNN) search the SemanticSearch tool uses.",
     )
-    parser.add_argument("query", help="The search query.")
+    parser.add_argument("query", nargs="?", default=None, help="The search query.")
     parser.add_argument(
         "-k", "--limit", type=int, default=DEFAULT_SEARCH_LIMIT,
         help=f"Maximum number of results to return. Defaults to {DEFAULT_SEARCH_LIMIT}.",
+    )
+    parser.add_argument(
+        "--catalog", default=WORKSPACE_CATALOG, metavar="NAME",
+        help="Catalog to search. Use --list-catalogs to see available names. Defaults to 'workspace'.",
+    )
+    parser.add_argument(
+        "--list-catalogs", action="store_true",
+        help="Print the available --catalog choices with descriptions and exit.",
     )
     parser.add_argument(
         "--json", action="store_true",
@@ -89,12 +98,24 @@ def _resolve_workspace_path() -> Path:
     return _resolve_workspace().path
 
 
+def _list_catalogs_output(include_json: bool) -> str:
+    """Human-readable listing of every catalog name and its description, or JSON if requested."""
+    if include_json:
+        catalogs = list(map(
+            lambda pair: {"name": pair[0], "label": pair[1]}, CATALOG_LABELS.items()))
+        catalogs_dict = { "catalogs": catalogs }
+        return json.dumps(catalogs_dict, indent=2, ensure_ascii=False)
+    lines = ["Available catalogs:"]
+    lines.extend(f"  {name:<22} {CATALOG_LABELS[name]}" for name in CATALOG_LABELS)
+    return "\n".join(lines)
+
+
 def _chunk_to_file_entry(chunk: Chunk, score: float) -> dict[str, Any]:
     lines = [
         format_match_line(chunk.start_line + i, line, matched=True)
         for i, line in enumerate(chunk.text.splitlines())
     ]
-    return {"filename": chunk.source_path, "lines": lines, "score": score}
+    return {"filename": chunk.source_path, "catalog": chunk.catalog, "lines": lines, "score": score}
 
 
 def _hits_to_file_entries(hits: list[tuple[Chunk, float]]) -> list[dict[str, Any]]:
@@ -116,37 +137,58 @@ def _render_search_results(query: str, entries: list[dict[str, Any]]) -> str:
     if not entries:
         return f"No semantic matches for {query!r}."
     blocks = [
-        f"{entry['filename']}  (score {entry['score']:.3f})\n" + "\n".join(entry["lines"])
+        f"{entry['filename']}  (catalog={entry['catalog']}, score {entry['score']:.3f})\n"
+        + "\n".join(entry["lines"])
         for entry in entries
     ]
     return "\n\n".join(blocks)
 
 
 def run_search_cli(argv: list[str]) -> int:
-    """Parse `argv` (the arguments following `klorb index search`) and print the `workspace`
+    """Parse `argv` (the arguments following `klorb index search`) and print the selected
     catalog's top matches for `query` to stdout. Searches whatever the index already holds
     unless `--update` is passed, in which case it claims ownership (if unowned) and runs a full
-    scan synchronously before searching. Returns 0 on success, 1 if the embedding model isn't
-    installed.
+    scan synchronously before searching. With `--list-catalogs`, prints catalog names and exits.
+    Returns 0 on success, 1 if the embedding model isn't installed or query is missing.
     """
     parser = build_search_parser()
     args = parser.parse_args(argv)
+
+    if args.list_catalogs:
+        print(_list_catalogs_output(args.json))
+        return 0
+
+    if args.query is None:
+        parser.error("the following arguments are required: query")
 
     if not embedding_model_available():
         print(_NEEDS_INIT_MESSAGE, file=sys.stderr)
         return 1
 
+    try:
+        real_catalogs = resolve_catalogs(args.catalog)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     workspace_path = _resolve_workspace_path()
     indexer = WorkspaceIndexer(workspace_path)
     try:
-        hits = indexer.hybrid_search(args.query, limit=args.limit, update=args.update)
+        hits_by_id: dict[str, tuple[Chunk, float]] = {}
+        for catalog in real_catalogs:
+            for chunk, score in indexer.hybrid_search(
+                    args.query, limit=args.limit, catalog=catalog, update=args.update):
+                existing = hits_by_id.get(chunk.chunk_id)
+                if existing is None or score > existing[1]:
+                    hits_by_id[chunk.chunk_id] = (chunk, score)
+        hits = sorted(hits_by_id.values(), key=lambda pair: pair[1], reverse=True)[:args.limit]
     finally:
         indexer.close()
 
     entries = _hits_to_file_entries(hits)
     if args.json:
         result = {
-            "query": args.query, "top_k": args.limit,
+            "query": args.query, "top_k": args.limit, "catalog": args.catalog,
             "files": entries, "match_count": sum(len(entry["lines"]) for entry in entries),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -206,8 +248,15 @@ def _render_stats(workspace_path: Path, stats: IndexStats) -> str:
         f"Search index for {workspace_path}",
         f"  Files indexed:   {stats.file_count}",
         f"  Chunks indexed:  {stats.chunk_count}",
-        f"  Index size:      {stats.db_size_bytes / (1024 * 1024):.2f} MB",
+        f"  Index size:      {stats.db_size_bytes / (1024.0 * 1024):.2f} MB",
     ]
+    if stats.chunks_by_catalog:
+        lines.append("  By catalog:")
+        for catalog in sorted(stats.chunks_by_catalog):
+            files = stats.files_by_catalog.get(catalog, 0)
+            chunks = stats.chunks_by_catalog[catalog]
+            label = CATALOG_LABELS.get(catalog, catalog)
+            lines.append(f"    {catalog:<22} {files:>5} file(s), {chunks:>5} chunk(s)  ({label})")
     if stats.chunk_counts_by_kind:
         lines.append("  Chunks by kind:")
         lines.extend(
@@ -247,7 +296,9 @@ def run_stats_cli(argv: list[str]) -> int:
             "file_count": stats.file_count,
             "chunk_count": stats.chunk_count,
             "chunk_counts_by_kind": stats.chunk_counts_by_kind,
-            "db_size_mb": stats.db_size_bytes / (1024 * 1024),
+            "files_by_catalog": stats.files_by_catalog,
+            "chunks_by_catalog": stats.chunks_by_catalog,
+            "db_size_mb": round(stats.db_size_bytes / (1024.0 * 1024.0), 3),
         }, indent=2, ensure_ascii=False))
     else:
         print(_render_stats(workspace_path, stats))
