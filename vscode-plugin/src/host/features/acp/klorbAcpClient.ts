@@ -114,9 +114,9 @@ export interface SessionUpdateListener {
    * neutral notice in the history scroll, distinct from a `HookOutput.message` (folded back into
    * the conversation server-side, never reaching the webview as its own update). */
   onNotice(text: string): void;
-  /** A `WARNING`+ record parsed from `klorb server`'s JSON stderr, rendered in the history
-   * scroll as an error when `error` is true, or a plain notice otherwise. */
-  onServerLogNotice(text: string, error: boolean): void;
+  /** A sufficiently urgent record parsed from `klorb server`'s JSON stderr, rendered in the
+   * history scroll; `level` is its Python `logging` module numeric level value. */
+  onServerLogNotice(text: string, level: number): void;
   /** A `session/load` just restored a previously saved session's conversation
    * (`_klorb/sessionReplay`) -- replace the history wholesale with `entries`. */
   onSessionReplay(entries: SessionReplayEntry[]): void;

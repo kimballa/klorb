@@ -79,12 +79,12 @@ export interface NoticeMessage {
   text: string;
 }
 
-/** A `WARNING`+ record parsed from `klorb server`'s JSON-formatted stderr, surfaced in the
- * history scroll as an `'error'` entry when `error` is true, or a plain `'notice'` otherwise. */
+/** A sufficiently urgent record parsed from `klorb server`'s JSON-formatted stderr, surfaced in
+ * the history scroll; `level` is its Python `logging` module numeric level value. */
 export interface ServerLogMessage {
   type: 'serverLog';
   text: string;
-  error: boolean;
+  level: number;
 }
 
 /** One file location a tool call names, e.g. the file a read/edit call touched. */
@@ -1401,7 +1401,7 @@ function parseTextWithImages(
 }
 
 function parseServerLog(record: Record<string, unknown>): ServerLogMessage | undefined {
-  if (typeof record.text === 'string' && typeof record.error === 'boolean') {
+  if (typeof record.text === 'string' && typeof record.level === 'number') {
     return record as unknown as ServerLogMessage;
   }
   return undefined;

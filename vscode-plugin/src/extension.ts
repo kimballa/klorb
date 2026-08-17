@@ -25,6 +25,7 @@ import { SubagentPoller } from 'host/features/subagents';
 import { KlorbServerProcess, type KlorbServerOptions } from 'host/klorbServerProcess';
 import { KlorbSessionViewProvider } from 'host/klorbSessionViewProvider';
 import { PromptHistory, type PromptHistoryVsCode } from 'host/promptHistory';
+import { WARNING_LEVEL_VALUE, logLevelValue } from 'shared/logLevels';
 
 /** The real `vscode`-backed `EditorIntegrationVsCode` -- the one place `EditorIntegration`'s
  * VS Code calls are actually made, so `editorIntegration.ts` itself never needs a real `vscode`
@@ -125,6 +126,14 @@ async function readServerOptions(apiKeyManager: ApiKeyManager): Promise<KlorbSer
   return { command, env, configPath };
 }
 
+/** Reads `klorb.historyLogLevel` and converts it to the numeric threshold for escalating a
+ * `klorb server` stderr record into the panel's history scroll, defaulting to `WARNING` when
+ * unset. */
+function historyLogLevelThreshold(): number {
+  const level = vscode.workspace.getConfiguration('klorb').get<string>('historyLogLevel', '');
+  return level.length > 0 ? logLevelValue(level) : WARNING_LEVEL_VALUE;
+}
+
 /** The real `vscode`-backed `PromptHistoryVsCode` (see host/promptHistory.ts's own doc comment). */
 function realPromptHistoryVsCode(context: vscode.ExtensionContext): PromptHistoryVsCode {
   return {
@@ -181,7 +190,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const fileSearch = new FileSearch(realFileSearchVsCode(), log);
   const provider = new KlorbSessionViewProvider(context.extensionUri, editorIntegration, log);
   const apiKeyManager = new ApiKeyManager(realApiKeyVsCode(context));
-  const connection = new AcpConnection(serverProcess, provider, log);
+  const connection = new AcpConnection(
+    serverProcess,
+    provider,
+    log,
+    undefined,
+    historyLogLevelThreshold
+  );
   const sessionControls = new SessionControls(
     connection,
     (status) => provider.postHostMessage({ type: 'statusUpdate', ...status }),

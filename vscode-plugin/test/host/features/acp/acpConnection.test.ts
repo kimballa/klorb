@@ -42,7 +42,7 @@ function makeHarness(agent: MockAgent = new MockAgent()): Harness {
     onMessageQueued: (text) => messagesQueued.push(text),
     onQueuedMessageSent: (text) => queuedMessagesSent.push(text),
     onNotice: (text) => events.push(`notice:${text}`),
-    onServerLogNotice: (text, error) => events.push(`serverLogNotice:${error}:${text}`),
+    onServerLogNotice: (text, level) => events.push(`serverLogNotice:${level}:${text}`),
     onSessionReplay: (entries) => events.push(`sessionReplay:${entries.length}`),
     onSessionReset: () => events.push('sessionReset'),
   };
@@ -366,14 +366,14 @@ describe('AcpConnection', () => {
     await expect(connection.start(OPTIONS, '/work')).rejects.toThrow(/protocol version/);
   });
 
-  function makeStderrHarness(): {
+  function makeStderrHarness(historyLogLevelThreshold?: () => number): {
     connection: AcpConnection;
     stderr: Writable;
     logs: string[];
-    serverLogNotices: { text: string; error: boolean }[];
+    serverLogNotices: { text: string; level: number }[];
   } {
     const logs: string[] = [];
-    const serverLogNotices: { text: string; error: boolean }[] = [];
+    const serverLogNotices: { text: string; level: number }[] = [];
     const { child, stderr } = createMockAgentChild();
     const serverProcess = new KlorbServerProcess(() => child);
     const listener: SessionUpdateListener = {
@@ -392,7 +392,7 @@ describe('AcpConnection', () => {
       onMessageQueued: () => undefined,
       onQueuedMessageSent: () => undefined,
       onNotice: () => undefined,
-      onServerLogNotice: (text, error) => serverLogNotices.push({ text, error }),
+      onServerLogNotice: (text, level) => serverLogNotices.push({ text, level }),
       onSessionReplay: () => undefined,
       onSessionReset: () => undefined,
     };
@@ -400,7 +400,8 @@ describe('AcpConnection', () => {
       serverProcess,
       listener,
       (message: string) => logs.push(message),
-      500
+      500,
+      historyLogLevelThreshold
     );
     return { connection, stderr, logs, serverLogNotices };
   }
@@ -442,7 +443,7 @@ describe('AcpConnection', () => {
     await vi.waitFor(() => expect(logs).toContain('[server] Traceback (most recent call last):'));
   });
 
-  it('escalates a WARNING record to onServerLogNotice as a non-error notice', async () => {
+  it('escalates a WARNING record to onServerLogNotice with its numeric level', async () => {
     const { connection, stderr, serverLogNotices } = makeStderrHarness();
     await connection.start(OPTIONS, '/work');
 
@@ -454,12 +455,10 @@ describe('AcpConnection', () => {
     });
     stderr.write(`${record}\n`);
 
-    await vi.waitFor(() =>
-      expect(serverLogNotices).toContainEqual({ text: 'careful', error: false })
-    );
+    await vi.waitFor(() => expect(serverLogNotices).toContainEqual({ text: 'careful', level: 30 }));
   });
 
-  it('escalates an ERROR record to onServerLogNotice as an error', async () => {
+  it('escalates an ERROR record to onServerLogNotice with its numeric level', async () => {
     const { connection, stderr, serverLogNotices } = makeStderrHarness();
     await connection.start(OPTIONS, '/work');
 
@@ -471,10 +470,10 @@ describe('AcpConnection', () => {
     });
     stderr.write(`${record}\n`);
 
-    await vi.waitFor(() => expect(serverLogNotices).toContainEqual({ text: 'boom', error: true }));
+    await vi.waitFor(() => expect(serverLogNotices).toContainEqual({ text: 'boom', level: 40 }));
   });
 
-  it('does not escalate an INFO record to onServerLogNotice', async () => {
+  it('does not escalate an INFO record to onServerLogNotice under the default WARNING threshold', async () => {
     const { connection, stderr, logs, serverLogNotices } = makeStderrHarness();
     await connection.start(OPTIONS, '/work');
 
@@ -487,6 +486,39 @@ describe('AcpConnection', () => {
     stderr.write(`${record}\n`);
 
     await vi.waitFor(() => expect(logs).toContain('[server] 2026-08-17 10:00:00 - INFO:klorb:fyi'));
+    expect(serverLogNotices).toEqual([]);
+  });
+
+  it('honors a custom historyLogLevelThreshold, escalating INFO when it is lowered', async () => {
+    const { connection, stderr, serverLogNotices } = makeStderrHarness(() => 20);
+    await connection.start(OPTIONS, '/work');
+
+    const record = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'INFO',
+      log: 'klorb',
+      msg: 'fyi',
+    });
+    stderr.write(`${record}\n`);
+
+    await vi.waitFor(() => expect(serverLogNotices).toContainEqual({ text: 'fyi', level: 20 }));
+  });
+
+  it('honors a custom historyLogLevelThreshold, suppressing WARNING when it is raised', async () => {
+    const { connection, stderr, logs, serverLogNotices } = makeStderrHarness(() => 40);
+    await connection.start(OPTIONS, '/work');
+
+    const record = JSON.stringify({
+      ts: '2026-08-17 10:00:00',
+      level: 'WARNING',
+      log: 'klorb',
+      msg: 'careful',
+    });
+    stderr.write(`${record}\n`);
+
+    await vi.waitFor(() =>
+      expect(logs).toContain('[server] 2026-08-17 10:00:00 - WARNING:klorb:careful')
+    );
     expect(serverLogNotices).toEqual([]);
   });
 

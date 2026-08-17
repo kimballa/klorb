@@ -11,6 +11,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 import type { KlorbServerOptions, KlorbServerProcess } from 'host/klorbServerProcess';
+import { WARNING_LEVEL_VALUE, logLevelValue } from 'shared/logLevels';
 import type { ImageAttachment } from 'shared/webviewMessages';
 
 import {
@@ -81,30 +82,6 @@ function parseServerLogRecord(line: string): ServerLogRecord | undefined {
   return undefined;
 }
 
-/** Python `logging` module level value for `WARNING`. */
-const WARNING_LEVEL_VALUE = 30;
-/** Python `logging` module level value for `ERROR`. */
-const ERROR_LEVEL_VALUE = 40;
-
-/** Maps a `ServerLogRecord.level` name to its Python `logging` module numeric value, or `0` for
- * an unrecognized name (so it never escalates). */
-function serverLogLevelValue(level: string): number {
-  switch (level) {
-    case 'DEBUG':
-      return 10;
-    case 'INFO':
-      return 20;
-    case 'WARNING':
-      return WARNING_LEVEL_VALUE;
-    case 'ERROR':
-      return ERROR_LEVEL_VALUE;
-    case 'CRITICAL':
-      return 50;
-    default:
-      return 0;
-  }
-}
-
 /** Reads one boolean flag from `initResult.agentCapabilities._meta.klorb`, `false` if the
  * server's `initialize()` reply carried no such flag at all (an older/non-klorb server, or one
  * that hasn't grown this capability yet). */
@@ -147,17 +124,23 @@ export class AcpConnection {
   /** Whether the connected server advertised `agentCapabilities._meta.klorb.subagents` at
    * `initialize()` -- same lifetime/threading as `_enqueueMessageCapable`. */
   private _subagentsCapable = false;
+  /** Returns the minimum level a `ServerLogRecord` must reach to escalate into the history
+   * scroll; called fresh per record so a live config change takes effect without reconstructing
+   * the connection. */
+  private readonly _historyLogLevelThreshold: () => number;
 
   public constructor(
     serverProcess: KlorbServerProcess,
     listener: SessionUpdateListener,
     log: LogFn = (message: string) => console.log(message),
-    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS
+    initializeTimeoutMs: number = DEFAULT_INITIALIZE_TIMEOUT_MS,
+    historyLogLevelThreshold: () => number = () => WARNING_LEVEL_VALUE
   ) {
     this._serverProcess = serverProcess;
     this._listener = listener;
     this._log = log;
     this._initializeTimeoutMs = initializeTimeoutMs;
+    this._historyLogLevelThreshold = historyLogLevelThreshold;
   }
 
   /** True once the handshake completed and a live session id is held. */
@@ -528,8 +511,8 @@ export class AcpConnection {
   }
 
   /** Parses one `klorb server` stderr line as a `ServerLogRecord` and reformats it for `_log`,
-   * escalating a `WARNING`+ record into the history scroll via `onServerLogNotice`. A line that
-   * isn't valid JSON is forwarded to `_log` verbatim instead. */
+   * escalating sufficiently urgent records into the history scroll via `onServerLogNotice`. A
+   * line that isn't valid JSON is forwarded to `_log` verbatim instead. */
   private _handleStderrLine(line: string): void {
     const record = parseServerLogRecord(line);
     if (record === undefined) {
@@ -537,9 +520,9 @@ export class AcpConnection {
       return;
     }
     this._log(`[server] ${record.ts} - ${record.level}:${record.log}:${record.msg}`);
-    const levelValue = serverLogLevelValue(record.level);
-    if (levelValue >= WARNING_LEVEL_VALUE) {
-      this._listener.onServerLogNotice(record.msg, levelValue >= ERROR_LEVEL_VALUE);
+    const levelValue = logLevelValue(record.level);
+    if (levelValue >= this._historyLogLevelThreshold()) {
+      this._listener.onServerLogNotice(record.msg, levelValue);
     }
   }
 

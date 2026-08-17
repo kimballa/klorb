@@ -1,6 +1,7 @@
 // © Copyright 2026 Aaron Kimball
 import { describe, expect, it } from 'vitest';
 
+import { ERROR_LEVEL_VALUE, WARNING_LEVEL_VALUE } from 'shared/logLevels';
 import type { PermissionAskMessage, QuestionAskMessage } from 'shared/webviewMessages';
 import {
   appendInteraction,
@@ -483,13 +484,21 @@ describe('queued messages', () => {
     expect(entries).toEqual([{ kind: 'notice', text: 'hook fired', streaming: false }]);
   });
 
-  it('applyHostMessage appends a notice entry for a non-error serverLog record', () => {
-    const entries = applyHostMessage([], { type: 'serverLog', text: 'careful', error: false });
+  it('applyHostMessage appends a notice entry for a below-error-level serverLog record', () => {
+    const entries = applyHostMessage([], {
+      type: 'serverLog',
+      text: 'careful',
+      level: WARNING_LEVEL_VALUE,
+    });
     expect(entries).toEqual([{ kind: 'notice', text: 'careful', streaming: false }]);
   });
 
-  it('applyHostMessage appends an error entry for an error serverLog record', () => {
-    const entries = applyHostMessage([], { type: 'serverLog', text: 'boom', error: true });
+  it('applyHostMessage appends an error entry for an ERROR+ serverLog record', () => {
+    const entries = applyHostMessage([], {
+      type: 'serverLog',
+      text: 'boom',
+      level: ERROR_LEVEL_VALUE,
+    });
     expect(entries).toEqual([{ kind: 'error', text: 'boom', streaming: false }]);
   });
 });
