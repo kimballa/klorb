@@ -13,7 +13,7 @@ import pytest
 from klorb.search_index import cli as cli_module
 from klorb.search_index import indexer as indexer_module
 from klorb.search_index.cli import run_scan_cli, run_search_cli, run_stats_cli
-from klorb.search_index.embedding import EMBEDDING_DIMENSIONS
+from klorb.search_index.embedding import EMBEDDING_DIMENSIONS, MAX_GPU_INDEXING_THREADS
 from klorb.search_index.indexer import DB_FILENAME, INDEX_DIR_NAME, ScanStats
 from klorb.workspace import Workspace
 
@@ -148,7 +148,7 @@ def test_run_scan_cli_indexes_the_workspace_and_reports_counts(
     assert (tmp_path / ".klorb" / INDEX_DIR_NAME / DB_FILENAME).exists()
 
 
-def test_run_scan_cli_defaults_threads_to_cpu_count_and_gpu_to_on(tmp_path: Path) -> None:
+def test_run_scan_cli_defaults_threads_to_gpu_cap_and_gpu_to_on(tmp_path: Path) -> None:
     fake_indexer = MagicMock()
     fake_indexer.run_foreground_scan.return_value = ScanStats(
         files_scanned=0, files_indexed=0, files_removed=0, chunks_indexed=0, elapsed_seconds=0.0)
@@ -157,7 +157,7 @@ def test_run_scan_cli_defaults_threads_to_cpu_count_and_gpu_to_on(tmp_path: Path
             run_scan_cli([])
 
     fake_indexer.run_foreground_scan.assert_called_once_with(
-        rebuild=False, num_threads=7, use_gpu=True)
+        rebuild=False, num_threads=MAX_GPU_INDEXING_THREADS, use_gpu=True)
 
 
 def test_run_scan_cli_passes_threads_and_rebuild_flags(tmp_path: Path) -> None:
@@ -202,7 +202,8 @@ def test_run_scan_cli_explicit_gpu_flag_overrides_config_default(tmp_path: Path)
         run_scan_cli(["--gpu"])
 
     fake_indexer.run_foreground_scan.assert_called_once_with(
-        rebuild=False, num_threads=os.cpu_count() or 1, use_gpu=True)
+        rebuild=False, num_threads=min(os.cpu_count() or 1, MAX_GPU_INDEXING_THREADS),
+        use_gpu=True)
 
 
 def test_run_scan_cli_no_gpu_flag_forces_cpu(tmp_path: Path) -> None:

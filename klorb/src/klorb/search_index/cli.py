@@ -13,7 +13,7 @@ from typing import Any
 from klorb.permissions.directory_access import workspace_klorb_dir
 from klorb.process_config import load_process_config
 from klorb.search_index.chunk import Chunk
-from klorb.search_index.embedding import embedding_model_available
+from klorb.search_index.embedding import MAX_GPU_INDEXING_THREADS, embedding_model_available
 from klorb.search_index.indexer import DB_FILENAME, DEFAULT_SEARCH_LIMIT, INDEX_DIR_NAME, WorkspaceIndexer
 from klorb.search_index.store import IndexStats, SearchIndexStore
 from klorb.tools.util import format_match_line
@@ -57,7 +57,7 @@ def build_scan_parser(*, default_gpu: bool = True) -> argparse.ArgumentParser:
     parser.add_argument(
         "-j", "--threads", type=int, default=None,
         help="Number of worker threads to use for chunking/embedding changed files. Defaults "
-        "to the machine's CPU count.",
+        f"to the machine's CPU count, capped at {MAX_GPU_INDEXING_THREADS} when embedding on GPU.",
     )
     parser.add_argument(
         "--rebuild", action="store_true", default=False,
@@ -172,7 +172,11 @@ def run_scan_cli(argv: list[str]) -> int:
         print(_NEEDS_INIT_MESSAGE, file=sys.stderr)
         return 1
 
-    num_threads = args.threads if args.threads is not None else (os.cpu_count() or 1)
+    if args.threads is not None:
+        num_threads = args.threads
+    else:
+        cpu_count = os.cpu_count() or 1
+        num_threads = min(cpu_count, MAX_GPU_INDEXING_THREADS) if args.gpu else cpu_count
     indexer = WorkspaceIndexer(workspace.path)
     try:
         stats = indexer.run_foreground_scan(

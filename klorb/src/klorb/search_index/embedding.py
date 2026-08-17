@@ -23,6 +23,11 @@ EMBEDDING_DIMENSIONS = 384
 EMBEDDING_THREADS = 2
 """Caps `onnxruntime`'s intra-op thread pool for the embedding session. Unset (the `fastembed`
 default), it sizes the pool to the machine's full physical core count."""
+MAX_GPU_INDEXING_THREADS = 4
+"""Default cap on `klorb index scan`'s worker-thread count when GPU embedding is in use, since a
+shared CUDA `EmbeddingModel` session and the search index's single-writer SQLite connection both
+serialize concurrent callers -- more threads past this point add lock-contention overhead instead
+of throughput."""
 EMBEDDING_MODEL_RESOURCE_NAME = "embedding-model"
 """Directory name of the packaged embedding-model resource tree within `klorb.resources`, and
 the subdirectory of `KLORB_DATA_DIR` it's copied to -- the on-disk cache layout
