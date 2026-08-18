@@ -1,13 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Sample `Model` implementations and JSON fixtures used to test `ModelRegistry`, `Session`,
 `SystemPrompt`, and `Role` against a stable, non-production set of models.
-
-`delta.json` (schema `klorb-model`) exercises `ModelRegistry`'s directory-scanning discovery
-directly. `AlphaModel`/`BetaModel`/`GammaModel` are hand-written `Model` test doubles whose
-`system_prompt()` override returns a literal string rather than reading `system_prompts.d/`
-from disk, so tests that exercise system-prompt resolution (`Session`, `SystemPrompt`) don't
-need real prompt files on disk; `sample_model_registry()` registers them directly (see
-`ModelRegistry.register`) rather than via directory scanning.
 """
 
 from pathlib import Path
@@ -24,7 +17,7 @@ NO_SUCH_DIR = Path(__file__).parent / "_no_such_dir"
 
 
 def sample_model_registry() -> ModelRegistry:
-    """Return a `ModelRegistry` scanning no directories (see `NO_SUCH_DIR`) but directly
+    """Return a `ModelRegistry` scanning no directories but directly
     `register()`-ing `AlphaModel`, `BetaModel`, and `GammaModel`.
     """
     registry = ModelRegistry(packaged_models_dir=NO_SUCH_DIR, user_models_dir=NO_SUCH_DIR)

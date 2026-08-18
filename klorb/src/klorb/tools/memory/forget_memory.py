@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that deletes an existing memory file for a model."""
+"""Deletes an existing memory file."""
 
 import logging
 from collections.abc import Sequence
@@ -18,15 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class ForgetMemoryTool(Tool):
-    """Deletes an existing memory file. Raises `FileNotFoundError` (with a clear message, not a
-    raw traceback) if no memory with that `namespace`/`filename` exists.
+    """Deletes an existing memory file.
 
-    `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
-    I/O; a `workspace`-namespace delete is additionally gated by `tools.memory.deletePermission`
-    -- a `global`-namespace delete is always allowed. There is no `writeDirs` check at all, the
-    same bypass as every other Memory tool -- see
-    docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
+    Raises `FileNotFoundError` if no memory with that `namespace`/`filename` exists.
+    A `workspace`-namespace delete is gated by `tools.memory.deletePermission`; a
+    `global`-namespace delete is always allowed.
     """
 
     def name(self) -> str:

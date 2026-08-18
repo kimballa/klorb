@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.runtime: SubagentTracker bookkeeping, the subagent-output relay
-formatting, and cascade_close_subagents. See docs/specs/subagents.md."""
+formatting, and cascade_close_subagents."""
 import threading
 from collections.abc import Callable
 from unittest.mock import MagicMock
@@ -55,9 +55,7 @@ def test_new_subagent_counts_toward_running_count(make_session_config: Callable[
 def test_mark_finished_drops_running_count_even_though_still_undelivered(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """A finished-but-undelivered subagent is dormant, not concurrently processing -- it must
-    not keep counting against `tools.subagents.maxConcurrentPerParent` once its turn ends. Only
-    `MessageSubagent` resuming it (flipping it back to "running") should cost a slot again."""
+    """A finished-but-undelivered subagent is dormant, not concurrently processing."""
     parent = Session(make_session_config(), provider=MagicMock())
     tracker = SubagentTracker()
     handle = _handle(_child_session(parent, make_session_config))
@@ -160,8 +158,7 @@ def test_mark_finished_does_not_queue_an_uninterested_completion(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """A subagent a human messaged directly (`parent_interested=False`) still records its own
-    `state`/`output` on finishing, but must never be handed to `WaitForSubagent` -- the parent
-    never asked for this reply."""
+    `state`/`output` on finishing, but must never be handed to `WaitForSubagent`."""
     parent = Session(make_session_config(), provider=MagicMock())
     tracker = SubagentTracker()
     handle = _handle(_child_session(parent, make_session_config), parent_interested=False)
@@ -200,8 +197,7 @@ def test_completion_queue_survives_register_replacing_the_handle_dict_entry(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """`register()` replaces `_handles[child_id]` on every dispatch, including while an older
-    completion for that same id still sits in the queue (e.g. a human resumes a dormant,
-    still-undelivered subagent before its parent calls WaitForSubagent). Popping must still
+    completion for that same id still sits in the queue. Popping must still
     return the handle that actually finished, not whatever now occupies the dict entry."""
     parent = Session(make_session_config(), provider=MagicMock())
     tracker = SubagentTracker()
@@ -225,8 +221,7 @@ def test_cascade_close_subagents_does_not_relay_an_uninterested_handles_output(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """A subagent a human messaged directly must not have its final output force-injected into
-    the parent's persisted transcript at shutdown -- the parent was never expecting it. The
-    subagent is still recursively closed either way."""
+    the parent's persisted transcript at shutdown."""
     parent = Session(make_session_config(), provider=MagicMock())
     child = _child_session(parent, make_session_config)
     handle = _handle(child, role="explorer", title="find the bug", parent_interested=False)

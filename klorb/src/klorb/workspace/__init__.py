@@ -1,34 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """The `klorb.workspace` package: everything to do with what klorb considers the current
-project root, whether it's a registered project, and whether the user has trusted it. See
-docs/specs/projects-and-trust.md.
-
-This top-level module defines `Workspace` itself (the value object every other module in this
-package, and `SessionConfig.workspace`, revolves around) and re-exports `TrustManager`
-(`klorb.workspace.trust_manager`, which owns `projects.json`) for callers outside this package
-to import directly (`from klorb.workspace import TrustManager`). `klorb.workspace.workspace_init`
-(the config-file writers used once a workspace is opened as a project or newly trusted) is
-deliberately *not* re-exported here: it imports `klorb.process_config` for the schema/key
-constants a `klorb-config.json` write needs, and `klorb.process_config` itself imports
-`Workspace` from this module — re-exporting `workspace_init` here too would make that a real
-import cycle (`process_config` -> `workspace` -> `workspace_init` -> `process_config`) rather
-than the one-way dependency it is today. Callers that need `write_initial_project_config`/
-`write_session_defaults_to_project_config` (currently just
-`klorb.tui.mixins.workspace_bootstrap`) import them from
-`klorb.workspace.workspace_init` directly. Code within this package (`trust_manager.py`, which
-has no such dependency on `klorb.process_config`) imports `Workspace` back from here via a
-relative import, per this repo's own import-style rule for same-feature imports.
-
-A `Workspace` is attached to `SessionConfig.workspace` (`klorb.session`) once resolved
-(`TrustManager.resolve_workspace`), and is never loaded from `klorb-config.json` — a project
-must not be able to grant itself trust, or fabricate its own project id, via its own config
-file. It lives on `SessionConfig`, not `ProcessConfig`, since multiple sessions can run
-concurrently within one process against different directories, making workspace identity a
-per-session concern — see docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md.
-`workspace.trusted` is read directly by the permission-evaluation code
-(`klorb.permissions.workspace.evaluate_write`/`resolve_and_evaluate_read`); there is no separate
-`is_workspace_trusted` bool mirroring it — see
-docs/adrs/00055-consolidate-workspace-trust-into-a-single-field.md.
+project root, whether it's a registered project, and whether the user has trusted it.
+See docs/specs/projects-and-trust.md.
 """
 
 from pathlib import Path
@@ -39,16 +12,11 @@ from pydantic import BaseModel
 class Workspace(BaseModel):
     """One resolved project root and what klorb knows about it.
 
-    `id` is the project's uuid4 key into `projects.json`
-    (`klorb.workspace.trust_manager.ProjectRecord`), or `None` if this workspace has no
-    persistent record yet — either because the user declined to open it as a project, or
-    because it hasn't been resolved/bootstrapped at all yet. `is_project` is `True` exactly
-    when `id` is not `None`; kept as its own field (rather than derived) so it round-trips the
-    same way through `model_copy()`/equality checks as every other field here, and so a reader
-    doesn't have to know `id is not None` is the invariant. `trusted` (see module docstring)
-    governs `ReadFile`'s workspace-boundary behavior regardless of `is_project` — an
-    unregistered workspace can still be trusted for the rest of the owning session's lifetime,
-    it just won't be remembered next time klorb runs there.
+    `id` is the project's uuid4 key into `projects.json`, or `None` if this workspace has no
+    persistent record yet. `is_project` is `True` exactly when `id` is not `None`; kept as its
+    own field so it round-trips the same way through `model_copy()`/equality checks as every
+    other field here, and so a reader doesn't have to know `id is not None` is the invariant.
+    `trusted` governs `ReadFile`'s workspace-boundary behavior regardless of `is_project`.
     """
 
     id: str | None = None

@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`MarkdownChunker`: splits a markdown file into one chunk per heading-delimited section, or, for a
-section too large to be one useful chunk, one chunk per blank-line-delimited paragraph within it.
+"""`MarkdownChunker`: splits a markdown file into one chunk per heading-delimited section, or one
+chunk per blank-line-delimited paragraph when a section exceeds `MAX_SECTION_TOKENS`.
 """
 
 import re
@@ -10,8 +10,7 @@ from klorb.search_index.chunkers.base import CATALOG, Chunker
 from klorb.token_estimate import estimate_tokens
 
 MAX_SECTION_TOKENS = 400
-"""A heading-delimited section larger than this is split further into paragraphs -- past this
-size a section stops reading as one coherent retrieval unit."""
+"""A heading-delimited section larger than this is split further into paragraphs."""
 
 _HEADING_PATTERN = re.compile(r"^#{1,6}\s")
 

@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Running statistics for a `Session`, updated incrementally as messages arrive and tool
-calls complete. Persisted alongside the session state so a restored session picks up where
-the previous one left off. See docs/specs/session-statistics.md (future).
+calls complete.
 """
 
 
@@ -16,13 +15,8 @@ class ToolCallStats(BaseModel):
 
 
 class SessionStatistics(BaseModel):
-    """Running tally of message and tool-call activity for one `Session`.
-
-    Updated incrementally by `Session` as turns flow through `send_turn()` /
-    `_send_and_receive()` / `_run_tool_calls()`, and persisted alongside the session state
-    (see `klorb.workspace.session_store.SessionState`) so a restored session continues
-    from where the previous one left off rather than re-deriving counts from the message
-    history.
+    """Running tally of message and tool-call activity for one `Session`. Persisted alongside
+    the session state so a restored session continues from where the previous one left off.
     """
 
     user_messages: int = 0
@@ -41,13 +35,11 @@ class SessionStatistics(BaseModel):
 
     tools: dict[str, ToolCallStats] = Field(default_factory=dict)
     """Per-tool-name success/failure breakdown, keyed by `Tool.name()`. A tool's entry is
-    created on its first call and accumulated thereafter. A call whose tool didn't exist
-    (`NoSuchToolException`) is *not* recorded here — it's counted separately under
-    `unknown_tool_calls` — since there's no `Tool` instance to ask `is_success()`."""
+    created on its first call and accumulated thereafter."""
 
     unknown_tool_calls: int = 0
     """Number of tool calls that failed because the requested tool name doesn't exist in the
-    `ToolRegistry` (see `klorb.tools.registry.NoSuchToolException`)."""
+    `ToolRegistry`."""
 
     malformed_tool_calls: int = 0
     """Number of tool calls whose `arguments` string failed to parse as JSON (a
@@ -81,7 +73,7 @@ class SessionStatistics(BaseModel):
 
     def format_report(self) -> str:
         """Return a human-readable, multi-line summary suitable for display in the history
-        scroll (see `>Show Session Stats` palette command)."""
+        scroll."""
         lines: list[str] = []
         lines.append("Session Statistics")
         lines.append("=" * 40)

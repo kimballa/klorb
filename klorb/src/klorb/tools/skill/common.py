@@ -1,13 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Skill discovery, resolution, `SKILL.md` frontmatter parsing, `name`/`path` validation, and the
-`skillRules` gate, shared by `SearchSkills`/`ActivateSkill`/`ReadSkillFile` and the session's
-skill interjections. See docs/specs/skills.md.
-
-Every function takes plain primitives rather than a `ToolSetupContext`, so `klorb.session` can call
-the discovery helpers without an import cycle (the tool modules assemble the primitives from their
-own context). Filesystem access bypasses the `readDirs`/`.klorb` hard gate structurally, per
-docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
-"""
+`skillRules` gate. See docs/specs/skills.md."""
 
 import importlib.resources
 import logging
@@ -37,32 +30,26 @@ SKILL_FILE_NAME = "SKILL.md"
 the skill's `name` and its YAML frontmatter carries the skill's `description`."""
 
 MAX_SKILL_NAME_DISPLAY_LENGTH = 64
-"""Cap on a skill's canonical name -- defends against a hostile, arbitrarily-long directory or
-frontmatter-alias name bloating every turn's context. Applied once, at catalog-build time
-(`klorb.tools.skill.catalog.build_catalogs`), to *become* the skill's `(namespace, name)` identity
-itself -- not just a display-time copy -- so a name once advertised to the model or a user-facing
-skill list is always resolvable via `ActivateSkill`/`ReadSkillFile`."""
+"""Cap on a skill's canonical name — defends against a hostile, arbitrarily-long directory or
+frontmatter-alias name bloating every turn's context. Applied once, at catalog-build time, to
+*become* the skill's `(namespace, name)` identity itself, so a name once advertised to the model
+or a user-facing skill list is always resolvable via `ActivateSkill`/`ReadSkillFile`."""
 
 MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH = 1024
-"""Cap on a skill's description as advertised to the model, for the same reason as
-`MAX_SKILL_NAME_DISPLAY_LENGTH` -- a frontmatter `description` is project- or user-supplied free
-text with no length limit of its own. Unlike `name`, `description` is never part of a skill's
-identity, so this cap is applied fresh at each display site rather than baked into the catalog."""
+"""Cap on a skill's description as advertised to the model. A frontmatter `description` is
+project- or user-supplied free text with no length limit of its own; this cap is applied fresh
+at each display site rather than baked into the catalog."""
 
 
 def display_skill_name(name: str) -> str:
     """`name` truncated to `MAX_SKILL_NAME_DISPLAY_LENGTH`, with any trailing `-` truncation would
-    leave behind stripped too -- so the result always satisfies `is_valid_skill_name` when `name`
-    itself did (truncation only removes characters from the end; `name` is already guaranteed not
-    to start with `-`, so stripping trailing dashes can never empty the string out). Called once,
-    at catalog-build time, to compute a skill's actual `(namespace, name)` identity when its real
-    name is over the cap -- see `klorb.tools.skill.catalog.build_catalogs`."""
+    leave behind stripped too — so the result always satisfies `is_valid_skill_name` when `name`
+    itself did."""
     return name[:MAX_SKILL_NAME_DISPLAY_LENGTH].rstrip("-")
 
 
 def display_skill_description(description: str) -> str:
-    """`description` truncated to `MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH` -- what's shown to the
-    model or a user-facing skill list."""
+    """`description` truncated to `MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH`."""
     return description[:MAX_SKILL_DESCRIPTION_DISPLAY_LENGTH]
 
 
@@ -75,7 +62,7 @@ NAMESPACE_SCHEMA_PROPERTY: dict[str, object] = {
         "\"internal\" (klorb's built-in skills)."
     ),
 }
-"""The `namespace` JSON-schema property shared by `ActivateSkill`/`ReadSkillFile`'s `parameters()`."""
+"""The `namespace` JSON-schema property for skill tool `parameters()`."""
 
 
 @dataclass(frozen=True)
@@ -90,13 +77,11 @@ class ResolvedSkill:
 
 
 class SkillLocation(Protocol):
-    """Structural type shared by `ResolvedSkill` and `klorb.tools.skill.model.Skill`: anything
-    with a resolved `(namespace, name)` identity and a `root` `Traversable` to read files from.
-    Lets `read_skill_md`/`skill_file_manifest`/`resolve_skill_file` serve both a fresh
-    `resolve_all_skills()` entry and a catalog-held `Skill` without duplicating the file-reading
-    logic. Declared with read-only `@property` members (rather than plain attributes) because
-    both implementers are frozen -- a frozen dataclass's/pydantic model's fields are read-only
-    from mypy's perspective, and a plain-attribute Protocol member requires a settable one."""
+    """Structural type for anything with a resolved `(namespace, name)` identity and a `root`
+    `Traversable` to read files from. Lets `read_skill_md`/`skill_file_manifest`/
+    `resolve_skill_file` serve both a fresh `resolve_all_skills()` entry and a catalog-held
+    `Skill` without duplicating the file-reading logic. Declared with read-only `@property`
+    members because both implementers are frozen."""
 
     @property
     def namespace(self) -> Namespace: ...
@@ -117,9 +102,9 @@ def validate_namespace(namespace: object) -> Namespace:
 
 
 def validate_skill_name(name: object) -> str:
-    """Return `name` unchanged if it's a valid bare-slug skill name (see `is_valid_skill_name`),
-    else raise `ValueError`. Rejecting rather than normalizing keeps a model-supplied `name` from
-    escaping its harness-resolved namespace directory."""
+    """Return `name` unchanged if it's a valid bare-slug skill name, else raise `ValueError`.
+    Rejecting rather than normalizing keeps a model-supplied `name` from escaping its
+    harness-resolved namespace directory."""
     if not isinstance(name, str) or not name:
         raise ValueError("skill name must be a non-empty string")
     if not is_valid_skill_name(name):
@@ -131,10 +116,8 @@ def validate_skill_name(name: object) -> str:
 
 def is_valid_skill_name(name: str) -> bool:
     """Whether `name` is usable as a skill directory basename, a frontmatter alias, or a
-    model-supplied `ActivateSkill`/`ReadSkillFile` argument: non-empty, no path separator or `:`
-    (the fully-qualified-skill-name separator -- see `klorb.permissions.skill_access.
-    format_fqsn`), not `.`/`..`, no leading/trailing `-` (ambiguous with a CLI-flag-style token),
-    and no `<`/`>` (would corrupt the `<SystemInterjection>`/skill-list markup a name rides in)."""
+    model-supplied `ActivateSkill`/`ReadSkillFile` argument: non-empty, no path separator or `:`,
+    not `.`/`..`, no leading/trailing `-`, and no `<`/`>`."""
     return (
         bool(name) and "/" not in name and "\\" not in name and ":" not in name
         and name not in (".", "..")
@@ -147,11 +130,9 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
     """Return a `SKILL.md`'s full YAML frontmatter as a raw `dict`, or `{}` if it has none or
     fails to parse.
 
-    Parses the leading `---`-fenced YAML block with `yaml.safe_load` (never `yaml.load` -- the
-    frontmatter is project-supplied content). A missing block, malformed YAML, or a non-mapping
-    document all yield `{}`, so a malformed skill is still discoverable with no frontmatter
-    attributes. This is the source `klorb.tools.skill.model.Skill.raw`/`.description`/the
-    frontmatter `name` alias are all read from -- see `klorb.tools.skill.catalog`.
+    Parses the leading `---`-fenced YAML block with `yaml.safe_load` (never `yaml.load`). A
+    missing block, malformed YAML, or a non-mapping document all yield `{}`, so a malformed skill
+    is still discoverable with no frontmatter attributes.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -171,12 +152,10 @@ def parse_frontmatter(text: str) -> dict[str, Any]:
 
 def skill_bash_command_patterns(raw: dict[str, Any]) -> list[list[str]]:
     """Every argv pattern under `raw`'s `metadata.klorb.bashCommands` frontmatter key, each a
-    `list[str]` token pattern ready for `klorb.permissions.command_access.CommandRules.allow` --
-    how a skill pre-authorizes the bash commands its own instructions need, instead of requiring
-    a workspace's `commandRules.allow` to list them separately. A missing or malformed shape (a
-    non-dict `metadata`/`klorb`, a non-list `bashCommands`, or a non-`list[str]` entry) yields an
-    empty list (or drops just that entry), logged as a `logger.warning()` since it's worth
-    surfacing to whoever authored the skill.
+    `list[str]` token pattern ready for `klorb.permissions.command_access.CommandRules.allow` —
+    how a skill pre-authorizes the bash commands its own instructions need. A missing or malformed
+    shape yields an empty list (or drops just that entry), logged as a `logger.warning()` since
+    it's worth surfacing to whoever authored the skill.
     """
     metadata = raw.get("metadata")
     if not isinstance(metadata, dict):
@@ -272,8 +251,7 @@ def resolve_all_skills(
 ) -> list[ResolvedSkill]:
     """Every discoverable skill, precedence-resolved and sorted by `name`. When the same `name`
     exists in more than one source, the most specific one wins and the rest are dropped. Not
-    filtered by `skillRules` -- see `klorb.tools.skill.catalog.SkillCatalog.discoverable` for
-    that."""
+    filtered by `skillRules`."""
     resolved: dict[str, ResolvedSkill] = {}
     for namespace, source in _tier_source_dirs(
             workspace_root, workspace_trusted, claude_skills_compat):
@@ -314,9 +292,8 @@ def _iter_relative_files(node: Traversable, prefix: str, root_real: Path | None)
 
 def skill_file_manifest(resolved: SkillLocation) -> list[str]:
     """A sorted `find -type f`-style manifest of every regular file beneath `resolved`'s directory,
-    each path relative to that directory (including `SKILL.md`) -- the `path` values a model then
-    passes to `ReadSkillFile`. A symlink that escapes the skill directory is excluded, the same
-    containment boundary `resolve_skill_file` enforces for an actual read."""
+    each path relative to that directory (including `SKILL.md`) — the `path` values a model then
+    passes to `ReadSkillFile`. A symlink that escapes the skill directory is excluded."""
     root_real = canonicalize_dir(resolved.root, resolved.root) if isinstance(
         resolved.root, Path) else None
     return sorted(_iter_relative_files(resolved.root, "", root_real))
@@ -384,10 +361,9 @@ def raise_if_skill_not_allowed(
 
 def skill_activation_payload(skill: SkillLocation) -> dict[str, Any]:
     """Build the `{namespace, name, content, files, tokens}` payload for a resolved, gated
-    skill -- `skill`'s full `SKILL.md` content plus its file manifest. This is the single piece
+    skill — `skill`'s full `SKILL.md` content plus its file manifest. This is the single piece
     of code both `ActivateSkillTool.apply()` and `Session`'s `UserSkillActivation` interjection
-    (for a user prompt that *starts* with a skill reference, see docs/specs/skills.md) use to
-    turn a `Skill` into what the model sees, so the two paths can never drift apart."""
+    use to turn a `Skill` into what the model sees, so the two paths can never drift apart."""
     content = read_skill_md(skill)
     files = skill_file_manifest(skill)
     payload: dict[str, Any] = {

@@ -1,19 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""The subject-agnostic core shared by the line-search tools (`GrepTool`, `SearchScratchpadTool`,
-`SearchMemoriesTool`): validating a `queries` array, compiling it into a single alternation
-pattern, finding the line indices that match, and rendering matches (with optional surrounding
-context) into a compact, token-dense line format.
-
-The dense line format is one string per reported line: a leading `*` when the line itself matched
-a query, or a space when it's only surrounding context, followed by the 1-based line number, a
-`|`, and the line's text — e.g. `"*42|def hello():"` or `" 41|import os"`. Because every line
-already carries both its match marker and its own line number, callers report a flat list of
-these strings per searched file with no enclosing `start_line`/`end_line` block structure: where
-two merged context windows within one file aren't contiguous, the jump in the embedded line
-numbers is what marks the gap (`context_lines_for_matches` emits no separator between windows).
-Splitting a dense line back apart is unambiguous — the line number never contains a `|`, so
-splitting on the first `|` always recovers the number and the (possibly `|`-containing) text.
-"""
+"""Core mechanics for line-search tools: query validation, pattern compilation, and result rendering."""
 
 import re
 from typing import Any
@@ -58,8 +44,7 @@ def validate_output_style(raw: Any, *, allow_list_files: bool = True) -> str:
 
 def validate_queries(queries: Any) -> list[str]:
     """Validate a model-supplied `queries` argument, returning it unchanged as a `list[str]`,
-    or raising `ValueError` if it isn't a non-empty list of strings. Shared so every line-search
-    tool rejects the same malformed inputs with the same messages.
+    or raising `ValueError` if it isn't a non-empty list of strings.
     """
     if not isinstance(queries, list) or not queries:
         raise ValueError("queries must be a non-empty array of search strings")

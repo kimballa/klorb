@@ -26,12 +26,11 @@ _SKILLS_NAMESPACE_BY_CATALOG: dict[str, Namespace] = {
 
 SKILLS_VIRTUAL_DIRNAME = f"{KLORB_PROJECT_DIR_NAME}/skills-index"
 """Synthetic virtual directory standing in for every skill tier's real root in `Chunk.source_path`
-and the `files` table's bookkeeping key, the same trick `indexer._GLOBAL_MEMORIES_VIRTUAL_DIRNAME`
-uses -- applied uniformly to all three skill tiers (even the real, on-disk `workspace` one) so a
-chunk's skill identity is always recovered the same way regardless of which tier it came from."""
+and the `files` table's bookkeeping key, so a chunk's skill identity is always recovered the same
+way regardless of which tier it came from."""
 
 WORKSPACE_CATALOG = "workspace"
-"""The default catalog for workspace source files, matching `CATALOG` in `chunkers/base.py`."""
+"""The default catalog for workspace source files."""
 
 VIRTUAL_CATALOG_MEMORIES = "memories"
 """Virtual catalog alias that expands to both memory catalogs."""

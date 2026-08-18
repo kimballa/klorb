@@ -40,28 +40,19 @@ logger = logging.getLogger(__name__)
 
 class WorkspaceBootstrapMixin(ReplAppBase):
     """Workspace trust resolution/bootstrapping, saved-session restore/load, and the
-    "Trust workspace" palette command flow -- see `ReplApp` for how this mixes into the
-    concrete app class."""
+    "Trust workspace" palette command flow."""
 
     def list_recent_sessions(self) -> list[RecentSession]:
-        """Return the live workspace's saved sessions, most recently touched first -- backs the
-        "Load session" palette command (`klorb.tui.commands.session_commands.
-        SessionCommandProvider`). `[]` when this app has no `TrustManager` at all (every saved
-        session lives under a trust-managed workspace's data directory)."""
+        """Return the live workspace's saved sessions, most recently touched first. `[]` when
+        this app has no `TrustManager` at all."""
         if self._trust_manager is None:
             return []
         return read_sessions_index(self._session.config.workspace).recent_sessions
 
     def load_recent_session(self, entry: RecentSession) -> None:
-        """Replace the active session with the one recorded by `entry` -- the "Load session"
-        picker's selection handler. A no-op if `entry` is already the live session. Closes the
-        outgoing session first (persisting and releasing its own lock, same as `clear_session`),
-        then attempts to lock and rebuild `entry`'s saved state (`try_restore_session`); if that
-        fails (locked by another process, or its `session.json` is missing/corrupt by the time
-        the user picked it), reports why via `show_notice` and leaves the outgoing session
-        closed with a fresh, blank one in its place -- mirroring how a fresh `Session` is what
-        `ReplApp.__init__` would have built anyway had no saved session existed at all.
-        """
+        """Replace the active session with the one recorded by `entry`. A no-op if `entry` is
+        already the live session. If the saved session can't be loaded, reports why via
+        `show_notice` and starts a fresh session."""
         if entry.session_id == self._session.id:
             return
         workspace = self._session.config.workspace
@@ -98,30 +89,26 @@ class WorkspaceBootstrapMixin(ReplAppBase):
 
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None:
-        """Runs as a proper (non-thread) Textual worker, not directly from `on_mount`, because
-        `_resolve_workspace_trust()` may push a `ConfirmScreen` and await its dismissal
-        (`push_screen_wait`) — which Textual only allows from within an active worker's
-        context, not from a plain event handler. Submits `self._initial_message` (if any) only
-        once workspace trust is resolved, so the very first turn already reflects any
-        newly-granted permissions rather than racing the interactive bootstrap.
-        """
+        """Runs as a Textual worker because `_resolve_workspace_trust()` may push a
+        `ConfirmScreen` and await its dismissal. Submits `self._initial_message` (if any)
+        only once workspace trust is resolved."""
         await self._resolve_workspace_trust()
         if self._initial_message:
             self._submit_prompt(self._initial_message)
 
     def workspace_trust_management_enabled(self) -> bool:
-        """Whether this app was constructed with a `TrustManager` — see `TrustWorkspaceCommandProvider`."""
+        """Whether this app was constructed with a `TrustManager`."""
         return self._trust_manager is not None
 
     def is_workspace_trusted(self) -> bool:
-        """Whether the current workspace is currently trusted — see `TrustWorkspaceCommandProvider`."""
+        """Whether the current workspace is currently trusted."""
         return self._session.config.workspace.trusted
 
     @staticmethod
     def _workspace_auto_allowed_skills(workspace: Workspace) -> list[str]:
         """Workspace skill names from the workspace's own `.klorb/klorb-config.json`
-        `skillRules.allow`. Reads the config directly (the workspace may not be trusted yet)
-        and returns names whose fully-qualified entry starts with `workspace:`."""
+        `skillRules.allow`. Reads the config directly and returns names whose
+        fully-qualified entry starts with `workspace:`."""
         config_path = project_config_path(workspace.path)
         raw = read_versioned_json(config_path, expected_schema_name=CONFIG_SCHEMA_NAME)
         session_defaults = raw.get(SESSION_DEFAULTS_KEY, {})
@@ -143,22 +130,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         return f"{base}\n\nWorkspace skills auto-allowed by config:\n{skill_list}"
 
     async def _resolve_workspace_trust(self) -> None:
-        """A no-op unless this app was given a `TrustManager` (see `__init__`). Otherwise:
-        if `SessionConfig.workspace` (already resolved by whichever
-        `klorb.process_config.load_process_config()` call built the live session's config) has
-        no `projects.json` record yet (`workspace.id is None`), interactively bootstraps it
-        (`_bootstrap_new_workspace`) and applies whatever the user decided
-        (`_apply_workspace_config`); either way, finishes by announcing the resulting trust
-        state in the history (`_announce_workspace`). See docs/specs/projects-and-trust.md.
-        Restoring the workspace's most recently touched saved session (below) is additionally
-        skipped when `_skip_session_restore` is set (`klorb --new`), leaving the freshly
-        constructed `Session` as-is even for a trusted workspace with saved sessions on disk.
-
-        Once trust is fully settled, fires `onSessionStart`, tagged `reason="ResumeSession"` if
-        the block above swapped in a restored session, `"NewSession"` otherwise. Fires from here
-        rather than from `Session.__init__` directly because trust isn't settled yet at
-        construction time for a brand-new workspace.
-        """
+        """A no-op unless this app was given a `TrustManager`. If the workspace has no
+        `projects.json` record yet, interactively bootstraps it and applies the user's
+        decision. Finishes by announcing the resulting trust state and restoring the most
+        recent saved session. See docs/specs/projects-and-trust.md."""
         if self._trust_manager is None:
             return
         workspace = self._session.config.workspace
@@ -187,18 +162,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             workspace_just_bootstrapped=just_bootstrapped)
 
     def _maybe_restore_latest_session(self, workspace: Workspace) -> None:
-        """If `workspace`'s `sessions.json` has a most-recently-touched entry, and it isn't
-        currently locked by another live process, replace the freshly-constructed `Session`
-        with one built from that saved state, and re-render the history scroll to match — so a
-        trusted workspace picks its conversation back up where the last klorb process left off,
-        instead of starting blank. A no-op if `sessions.json` has no entries yet, or its top
-        entry is locked or its `session.json` is missing/corrupt (`try_restore_session` returns
-        `None`) — the same "start blank instead" fallback the "Load session" picker
-        (`klorb.tui.commands.session_commands.LoadSessionScreen`) uses for the same failure.
-
-        Only called for a trusted `workspace` (see caller): an untrusted or unresolved
-        workspace has no saved state of its own to restore.
-        """
+        """If `workspace`'s `sessions.json` has a most-recently-touched entry, replace the
+        freshly-constructed `Session` with one built from that saved state and re-render the
+        history scroll. A no-op if `sessions.json` has no entries, or if the entry is locked
+        or corrupt."""
         index = read_sessions_index(workspace)
         if not index.recent_sessions:
             return
@@ -211,14 +178,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._adopt_restored_session(restored)
 
     def _adopt_restored_session(self, restored: Session) -> None:
-        """Replace the live `Session` with `restored` (already loaded via `try_restore_session`,
-        including having adopted its `session.lock`), updating the header/status-line/session-name
-        widgets and re-rendering the history scroll to match. Shared by
-        `_maybe_restore_latest_session` (startup) and `klorb.tui.commands.session_commands.
-        LoadSessionScreen` (an explicit "Load session" pick) — the caller is responsible for
-        closing the outgoing `Session` first, since the two callers do so at different points
-        relative to their own confirmation/lookup flow.
-        """
+        """Replace the live `Session` with `restored`, updating the header/status-line/
+        session-name widgets and re-rendering the history scroll. The caller is responsible
+        for closing the outgoing `Session` first."""
         self._session = restored
         self._selected_session = restored
         self._selected_handle = None
@@ -237,17 +199,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._mount_restored_history(restored.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:
-        """Ask the two workspace-bootstrap questions from docs/specs/projects-and-trust.md for
-        a workspace with no `projects.json` record yet: whether to open it as a project (a
-        persistent record plus a starter `.klorb/klorb-config.json`), and whether to trust it.
-        If opened as a project, registers it (`TrustManager.register_project`) and writes its
-        starter config file (`write_initial_project_config`, burning in the session's
-        currently-active model) -- unless the workspace already ships its own
-        `.klorb/klorb-config.json` (e.g. a downloaded repository that ships one), which is
-        kept as-is; otherwise returns an unregistered `Workspace` carrying only the trust
-        decision, kept in memory for the rest of this session's lifetime (see
-        `SessionConfig.workspace`).
-        """
+        """Ask the two workspace-bootstrap questions for a workspace with no `projects.json`
+        record yet: whether to open it as a project, and whether to trust it. If opened as a
+        project, registers it and writes its starter config file unless the workspace already
+        has its own `.klorb/klorb-config.json`."""
         assert self._trust_manager is not None
         open_as_project = await self.push_screen_wait(ConfirmScreen(
             f"You are working in {workspace.path}. Open as a project?\n\n"
@@ -269,37 +224,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
 
     def _apply_workspace_config(self, workspace: Workspace) -> None:
         """Recompute the layered config now that `workspace`'s trust/registration state may
-        have just changed (a newly-trusted project's own `.klorb/klorb-config.json` becomes
-        readable, or a freshly-registered project's just-written starter file does), and apply
-        it to the live process/session config in place — mutating the existing
-        `ProcessConfig`/`SessionConfig` objects rather than reconstructing `Session`/
-        `ToolRegistry`, so any conversation history already in this session is left untouched
-        and every tool sees the change on its very next call (both hold references to these
-        same objects, not copies — see `klorb.tools.registry.ToolRegistry`).
-
-        `read_dirs`/`write_dirs` are concatenated onto the live session's own via
-        `concat_dir_rules` (never replaced), so an "Allow (this session)" grant made before
-        the user decided to trust the workspace isn't discarded. Every process-only
-        (`ProcessConfig`) field is overwritten from the reload outright; `session`'s other
-        scalar fields (model, thinking, tool-call limits) are deliberately left alone here,
-        since a config file's declared defaults shouldn't silently override a value the user
-        may have already picked interactively earlier this same session.
-
-        `workspace` itself is dual-written onto both the live `self._session.config` and the
-        `self._process_config.session` template — the same pattern `select_model()`/
-        `set_thinking_enabled()` already use for session-scoped settings — so a future `/clear`
-        in this process inherits the resolved trust state instead of re-bootstrapping it.
-
-        This reload can surface a `config_warnings` entry that `on_mount()`'s startup pass never
-        saw — the project config layer is only read once `workspace.trusted` is `True`, which
-        for a brand-new workspace is only resolved here — so any warning not already shown is
-        posted to the history via `show_notice()` below.
-
-        Also forces a fresh skill-catalog scan (`Session.reload_skills()`,
-        `klorb.tools.skill.catalog`): a newly trusted workspace's `.klorb/skills/` tier is
-        invisible to the session's catalog until rebuilt, since `SkillCatalogRegistry.ensure()`
-        is a no-op once a catalog already exists.
-        """
+        have just changed, and apply it to the live process/session config in place.
+        `read_dirs`/`write_dirs` are concatenated rather than replaced. New config warnings
+        are posted via `show_notice()`. Also forces a fresh skill-catalog scan."""
         reloaded = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
         new_warnings = [
@@ -354,26 +281,10 @@ class WorkspaceBootstrapMixin(ReplAppBase):
 
     @work()
     async def trust_workspace(self) -> None:
-        """`TrustWorkspaceCommandProvider`'s action: confirm with the user, then trust the
-        current workspace — persisting the decision to `projects.json` if it's a registered
-        project (`TrustManager.set_trusted`) — and apply the now-unlocked config
-        (`_apply_workspace_config`). If the workspace is a registered project with no
-        `.klorb/klorb-config.json` of its own yet, additionally offers to write one from the
-        live session's current settings (`write_session_defaults_to_project_config`), so any
-        `readDirs`/`writeDirs` grants built up earlier this session aren't lost the next time
-        klorb opens this workspace. A no-op if the user declines the initial confirmation, or
-        if this app has no `TrustManager` (see `workspace_trust_management_enabled`) — the
-        palette command that calls this is hidden in that case, but this method still guards
-        against being invoked some other way.
-
-        `@work()` (a proper Textual worker, not a thread) rather than a plain `async def`: like
-        `_run_startup_workspace_and_initial_message`, this pushes a `ConfirmScreen` and awaits
-        its dismissal (`push_screen_wait`), which Textual only allows from within an active
-        worker's context. Called directly as the palette command's callback (see
-        `TrustWorkspaceCommandProvider`/`PromptInput._run_palette_command`) — invoking a
-        `@work()`-decorated method starts the worker and returns a `Worker`, not a coroutine, so
-        callers don't (and shouldn't) await this directly.
-        """
+        """Confirm with the user, then trust the current workspace and apply the now-unlocked
+        config. If the workspace is a registered project with no `.klorb/klorb-config.json`
+        yet, offers to write one from the live session's current settings. A no-op if the
+        user declines or if this app has no `TrustManager`."""
         if self._trust_manager is None:
             return
         workspace = self._session.config.workspace

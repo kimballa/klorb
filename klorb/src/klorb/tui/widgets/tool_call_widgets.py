@@ -23,8 +23,8 @@ class RenderedToolCall:
     """One finished tool call, fully rendered for the history scroll: `summary_content`/
     `detail_content` are whatever `ToolCallStatic`/`RunningToolCallStatic` should show for
     Ctrl+O's summary/detail toggle -- a plain `str` for the common case (unchanged from before
-    this existed), or a colored/numbered `textual.content.Content` for a diff/read preview (see
-    `klorb.tui.mixins.rendering.RenderingMixin._render_tool_result`). `on_click`, when set,
+    this existed), or a colored/numbered `textual.content.Content` for a diff/read preview.
+    `on_click`, when set,
     pushes the call's click-to-expand overlay (`klorb.tui.panels.preview_screens`). Lives here,
     alongside `ToolCallStatic` (rather than in `rendering.py`, where it's built), since
     `klorb.tui._base.ReplAppBase` needs the type too and importing it from `rendering.py` there
@@ -38,7 +38,7 @@ class RenderedToolCall:
 
 class ToolCallLimitScreen(ModalScreen[bool]):
     """Modal asking whether to double a tool-call safety limit and keep going, shown when
-    `Session` reports one has been reached (see `ReplApp._on_tool_call_limit_reached`).
+    `Session` reports one has been reached.
     "Yes" or Enter (via the focused "Yes" button) confirms; "No" or Escape declines. Left/Right
     arrow keys move focus between the two buttons, same as Tab/Shift+Tab. Press `y` to accept or
     `n` to decline without moving focus.
@@ -108,18 +108,17 @@ class ToolCallLimitScreen(ModalScreen[bool]):
 
 class ToolCallStatic(Static):
     """One finished tool call in the history, shown as either its one-line summary or its
-    fuller detail view — toggled globally, across every `ToolCallStatic` at once, by Ctrl+O
-    (see `ReplApp.action_toggle_tool_call_detail`). Constructed with `markup=False`: a plain-`str`
+    fuller detail view — toggled globally, across every `ToolCallStatic` at once, by Ctrl+O.
+    Constructed with `markup=False`: a plain-`str`
     summary/detail (the common case -- arbitrary tool output: JSON, file paths, shell output,
     ...) must render verbatim, not be parsed as Textual console markup — an unescaped `[` in that
     text can otherwise be misread as the start of a markup tag and raise `MarkupError`. A
     `klorb.tools.tool.DiffPreview`/`ReadPreview`-backed call instead passes a pre-built
     `textual.content.Content` (styled via explicit spans, never markup) for `summary_content`/
-    `detail_content` — see `RenderingMixin._render_tool_result`.
+    `detail_content`.
 
-    `on_click`, when given, makes this widget's whole rendered area clickable — e.g. to push a
-    `DiffDetailScreen`/`ReadDetailScreen` overlay (`klorb.tui.panels.preview_screens`) showing
-    the call's full diff or full file. `None` (the default, and always the case for a plain
+    `on_click`, when given, makes this widget's whole rendered area clickable.
+    `None` (the default, and always the case for a plain
     string-only call) leaves clicking a no-op.
     """
 
@@ -151,11 +150,10 @@ while a tool call executes."""
 
 class RunningToolCallStatic(ToolCallStatic):
     """A tool call widget shown while the tool is still executing: displays the tool's
-    pre-execution summary (e.g. ``Bash: <intent>\\n$ <command>``) plus a crawling bright-white
+    pre-execution summary plus a crawling bright-white
     animation on the word "Running..." so the user knows the system hasn't frozen.
 
-    Inherits from `ToolCallStatic` so ``history.query(ToolCallStatic)`` finds it in the DOM
-    -- the Ctrl+O detail toggle and any other `ToolCallStatic`-aware query work unchanged.
+    Inherits from `ToolCallStatic` so ``history.query(ToolCallStatic)`` finds it in the DOM.
     Once the tool finishes, `finalize()` replaces the animated content with the final
     summary/detail text and stops the timer. Constructed with ``markup=False``: the tool
     label is arbitrary and must render verbatim, so per-character styling is applied via
@@ -213,9 +211,7 @@ class RunningToolCallStatic(ToolCallStatic):
         self.update(content)
 
     def set_detail_shown(self, show_detail: bool) -> None:
-        """Update the rendered content to the detail view if `show_detail`, else the summary.
-        While still running (not yet finalized), this is a no-op -- there's no detail view
-        to show until the tool call completes."""
+        """Update the rendered content to the detail view if `show_detail`, else the summary."""
         self._detail_shown = show_detail
         if self._finalized:
             self._apply_content()
@@ -258,8 +254,7 @@ _TURN_WAITING_TEXTS = (
     "Here we go...",
     "Preparing for takeoff...",
 )
-"""Phrases `TurnWaitingStatic` picks randomly from -- purely decorative, no meaning attaches to
-which one shows for a given turn."""
+"""Phrases `TurnWaitingStatic` picks randomly from."""
 
 
 class TurnWaitingStatic(CrawlAnimatedStatic):
@@ -268,8 +263,7 @@ class TurnWaitingStatic(CrawlAnimatedStatic):
     animation until the turn's own content starts arriving.
     `PromptSubmissionMixin._clear_turn_waiting_widget` removes it as soon as the first
     response/thinking chunk or the first actually-running tool call widget is mounted for the
-    turn, whichever comes first -- a tool call only counts once it's far enough along to mount
-    its own `<Tool use>` running indicator, not while its arguments are still streaming in.
+    turn, whichever comes first.
     """
 
     def __init__(self) -> None:

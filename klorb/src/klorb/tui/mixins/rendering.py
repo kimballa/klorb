@@ -46,24 +46,14 @@ REASONING_DETAILS_LABEL = "<Reasoning>"
 TOOL_USE_LABEL = "<Tool use>"
 
 _DIFF_PREVIEW_MAX_LINES = 8
-"""How many diff lines `RenderedToolCall.summary_content` shows inline for an edit/create call
-before truncating with a trailing `"..."` -- see `render_diff_content`. Ctrl+O's detail view and
-the click-to-expand overlay both show the full (untruncated) diff instead."""
+"""How many diff lines `RenderedToolCall.summary_content` shows inline before truncating."""
 
 
 class RenderingMixin(ReplAppBase):
-    """Response, thinking, and tool-call rendering/mounting into the history scroll --
-    see `ReplApp` for how this mixes into the concrete app class."""
+    """Response, thinking, and tool-call rendering/mounting into the history scroll."""
 
     def _mount_response_widget(self, initial_text: str) -> Markdown:
-        """Mount a new `Markdown` widget for a streaming response and return it. Also refreshes
-        the status bar's token tally (see `_update_status_bar`): a new placeholder `Message`
-        with its own `num_tokens` was just appended to the session for this chunk (see
-        `Session._send_and_receive.handle_chunk`), so the footer should reflect it immediately
-        rather than only once the whole turn finishes. Clears the turn's `TurnWaitingStatic`
-        first (see `_clear_turn_waiting_widget`): visible response text is real content, so the
-        "still working" placeholder has nothing left to stand in for.
-        """
+        """Mount a new `Markdown` widget for a streaming response and return it."""
         self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -74,16 +64,7 @@ class RenderingMixin(ReplAppBase):
         return widget
 
     def _update_response_widget(self, widget: Markdown, text: str) -> None:
-        """Update a streaming response `Markdown` widget with the latest accumulated `text`,
-        following the view to the bottom only if it was already pinned there before this change
-        (see `_history_pinned_to_bottom`), so a user who's scrolled up to reread earlier output
-        isn't yanked back down by every incoming chunk. `widget` is always still the last thing
-        mounted in the history at this point: `_send_prompt` starts a fresh widget rather than
-        reusing this one once a round boundary (a tool call) has passed, so there's nothing
-        mounted after it left to get stuck behind. Also refreshes the status bar (see
-        `_mount_response_widget`): the placeholder message's `num_tokens` grew along with
-        `text`.
-        """
+        """Update a streaming response `Markdown` widget with the latest accumulated `text`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -92,15 +73,7 @@ class RenderingMixin(ReplAppBase):
 
     def _mount_thinking_widget(self, initial_text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Thinking>` label followed by an italicized `Static`
-        widget for a streaming thinking block, and return `(body_widget, label_widget)`. The
-        body is styled italic via the `.thinking-body` CSS class rather than markup, and
-        constructed with `markup=False`: model thinking text is arbitrary and must render
-        verbatim, not be parsed as Textual console markup (an unescaped `[` in it can
-        otherwise be misread as the start of a markup tag and raise `MarkupError`). Also
-        refreshes the status bar (see `_mount_response_widget`): a new `role="thinking"`
-        placeholder message with its own `num_tokens` was just appended to the session. Clears
-        the turn's `TurnWaitingStatic` first, same as `_mount_response_widget`.
-        """
+        widget for a streaming thinking block, and return `(body_widget, label_widget)`."""
         self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -113,12 +86,7 @@ class RenderingMixin(ReplAppBase):
         return widget, label_widget
 
     def _update_thinking_widget(self, widget: Static, text: str) -> None:
-        """Update a streaming `<Thinking>` `Static` widget with the latest accumulated `text`,
-        following the view to the bottom only if it was already pinned there before this
-        change (see `_update_response_widget`) — the label mounted alongside `widget` never
-        changes after being set, so only the body needs updating here. Also refreshes the
-        status bar: the placeholder message's `num_tokens` grew along with `text`.
-        """
+        """Update a streaming `<Thinking>` `Static` widget with the latest accumulated `text`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -127,12 +95,7 @@ class RenderingMixin(ReplAppBase):
 
     def _mount_reasoning_details_widget(self, text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Reasoning>` label followed by an italicized `Static`
-        widget showing `text` (see `summarize_reasoning_details`), mirroring
-        `_mount_thinking_widget`'s label/body split and `markup=False` rationale, and return
-        `(body_widget, label_widget)`. Also refreshes the status bar: a new `role="thinking"`
-        placeholder message's `reasoning_details` was just set on the session (see
-        `Session._send_and_receive.handle_reasoning_details_chunk`).
-        """
+        widget showing `text`, and return `(body_widget, label_widget)`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(REASONING_DETAILS_LABEL, classes="reasoning-details-label")
@@ -144,8 +107,7 @@ class RenderingMixin(ReplAppBase):
         return widget, label_widget
 
     def _update_reasoning_details_widget(self, widget: Static, text: str) -> None:
-        """Update a `<Reasoning>` `Static` widget with the latest `text` (see
-        `summarize_reasoning_details`), mirroring `_update_thinking_widget`."""
+        """Update a `<Reasoning>` `Static` widget with the latest `text`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -153,11 +115,7 @@ class RenderingMixin(ReplAppBase):
         self._update_status_bar()
 
     def _render_tool_call(self, event: ToolCallEvent) -> RenderedToolCall:
-        """Render `event` as a `RenderedToolCall` — see `_render_tool_result`, which does the
-        actual work from `event`'s individual fields. Split out so `_render_restored_tool_call`
-        (reconstructing a finished call from persisted `Message`s rather than a live
-        `ToolCallEvent`) can share the same rendering logic.
-        """
+        """Render `event` as a `RenderedToolCall`."""
         return self._render_tool_result(
             event.name, event.args, event.result, event.error, event.raw_arguments)
 
@@ -165,25 +123,7 @@ class RenderingMixin(ReplAppBase):
         self, name: str, args: dict[str, Any], result: Any, error: str | None,
         raw_arguments: str | None,
     ) -> RenderedToolCall:
-        """Render one finished tool call as a `RenderedToolCall` — instantiating a fresh `Tool`
-        purely to call its pure `summary()`/`detail_view()`/`diff_preview()`/`read_preview()`
-        methods (`ToolRegistry.instantiate_tool()` is already a cheap, no-shared-state
-        operation; see docs/adrs/00021-tool-registry-instantiates-a-fresh-tool-per-call.md) — or via
-        the shared default formatters if `name` isn't a registered tool (e.g. a hallucinated
-        tool name, which `Session._run_tool_calls` already turned into `error`).
-
-        `raw_arguments is not None` means the model's `arguments` string failed to parse as
-        JSON before any tool ever ran (see `ToolCallEvent.raw_arguments`); that's rendered via
-        `default_invalid_tool_call_summary()`/`default_invalid_tool_call_detail()` instead,
-        showing the raw malformed text rather than the always-empty `args`.
-
-        A tool whose `diff_preview()`/`read_preview()` returns non-`None` (only the `EditFile`/
-        `CreateFile`/`Read*` families and their memory/scratchpad/skill counterparts) gets a
-        colored diff or numbered-content `Content` instead of `summary()`/`detail_view()`'s
-        plain text, plus an `on_click` that pushes the matching overlay
-        (`klorb.tui.panels.preview_screens`) -- see those two methods' docstrings on `Tool` for
-        the full contract. Every other tool renders exactly as before.
-        """
+        """Render one finished tool call as a `RenderedToolCall`."""
         if raw_arguments is not None:
             assert error is not None
             return RenderedToolCall(
@@ -226,18 +166,12 @@ class RenderingMixin(ReplAppBase):
             detail_content=tool.detail_view(args, result, error))
 
     def _open_diff_detail_screen(self, label: str, content: Content) -> None:
-        """Push `DiffDetailScreen` showing `content` (the same already-built full-diff `Content`
-        Ctrl+O's detail view shows) -- factored out of `_render_tool_result` purely so the
-        `on_click` closure it builds has a plain `() -> None` callable to hold, matching
-        `RenderedToolCall.on_click`'s type (`Screen.push_screen()` itself returns an awaitable,
-        not `None`)."""
+        """Push `DiffDetailScreen` showing `content`."""
         self.push_screen(DiffDetailScreen(label, content))
 
     def _open_read_detail_screen(self, preview: ReadPreview) -> None:
-        """Perform `preview`'s lazy full-subject read only now, at click time (see
-        `klorb.tools.tool.ReadPreview.open_full`), and push `ReadDetailScreen` with the result --
-        an in-overlay message instead if the read failed (e.g. the subject was deleted, moved, or
-        became unreadable since it was originally read)."""
+        """Perform `preview`'s lazy full-subject read and push `ReadDetailScreen` with the
+        result, or show an in-overlay error if the read fails."""
         try:
             full_view = preview.open_full()
         except Exception as exc:
@@ -250,16 +184,10 @@ class RenderingMixin(ReplAppBase):
             ReadDetailScreen(preview.label, content, scroll_to_line=full_view.scroll_to_line))
 
     def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
-        """Mount a left-justified `<Tool use>` label (styled via the `.tool-call-label` CSS
-        class, matching `<Thinking>`'s label/body split in `_mount_thinking_widget`) followed
-        by a `ToolCallStatic` for one finished tool call, and return `(widget, label_widget)`.
-        Applies the current global detail-shown state (see `action_toggle_tool_call_detail`)
-        so a call rendered while detail view is already active shows detail immediately rather
-        than a summary the user would have to toggle past. Also refreshes the status bar (see
-        `_mount_response_widget`): `Session._run_tool_calls` has already appended this call's
-        `role="tool_response"` message (with its own `num_tokens`) by the time
-        `callbacks.on_tool_call` — and so this method — runs.
-        """
+        """Mount a `<Tool use>` label followed by a `ToolCallStatic` for one finished tool call,
+        and return `(widget, label_widget)`. Applies the current detail-shown state so a call
+        rendered while detail mode is already active shows detail immediately. Refreshes the
+        status bar to include the tool response's token count."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
@@ -273,13 +201,9 @@ class RenderingMixin(ReplAppBase):
         return widget, label_widget
 
     def _render_tool_call_summary(self, name: str, args: dict[str, Any]) -> str:
-        """Render a tool call's pre-execution summary (the label shown in the running
-        indicator) by calling `Tool.summary(args)` with no `result` or `error`. Every
-        tool's `summary()` produces a meaningful label when called this way -- e.g.
-        ``Bash: <intent>\\n$ <command>`` for BashTool -- since the result/error suffix is
-        only appended when those parameters are non-`None`. Falls back to the module-level
-        `default_tool_call_summary()` if the tool name isn't registered.
-        """
+        """Render a tool call's pre-execution summary by calling `Tool.summary(args)` with no
+        `result` or `error`. Falls back to the module-level `default_tool_call_summary()` if
+        the tool name isn't registered."""
         registry = self._session.tool_registry
         try:
             if registry is None:
@@ -292,15 +216,10 @@ class RenderingMixin(ReplAppBase):
     def _mount_running_tool_call_widget(
         self, call_id: str, summary_text: str,
     ) -> RunningToolCallStatic:
-        """Mount a ``<Tool use>`` label followed by a `RunningToolCallStatic` showing the
-        tool's pre-execution label with a crawling ``Running...`` animation. Stores the
-        widget in `_running_tool_call_widgets` keyed by `call_id` so the eventual
-        `handle_tool_call` completion callback can finalize it in place rather than mounting
-        a duplicate. Also tracks it in `_tool_call_widgets` for the Ctrl+O detail toggle. Clears
-        the turn's `TurnWaitingStatic` first, same as `_mount_response_widget`: this only mounts
-        once a call is far enough along to actually start running, not while its arguments are
-        still streaming in, so it's a meaningful "no longer just waiting" signal.
-        """
+        """Mount a `<Tool use>` label followed by a `RunningToolCallStatic` with a crawling
+        animation. Stores the widget keyed by `call_id` so the completion callback can
+        finalize it in place rather than mounting a duplicate. Tracks it in
+        `_tool_call_widgets` for the Ctrl+O detail toggle."""
         self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -315,9 +234,7 @@ class RenderingMixin(ReplAppBase):
         return widget
 
     def _mount_turn_waiting_widget(self) -> TurnWaitingStatic:
-        """Mount a `TurnWaitingStatic` into history, showing an animated "still working" notice,
-        cleared by `_clear_turn_waiting_widget` rather than removed directly by its caller.
-        """
+        """Mount a `TurnWaitingStatic` into history showing an animated "still working" notice."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget = TurnWaitingStatic()
@@ -326,13 +243,7 @@ class RenderingMixin(ReplAppBase):
         return widget
 
     def _clear_turn_waiting_widget(self) -> None:
-        """Remove `self._turn_waiting_widget` (if it's still mounted) and stop its timer. Called
-        from the first of `_mount_response_widget`/`_mount_thinking_widget`/
-        `_mount_running_tool_call_widget` to fire for the in-flight turn, and again
-        (idempotently -- a no-op once `_turn_waiting_widget` is already `None`) from
-        `_finish_turn` as a fallback for a turn that ends without ever reaching any of those
-        (e.g. an error before any content streamed).
-        """
+        """Remove `self._turn_waiting_widget` (if it's still mounted) and stop its timer."""
         if self._turn_waiting_widget is None:
             return
         widget = self._turn_waiting_widget
@@ -340,14 +251,10 @@ class RenderingMixin(ReplAppBase):
         widget.remove_self()
 
     def _running_tool_call_anchor(self) -> Static | None:
-        """The `<Tool use>` label widget mounted just above the tool call currently running,
-        if any — so an interaction record (a permission ask / question / escalation raised from
-        inside that call's `apply()`) can be floated above the whole `<Tool use>` block that
-        triggered it, rather than appended below its `Running…` indicator. Tool calls run
-        serially, so at most one running-tool widget is un-finalized at a time; this returns
-        that widget's immediately-preceding `.tool-call-label` sibling (or the running widget
-        itself, defensively, if no such label precedes it), and `None` when nothing is running.
-        """
+        """The `<Tool use>` label widget mounted just above the currently-running tool call,
+        if any. Tool calls run serially, so at most one is un-finalized at a time; this returns
+        that widget's immediately-preceding `.tool-call-label` sibling, and `None` when nothing
+        is running."""
         if not self._running_tool_call_widgets:
             return None
         widget = list(self._running_tool_call_widgets.values())[-1]
@@ -366,32 +273,17 @@ class RenderingMixin(ReplAppBase):
         self, widget: RunningToolCallStatic, rendered: RenderedToolCall,
     ) -> None:
         """Stop the running indicator animation and replace it with the final
-        summary/detail content. Called from `handle_tool_call` via `call_from_thread` when a
-        tool call completes -- the widget was mounted earlier by
-        `_mount_running_tool_call_widget` and is already in the history scroll and the
-        Ctrl+O tracking list."""
+        summary/detail content."""
         widget.finalize(rendered.summary_content, rendered.detail_content, rendered.on_click)
         widget.set_detail_shown(self._tool_call_detail_shown)
         self._update_status_bar()
 
     def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
-        """Re-render `messages` — a previous session's history, already loaded onto
-        `self._session` by `_maybe_restore_latest_session` (or `load_recent_session`) — into the
-        history scroll, so a
-        restored conversation reads the same way it would have live: one `Static`/`Markdown`/
-        `ToolCallStatic` per user/assistant/thinking/tool-use message, in original order, via
-        the same `_mount_response_widget`/`_mount_thinking_widget`/`_mount_tool_call_widget`
-        helpers a live turn uses. A `"thinking"` message's `reasoning_details`, if it carries
-        one, is rendered right after it via `_mount_reasoning_details_widget`, subject to the
-        same `summarize_reasoning_details()` suppression a live turn applies.
-        `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching how they're
-        never rendered live either (see `Session._ensure_system_message`/
-        `_ensure_tool_defs_message`). A `role="tool_response"` message is rendered together
-        with its matching `role="tool_use"` entry, via `_render_restored_tool_call`, rather
-        than on its own. A `role="tool_use"` message's own `content`, if non-empty, is rendered
-        as a response widget ahead of its tool calls -- it can carry commentary the model sent
-        alongside those calls (see `klorb.agents.policy._assistant_authored_text`).
-        """
+        """Re-render `messages` — a previous session's history — into the history scroll so
+        a restored conversation reads the same way it would have live.  System/tool_defs
+        bookkeeping messages are skipped.  Tool responses are rendered together with their
+        matching tool_use entry.  A tool_use message's non-empty content is rendered as a
+        response widget ahead of its tool calls."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         responses_by_call_id = {
             message.tool_call_id: message for message in messages
@@ -437,18 +329,9 @@ class RenderingMixin(ReplAppBase):
     def _render_restored_tool_call(
         self, call: ToolCallRequest, response: ChatMessage | None,
     ) -> RenderedToolCall:
-        """Reconstruct a finished tool call's `RenderedToolCall` for `_mount_restored_history`
-        from persisted `Message`s alone — `call.arguments` (the model's raw JSON-encoded
-        arguments) and `response.content`, a JSON-serialized `klorb.tools.response_envelope.
-        ToolResponseEnvelope` (see `Session._run_tool_calls`), the only form either survives in
-        once persisted. A `response.content` predating this envelope format (a session saved by
-        an older klorb version) falls back to the old `"Error: {message}"`-or-bare-string/JSON
-        encoding, best-effort: a successful string result that happens to start with
-        `"Error: "` is indistinguishable there from an actual failure, since the two were folded
-        into the same `content` string on write; every other pre-envelope shape round-trips
-        exactly. A missing `response` (a truncated or hand-edited save file) renders as a call
-        with a `None` result rather than raising.
-        """
+        """Reconstruct a finished tool call's `RenderedToolCall` from persisted `Message`s
+        for `_mount_restored_history`. A missing `response` renders as a `None` result
+        rather than raising."""
         try:
             args = json.loads(call.arguments) if call.arguments else {}
             if not isinstance(args, dict):

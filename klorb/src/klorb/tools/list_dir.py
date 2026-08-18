@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that enumerates the subdirectories and files of a directory for a model, so an agent
-can orient itself in the local filesystem."""
+"""Lists the immediate subdirectories and files of a directory."""
 
 import logging
 from typing import Any
@@ -13,16 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 class ListDirTool(Tool):
-    """Lists the immediate subdirectories and files of a directory, each as a bare name (not a
-    full path) sorted alphabetically.
+    """Lists the immediate subdirectories and files of a directory.
 
-    `dirname` is resolved and checked against `readDirs` (see
-    `klorb.permissions.workspace.resolve_and_evaluate_read`) before the directory is opened —
-    confined to `SessionConfig.workspace.path` unless `SessionConfig.workspace.trusted`,
-    exactly like `ReadFileTool`. A relative `dirname` is resolved against the workspace root,
-    not the process's current working directory. An empty string means the workspace root
-    itself. The result's `child_count` is `len(subdirs) + len(files)`, so a model doesn't have
-    to count either list itself just to know how many entries a directory has.
+    `dirname` is resolved and checked against `readDirs` before the directory is opened.
+    A relative `dirname` is resolved against the workspace root, not the process's current
+    working directory. An empty string means the workspace root itself.
     """
 
     def name(self) -> str:

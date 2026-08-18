@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Domain access control: a `PermissionsTable` resource kind governing which domains the
 `WebFetch` tool may retrieve content from, keyed on the domain string (lowercased, port
-stripped). See docs/specs/web-fetch-tool.md and docs/specs/permissions.md.
+stripped).
 """
 
 import ipaddress
@@ -18,7 +18,7 @@ DomainSpec = str
 
 class DomainRules(BaseModel):
     """One ``domains`` config key's ``deny``/``ask``/``allow`` rule lists of domain strings.
-    On disk each entry is a plain domain string (e.g. ``"example.com"``, ``"*.example.com"``),
+    On disk each entry is a plain domain string,
     not a nested array. Immutable after construction, like ``SkillRules``.
     """
 
@@ -78,7 +78,7 @@ def _domain_matches(rule: str, candidate: str) -> bool:
     if rule.endswith(".*") and _is_ip_address(candidate):
         prefix = rule[:-2]  # strip ".*"
         try:
-            # Pad partial prefix to full IP (e.g. "172.16" -> "172.16.0.0")
+            # Pad partial prefix to full IP
             octets = prefix.split(".")
             while len(octets) < 4:
                 octets.append("0")

@@ -176,9 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _current_exit_status() -> int:
     """The exit status klorb is about to end with, inferred from whatever exception (if any) is
-    currently unwinding through `main()`'s `finally` block -- 0 if none, a `SystemExit`'s own
-    integer `code`, or 1 for anything else (a non-int `SystemExit.code`, or any other
-    propagating exception)."""
+    currently unwinding through `main()`'s `finally` block."""
     exc = sys.exc_info()[1]
     if exc is None:
         return 0
@@ -195,14 +193,12 @@ def main() -> None:
 
     `klorb init ...` is special-cased ahead of the normal argument parsing below: it's only
     recognized when `init` is the very first argument (`sys.argv[1]`), so it can't be
-    confused with an ordinary flag value or one-shot prompt appearing later in `argv` — see
-    `docs/specs/klorb-init.md`.
+    confused with an ordinary flag value or one-shot prompt appearing later in `argv`.
 
-    The current workspace's registration/trust state is resolved (never bootstrapped — that
-    needs the interactive TUI, see `klorb.tui.ReplApp._resolve_workspace_trust`) via a
+    The current workspace's registration/trust state is resolved (never bootstrapped) via a
     fresh `TrustManager` before `load_process_config()` runs, so both a headless one-shot
     prompt and the REPL honor whatever trust decision a previous interactive session recorded
-    for this directory. See docs/specs/projects-and-trust.md.
+    for this directory.
 
     For a one-shot prompt, calls `klorb.token_estimate.configure_tiktoken_cache_env()` once
     logging is configured (so its log message is actually visible on stderr and, if enabled,
@@ -210,12 +206,11 @@ def main() -> None:
     present. For an interactive session, that same call is instead made by
     `klorb.tui.ReplApp.on_mount()` once the Textual app is running, so its log message
     routes through the app's log (or the session log file) rather than leaking to raw stderr
-    ahead of the TUI taking over the terminal -- see
-    docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md.
+    ahead of the TUI taking over the terminal.
     """
     load_dotenv()
     # Call `configure_minimal_logging()` immediately after before argument parsing or subcommand
-    # dispatch -- so a log call anywhere in that window still reaches stderr.
+    # dispatch.
     is_server: bool = bool(sys.argv and len(sys.argv) > 1 and sys.argv[1] == SERVER_SUBCOMMAND)
     configure_minimal_logging(is_server)
 
@@ -321,7 +316,7 @@ def main() -> None:
                 """No-op: `run_one_shot()`'s own loop (`Session.turns`) already re-checks the
                 queue after every turn on this same thread, so nothing needs to be pushed here.
                 Registering only tells `deliver_event_message` a host is present, so it enqueues
-                the message instead of raising -- there is nothing to actively wake up."""
+                the message instead of raising."""
                 logger.debug(
                     "Session %s woken by an idle event; run_one_shot's own loop will drain it.",
                     session.id)

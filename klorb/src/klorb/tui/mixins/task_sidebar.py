@@ -20,15 +20,12 @@ logger = logging.getLogger(__name__)
 
 class TaskSidebarMixin(ReplAppBase):
     """Ctrl+T shows or hides a docked right-hand panel listing this session's chainlink todo
-    items -- see `klorb.tui.widgets.task_sidebar.TaskSidebar` and
-    docs/specs/task-sidebar-panel.md."""
+    items."""
 
     def action_toggle_task_sidebar(self) -> None:
-        """Ctrl+T: show or hide the task sidebar. Showing it triggers an immediate refresh,
-        since the list may be stale (or never fetched) from whenever it was last hidden. Mutually
-        exclusive with the subagents panel (see `klorb.tui.mixins.subagents_panel.
-        SubagentsPanelMixin.action_toggle_subagents_panel` for the reverse direction): both dock
-        the same right-hand slot, so showing this one hides that one."""
+        """Ctrl+T: show or hide the task sidebar. Showing it triggers an immediate refresh since
+        the list may be stale. Mutually exclusive with the subagents panel since both dock the
+        same right-hand slot."""
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         if self._active_sidebar == "tasks":
             self._active_sidebar = None
@@ -43,19 +40,15 @@ class TaskSidebarMixin(ReplAppBase):
 
     def _maybe_refresh_task_sidebar_after_tool_call(self, event: ToolCallEvent) -> None:
         """Refresh the task sidebar after a finished tool call that could have changed what it
-        shows, but only while it's actually visible -- called from `PromptSubmissionMixin.
-        handle_tool_call` for every finished tool call in a turn."""
+        shows, but only while it's actually visible."""
         if self._active_sidebar == "tasks" and event.name in TASK_TOOL_NAMES:
             self._refresh_task_sidebar()
 
     @work(thread=True)
     def _refresh_task_sidebar(self) -> None:
-        """Fetch this session's chainlink issues (open and closed) and push them into the
-        `TaskSidebar` widget. Runs on a worker thread since `ChainlinkClient` shells out to the
-        `chainlink` binary synchronously (see `klorb.tools.tasks.common`); no binary, or any
-        `ChainlinkError`/`ValueError` the fetch raises, shows the sidebar's own "unavailable"
-        message instead of raising into the UI.
-        """
+        """Fetch this session's chainlink issues and push them into the `TaskSidebar` widget.
+        Runs on a worker thread since `ChainlinkClient` shells out to the `chainlink` binary
+        synchronously. Shows the sidebar's "unavailable" message if the fetch fails."""
         if not chainlink_available():
             self.call_from_thread(self._show_task_sidebar_unavailable)
             return

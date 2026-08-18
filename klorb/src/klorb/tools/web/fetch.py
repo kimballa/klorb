@@ -1,14 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that fetches content from a URL, with optional HTML-to-markdown cleaning and a
 size-spilling mechanism that keeps oversized results out of the context window.
-
-Before fetching, the tool screens the target domain against a session-scoped `webDomains`
-permission table (`deny`/`ask`/`allow`), following the same pattern the existing
-`readDirs`/`writeDirs`/`commandRules`/`skillRules` tables use — see
-`klorb.session.SessionConfig.web_domain_rules`.
-
-The tool extends `InterruptibleTool` — network I/O can take a long time, and a
-Ctrl+C/Escape should reach it mid-flight.
 """
 
 import logging

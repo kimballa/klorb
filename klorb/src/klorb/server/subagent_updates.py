@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Pure function mapping a session tree's live subagent state onto the `_klorb/subagentTree`
-ext-method result payload -- see docs/specs/subagents.md's "Subagents panel (VSCode)" section.
-Kept free of ACP/`KlorbAcpAgent` dependencies, mirroring `klorb.server.plan_updates`, so it can be
+ext-method result payload. Kept free of ACP/`KlorbAcpAgent` dependencies so it can be
 unit-tested directly against a `Session` tree.
 """
 
@@ -18,12 +17,9 @@ def _is_aborted(handle_output: str | None) -> bool:
 def build_subagent_tree_snapshot(root: Session) -> dict[str, Any]:
     """Build the `{"nodes": [...]}` payload for a `_klorb/subagentTree` ext-method result: one
     entry per session in the tree rooted at `root` (`root` itself included, first, with
-    `state`/`aborted` reporting no subagent lifecycle since nothing created it), in the same
-    pre-order/creation-order `klorb.tui.widgets.subagents_panel.SubagentsPanel` renders. Each
-    entry carries enough of that session's own `SessionConfig`/token tally for a client to render
-    a header/status-row for the *selected* session without a second round trip, the same fields
-    `klorb.tui.mixins.status_bar.StatusBarMixin._update_status_bar`/`ReplApp.format_title` read
-    off `_selected_session` today.
+    `state`/`aborted` reporting no subagent lifecycle since nothing created it), in pre-order.
+    Each entry carries enough of that session's own `SessionConfig`/token tally for a client to
+    render a header/status-row for the *selected* session without a second round trip.
 
     Every node's `"id"` is its own `Session.id`, including `root`'s.
     """

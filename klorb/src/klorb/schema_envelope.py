@@ -1,19 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Shared helpers for the schema-versioning envelope used by every klorb JSON file that gets
-persisted to disk and reloaded later (config files, saved session state, etc.).
-
-Every such file is one JSON object with a top-level `schema` key alongside its data:
-
-```json
-{
-  "schema": {"name": "klorb-config", "version": "1.0.0"},
-  "model": "openai/gpt-5-nano"
-}
-```
-
-`name` identifies the file type and `version` its format, so a future klorb version can
-detect an old file and upgrade it instead of failing to parse it. See
-docs/specs/persisted-json-schema-versioning.md for the full convention.
+persisted to disk and reloaded later. See docs/specs/persisted-json-schema-versioning.md.
 """
 
 import json
@@ -36,18 +23,14 @@ SCHEMA_KEY = "schema"
 COMPACT_LIST_KEYS = ("allow", "ask", "deny")
 """Object keys whose list value gets one-element-per-line formatting where each element is
 itself emitted on a single line, rather than the whole element tree being exploded across many
-indented lines (see `_ConfigJSONEncoder`). These are the permission-rule lists —
-`commandRules.allow`, `readDirs.deny`, etc. — whose elements (an argv token pattern like
-`["python", "-m", "pytest", "**"]`, or a directory path string) read far better kept together on
-one line than with every token on its own. See docs/specs/process-and-session-config.md's
-"On-disk key naming" section."""
+indented lines. These are the permission-rule lists whose elements read far better kept together
+on one line than with every token on its own."""
 
 
 class _OneLine:
     """Marks a value that `_ConfigJSONEncoder` must serialize compactly on a single line even
-    though the surrounding document is pretty-printed. Wrapping (rather than pre-serializing to a
-    string) lets the normal encoder machinery run for the enclosing list — one wrapped element per
-    indented line — while the element itself stays collapsed."""
+    though the surrounding document is pretty-printed. Wrapping lets the normal encoder machinery
+    run for the enclosing list while the element itself stays collapsed."""
 
     __slots__ = ("value",)
 
@@ -59,7 +42,7 @@ def _wrap_compact_list_elements(node: Any) -> Any:
     """Return a copy of `node` in which every list found under a `COMPACT_LIST_KEYS` key has each
     of its elements wrapped in `_OneLine`, so `_ConfigJSONEncoder` emits that element on a single
     line. Recurses through the rest of the structure so a permission-rule list is collapsed no
-    matter how deeply nested (e.g. under `sessionDefaults.commandRules`)."""
+    matter how deeply nested."""
     if isinstance(node, dict):
         result: dict[str, Any] = {}
         for key, value in node.items():
@@ -74,12 +57,11 @@ def _wrap_compact_list_elements(node: Any) -> Any:
 
 
 class _ConfigJSONEncoder(json.JSONEncoder):
-    """Pretty-printing encoder (via `indent`) that additionally collapses any `_OneLine`-wrapped
-    value onto a single line. Each such value is emitted as a unique placeholder string during the
-    normal indented encode, then swapped for its compact one-line serialization in a final pass —
-    a self-contained way to get per-node formatting that the stdlib `json` module otherwise can't
-    express. The placeholder carries a per-instance random token so it can't collide with real
-    string data in the document."""
+    """Pretty-printing encoder that additionally collapses any `_OneLine`-wrapped value onto a
+    single line. Each such value is emitted as a unique placeholder string during the normal
+    indented encode, then swapped for its compact one-line serialization in a final pass. The
+    placeholder carries a per-instance random token so it can't collide with real string data in
+    the document."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -111,24 +93,15 @@ class SchemaInfo(BaseModel):
 def parse_versioned_json(
     text: str, *, expected_schema_name: str, source: str, warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Parse already-read `text` as a schema-enveloped JSON document (see module docstring),
-    validating and stripping its `schema` block exactly like `read_versioned_json` does for an
-    on-disk file — this is what that function delegates to once it has the file's contents in
-    hand, and it's also what a caller reading a *packaged* resource via `importlib.resources`
-    (which yields text, not a `Path`) should use directly, e.g.
-    `klorb.process_config`'s built-in-defaults layer. `source` identifies `text`'s origin
-    (a `Path`, or a resource name) for the log messages below only.
+    """Parse already-read `text` as a schema-enveloped JSON document, validating and stripping its
+    `schema` block exactly like `read_versioned_json` does for an on-disk file. `source` identifies
+    `text`'s origin for the log messages below only.
 
-    Text that isn't valid JSON at all (a hand-edited config file with a typo, a torn write from
-    a crashed process, etc.) is treated the same as a schema-name mismatch: an error is logged
-    naming `source`, the parse exception, and a `format_json_error_context` excerpt of the
-    surrounding lines, and `{}` is returned rather than letting `json.JSONDecodeError`
-    propagate — one malformed layer must not take down the whole process, since every caller of
-    this helper merges several independently-sourced layers (see
-    `klorb.process_config.load_process_config`) where the rest are still worth loading. If
-    `warnings` is given, the same human-readable message is appended to it so a caller can
-    surface it somewhere a user will actually see it (a log line alone is easy to miss) — see
-    `ProcessConfig.config_warnings`.
+    Text that isn't valid JSON at all is treated the same as a schema-name mismatch: an error is
+    logged naming `source`, the parse exception, and a `format_json_error_context` excerpt of the
+    surrounding lines, and `{}` is returned rather than letting `json.JSONDecodeError` propagate.
+    If `warnings` is given, the same human-readable message is appended to it so a caller can
+    surface it somewhere a user will actually see it.
     """
     try:
         contents: dict[str, Any] = json.loads(text)
@@ -169,8 +142,7 @@ def read_versioned_json(
     accepted, with its keys returned as-is, since files like `klorb-config.json` are
     hand-authored and may omit it; this is logged at debug level rather than treated as an
     error. A file that isn't valid JSON at all logs an error and is likewise discarded (`{}`)
-    rather than raising — see `parse_versioned_json`, which this delegates to, including for
-    what `warnings` (if given) collects.
+    rather than raising.
     """
     if not path.is_file():
         logger.debug("No file at %s; skipping.", path)
@@ -184,23 +156,19 @@ def read_versioned_json(
 def write_versioned_json(
     path: Path, data: dict[str, Any], *, schema_name: str, schema_version: str,
 ) -> None:
-    """Write `data` to `path` as a schema-enveloped JSON file (see module docstring),
-    creating `path`'s parent directory if it doesn't exist yet.
+    """Write `data` to `path` as a schema-enveloped JSON file, creating `path`'s parent directory
+    if it doesn't exist yet.
 
-    `data` must not itself contain a `SCHEMA_KEY` ("schema") key — that would silently collide
-    with, and be shadowed by, the envelope's own `schema` block; raises `ValueError` if it does,
-    rather than silently discarding the caller's key.
+    `data` must not itself contain a `SCHEMA_KEY` key — that would silently collide with, and be
+    shadowed by, the envelope's own `schema` block; raises `ValueError` if it does, rather than
+    silently discarding the caller's key.
 
     Writes atomically: the full contents are written to a temporary file in `path`'s own parent
-    directory (so the final `os.replace()` is same-filesystem and atomic), then renamed onto
-    `path`. This matters because `path` may be read again moments later by another tool call in
-    the same turn — a process interrupted mid-write must never leave a torn, unparseable config
-    file behind.
+    directory, then renamed onto `path`.
 
     The document is pretty-printed with two-space indentation, except that the permission-rule
-    lists keyed by `COMPACT_LIST_KEYS` (`allow`/`ask`/`deny`) get each of their elements collapsed
-    onto a single line (see `_ConfigJSONEncoder`) so an argv token pattern like
-    `["python", "-m", "pytest", "**"]` stays readable on one line instead of one token per line.
+    lists keyed by `COMPACT_LIST_KEYS` get each of their elements collapsed onto a single line so
+    an argv token pattern stays readable on one line instead of one token per line.
     """
     if SCHEMA_KEY in data:
         raise ValueError(f"data already contains a {SCHEMA_KEY!r} key; refusing to overwrite it")

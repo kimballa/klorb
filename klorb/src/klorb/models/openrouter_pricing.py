@@ -1,13 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Live per-model pricing lookups against OpenRouter's public models listing.
-
-Unlike the rest of a model's data (capabilities, family/version, ...), published cost per
-token can change at any time -- providers reprice, promotional rates expire -- so it is
-deliberately never baked into a model's `klorb-model` JSON file (see
-docs/adrs/00100-fetch-model-pricing-live-not-from-json.md). `fetch_openrouter_pricing()` asks
-OpenRouter for the current number instead, each time a caller (today, only "Show model
-info" — see `klorb.tui.commands.model_info_commands`) wants to display it.
-"""
+"""Live per-model pricing lookups against OpenRouter's public models listing."""
 
 import json
 import logging
@@ -23,20 +15,18 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_MODELS_ENDPOINT = f"{OPENROUTER_BASE_URL}/models"
 DEFAULT_PRICING_FETCH_TIMEOUT = 5.0
-"""Default socket timeout (seconds) for `fetch_openrouter_pricing()` — short enough that a
-"Show model info" command doesn't hang the UI for long if OpenRouter is unreachable."""
+"""Default socket timeout (seconds) for `fetch_openrouter_pricing()`."""
 
 MAX_PRICING_REQUESTS_PER_SECOND = 8.0
 """Ceiling on how many `fetch_openrouter_pricing()` calls `fetch_openrouter_pricing_for_models()`
-issues per second, so looking up pricing for a long model list (e.g. `klorb models --costs`)
-doesn't hammer OpenRouter with a burst of near-simultaneous requests. Edit by hand if
-OpenRouter's actual rate limit ever changes."""
+issues per second, so looking up pricing for a long model list doesn't hammer OpenRouter with a
+burst of near-simultaneous requests. Edit by hand if OpenRouter's actual rate limit ever
+changes."""
 
 
 class ModelPricing(BaseModel):
-    """A model's cost per million tokens ("MTok") sent/received, as reported live by
-    OpenRouter's models listing at the moment it was fetched — not a stored, potentially
-    stale fact about the model."""
+    """A model's cost per million tokens sent/received, as reported live by
+    OpenRouter's models listing at the moment it was fetched."""
 
     input_cost_per_mtok: float
     output_cost_per_mtok: float
@@ -52,9 +42,8 @@ def fetch_openrouter_pricing(
 
     Returns `None` — never raises — if the request fails, times out, the response doesn't
     parse, or `model_name` isn't listed: this is best-effort live data for a UI display, not
-    something any turn depends on. Blocking (uses `urllib.request` rather than an async HTTP
-    client); callers on the Textual event loop should run it off-thread (e.g.
-    `asyncio.to_thread`) rather than call it directly.
+    something any turn depends on. Blocking; callers on the Textual event loop should run it
+    off-thread rather than call it directly.
     """
     try:
         with urllib.request.urlopen(OPENROUTER_MODELS_ENDPOINT, timeout=timeout) as response:
@@ -86,10 +75,8 @@ def fetch_openrouter_pricing_for_models(
     max_requests_per_second: float = MAX_PRICING_REQUESTS_PER_SECOND,
 ) -> dict[str, ModelPricing | None]:
     """Look up pricing for every name in `model_names`, one `fetch_openrouter_pricing()` call
-    per model, throttled to at most `max_requests_per_second` requests per second (see
-    `MAX_PRICING_REQUESTS_PER_SECOND`). Returns a dict keyed by model name; a name whose lookup
-    failed (network error, unlisted model, malformed response — see `fetch_openrouter_pricing`)
-    maps to `None`.
+    per model, throttled to at most `max_requests_per_second` requests per second. Returns a
+    dict keyed by model name; a name whose lookup failed maps to `None`.
     """
     min_interval = 1.0 / max_requests_per_second
     results: dict[str, ModelPricing | None] = {}

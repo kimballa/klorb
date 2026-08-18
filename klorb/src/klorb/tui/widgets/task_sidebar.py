@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`TaskSidebar`: a docked, togglable right-hand panel listing this session's chainlink todo
-items -- see `klorb.tui.mixins.task_sidebar.TaskSidebarMixin` (Ctrl+T) and
-docs/specs/task-sidebar-panel.md.
+items. See docs/specs/task-sidebar-panel.md.
 """
 
 from typing import Any
@@ -12,8 +11,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 TASK_SIDEBAR_WIDTH = 36
-"""Fixed cell width (border-box) for the docked sidebar -- wide enough for a short task title
-alongside its `#id` and star marker without eating too much of the history column."""
+"""Fixed cell width (border-box) for the docked sidebar."""
 
 _HEADER_ID = "task-sidebar-header"
 _BODY_ID = "task-sidebar-body"
@@ -23,17 +21,15 @@ _EMPTY_MESSAGE = "No tracked tasks."
 _UNAVAILABLE_MESSAGE = "Task tracking is not available in this workspace."
 
 _CURRENT_TASK_MARKER = "★ "
-"""Prefixed to the session's current tracked task (`Session.cur_chainlink_task_id`) -- a filled
-star, `"★"`, so it stands out from the plain two-space indent every other row gets."""
+"""Prefixed to the session's current tracked task (`Session.cur_chainlink_task_id`)."""
 _NOT_CURRENT_TASK_MARKER = "  "
 
 _CLOSED_STYLE = "dim strike"
-"""Rich style applied to a closed issue's row -- faded and struck-through, per docs/specs/task-
-sidebar-panel.md."""
+"""Rich style applied to a closed issue's row."""
 
 
 class TaskSidebar(VerticalScroll, can_focus=False):
-    """Lists this session's chainlink todo items (see docs/specs/chainlink-task-tracking.md),
+    """Lists this session's chainlink todo items,
     docked to the right edge of the screen and hidden until `Ctrl+T`
     (`TaskSidebarMixin.action_toggle_task_sidebar`) first shows it. Open issues render plainly;
     closed issues render dim and struck-through (`_CLOSED_STYLE`); whichever issue matches the
@@ -66,7 +62,7 @@ class TaskSidebar(VerticalScroll, can_focus=False):
         # `markup=False`: an issue title is arbitrary text (chainlink imposes no character
         # restrictions), so a literal `[` in one must render verbatim rather than be parsed as
         # Textual console markup -- fixed at construction time and inherited by every later
-        # `update()` call on this same widget (see `Widget.__init__`'s `_render_markup`).
+        # `update()` call on this same widget.
         yield Static(_EMPTY_MESSAGE, id=_BODY_ID, markup=False)
 
     def show_tasks(self, issues: list[dict[str, Any]], cur_task_id: int | None) -> None:
@@ -85,8 +81,7 @@ class TaskSidebar(VerticalScroll, can_focus=False):
         body.update(text)
 
     def show_unavailable(self) -> None:
-        """Show `_UNAVAILABLE_MESSAGE` in place of a task list -- no `chainlink` binary found,
-        or the refresh otherwise failed (see `TaskSidebarMixin._refresh_task_sidebar`)."""
+        """Show `_UNAVAILABLE_MESSAGE` in place of a task list."""
         body = self.query_one(f"#{_BODY_ID}", Static)
         body.update(Text(_UNAVAILABLE_MESSAGE, style="dim"))
 

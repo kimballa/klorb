@@ -17,9 +17,7 @@ from klorb.tools.util.gitignore import GitignoreFilter
 
 
 def _wait_until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
-    """Poll `predicate` until it's true or `timeout` seconds elapse -- there's no async pilot to
-    drive here (`WorkspaceIndexer` does its work on a real background thread), so a short
-    synchronous poll loop is the direct equivalent."""
+    """Poll `predicate` until it's true or `timeout` seconds elapse."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -45,8 +43,7 @@ def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "embedding_model_available", lambda: True)
     monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _FakeEmbeddingModel())
     monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
-    # try_gpu_embedding_model() is a real function (not a mockable-by-proxy indirection like
-    # get_embedding_model()/EmbeddingModel() above): it calls embedding.py's own EmbeddingModel
+    # try_gpu_embedding_model() is a real function: it calls embedding.py's own EmbeddingModel
     # reference internally, unaffected by patching indexer_module.EmbeddingModel. Default it to
     # "no GPU" so run_foreground_scan()'s now-GPU-by-default tests exercise the CPU fallback path
     # deterministically, regardless of what's actually installed on the machine running the
@@ -158,10 +155,7 @@ def test_close_during_an_in_flight_scan_does_not_log_a_scan_failure(
     """Regression test: `close()` used to close the store immediately, while `start()`'s
     background thread was still mid-scan; the scan's next store call then raised
     `pysqlite3.dbapi2.ProgrammingError`, caught by `_begin_ownership`'s own handler and logged as
-    "Initial search index scan failed" -- a real bug (an abandoned scan closed out from under
-    itself), just not a process crash, since that handler already existed. `close()` must signal
-    and join the background thread before touching the store, so closing never races a still-
-    running scan's own store calls."""
+    "Initial search index scan failed"."""
     for i in range(30):
         (tmp_path / f"file_{i}.py").write_text(f"def fn_{i}():\n    return {i}\n")
 
@@ -177,9 +171,8 @@ def test_close_during_an_in_flight_scan_does_not_log_a_scan_failure(
         workspace_indexer.start()
         assert _wait_until(workspace_indexer.is_owner)
         workspace_indexer.close()  # closes while the 30-file scan is still very likely in flight
-        # close() itself may not wait for the background thread (that's the bug under test), so
-        # give it a beat to reach its next store call -- the same shape as _wait_until, just
-        # polling for the log line to (not) appear rather than a state predicate.
+        # close() itself may not wait for the background thread, so
+        # give it a beat to reach its next store call.
         time.sleep(1.0)
 
     assert "Initial search index scan failed" not in caplog.text
@@ -260,14 +253,14 @@ def test_initial_scan_skips_reembedding_when_only_mtime_changed(
             workspace_indexer._initial_scan(write_lock)
         assert embed_calls == 1
 
-        # Rewrite the same content, bumping only the mtime -- the `git checkout` case.
+        # Rewrite the same content, bumping only the mtime.
         future = time.time() + 5
         path.write_text("def unchanged(): pass\n")
         os.utime(path, (future, future))
 
         with workspace_indexer._store.acquire_write_lock() as write_lock:
             workspace_indexer._initial_scan(write_lock)
-        assert embed_calls == 1  # content hash matches -- no re-embed
+        assert embed_calls == 1  # content hash matches
 
         record = workspace_indexer._store.file_records()["a.py"]
         assert record.last_modified_ts == pytest.approx(future)
@@ -389,8 +382,7 @@ def test_run_foreground_scan_multithreaded_uses_per_thread_embedding_models(
         stats = workspace_indexer.run_foreground_scan(num_threads=4)
 
         assert stats.files_indexed == 12
-        # Bounded by the worker-thread count, not one model per file -- each worker thread builds
-        # its own model once and reuses it for every file that thread processes.
+        # Bounded by the worker-thread count, not one model per file
         assert 0 < len(construction_threads) <= 4
         assert all(threads == 1 for threads in construction_threads)
     finally:
@@ -420,8 +412,7 @@ def test_run_foreground_scan_single_threaded_cpu_fallback_never_uses_the_shared_
     try:
         stats = workspace_indexer.run_foreground_scan(num_threads=1, use_gpu=False)
         assert stats.files_indexed == 1
-        # A single-threaded fallback keeps the fuller EMBEDDING_THREADS pool, not threads=1 --
-        # there's only one thread, so there's no oversubscription risk to guard against.
+        # A single-threaded fallback keeps the fuller EMBEDDING_THREADS pool, not threads=1
         assert construction_threads == [EMBEDDING_THREADS]
     finally:
         workspace_indexer.close()
@@ -456,9 +447,7 @@ def test_run_foreground_scan_use_gpu_builds_one_shared_model_regardless_of_threa
         stats = workspace_indexer.run_foreground_scan(num_threads=4, use_gpu=True)
 
         assert stats.files_indexed == 12
-        # try_gpu_embedding_model() called exactly once, up front -- not once per worker thread
-        # the way the CPU per-thread-model path builds its models, since a GPU is one physical
-        # device.
+        # try_gpu_embedding_model() called exactly once, up front
         assert call_count == 1
     finally:
         workspace_indexer.close()
@@ -519,8 +508,9 @@ def test_run_foreground_scan_cancels_pending_work_on_interrupt(
         with pytest.raises(KeyboardInterrupt):
             workspace_indexer.run_foreground_scan(num_threads=2)
 
-        # If shutdown() had drained the whole backlog instead of cancelling it (the bug under
-        # test), every one of the 20 dirty files would still get indexed despite the interrupt.
+        # If shutdown() had drained the whole backlog instead of cancelling it,
+        # every one of the 20 dirty files would still get indexed despite the
+        # interrupt.
         assert len(workspace_indexer._store.file_records()) < 20
     finally:
         workspace_indexer.close()
@@ -571,9 +561,8 @@ def test_hybrid_search_raises_without_an_embedding_model(
 
 
 def _global_memories_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the indexer's global-memories directory at an isolated directory outside `tmp_path`
-    (the workspace root used as `WorkspaceIndexer`'s root in this file's other tests), so the
-    ordinary workspace tree walk never doubles up on it."""
+    """Point the indexer's global-memories directory at an isolated directory outside `tmp_path`,
+    so the ordinary workspace tree walk never doubles up on it."""
     data_dir = tmp_path.parent / f"{tmp_path.name}-klorb-data"
     monkeypatch.setattr(indexer_module, "get_klorb_data_dir", lambda: data_dir)
     memories_dir = data_dir / "memories"
@@ -641,8 +630,7 @@ def test_memories_and_workspace_catalogs_do_not_crowd_out_each_other(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A same-named file in the `workspace` and `memories-global` catalogs must not collide in
-    the shared `files`/`chunks` bookkeeping -- their `Chunk.source_path`s live in disjoint
-    `.klorb`-rooted vs. real-path spaces."""
+    the shared `files`/`chunks` bookkeeping."""
     global_dir = _global_memories_dir(tmp_path, monkeypatch)
     (global_dir / "notes.md").write_text("Topic\nglobal content here\n")
     (tmp_path / "notes.md").write_text("workspace content here\n")
@@ -698,7 +686,7 @@ def test_watcher_picks_up_a_newly_created_global_memory_file(
 
 # --- skills catalog ---
 #
-# The global `_reset_skill_catalog` autouse fixture (tests/conftest.py) already points the
+# The global `_reset_skill_catalog` autouse fixture already points the
 # `internal`/`user` skill tiers at empty temp dirs, so these tests only need to populate whichever
 # tier they're covering.
 
@@ -805,7 +793,7 @@ def test_run_foreground_scan_skips_reembedding_a_skill_whose_content_is_unchange
         assert embed_calls == 1
 
         second = workspace_indexer.run_foreground_scan()
-        assert second.files_indexed == 0  # content hash unchanged -- no rescan work
+        assert second.files_indexed == 0  # content hash unchanged
         assert embed_calls == 1
     finally:
         workspace_indexer.close()

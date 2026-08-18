@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`SessionSkillsMixin`: workspace context-file discovery and every skill-related
-`<SystemInterjection>` body `send_turn()` may prepend onto a turn's prompt -- the standing
-`AvailableSkills` catalog, the per-turn `SkillReference` reminder, and the leading-mention
-`UserSkillActivation` shortcut. See docs/specs/skills.md."""
+"""`SessionSkillsMixin`: workspace context-file discovery and skill-related interjection builders."""
 
 import json
 import logging
@@ -24,31 +21,21 @@ logger = logging.getLogger(__name__)
 
 
 class SessionSkillsMixin(SessionBase):
-    """Workspace context-file (`AGENTS.md`/`CLAUDE.md`/`.klorb/INSTRUCTIONS.md`) discovery and
-    the skill-catalog-backed interjection builders `send_turn()` calls into."""
+    """Workspace context-file discovery and skill-catalog-backed interjection builders."""
 
     def _build_context_files_interjection(self) -> str | None:
         """Return the body `send_turn()` wraps in a `<SystemInterjection subject=
         "ProjectGuidance">` tag and prepends onto the very first turn's prompt, or `None` if
         there's nothing to say.
 
-        If `config.workspace.trusted` is `False`: `.klorb/INSTRUCTIONS.md`, `AGENTS.md`, and
-        `CLAUDE.md` are ignored. As project-supplied content, a hostile, downloaded-and-unzipped
-        repository could ship any of them to smuggle instructions into the model's context the
-        moment the user runs klorb from inside it — the same risk `.klorb/klorb-config.json`'s
-        own trust gate exists to close (see docs/specs/projects-and-trust.md). So none of them
-        are ever read into the prompt until the user has explicitly trusted the workspace,
-        exactly like that config layer.
+        If `config.workspace.trusted` is `False`, workspace context files are ignored.
 
-        Otherwise reads each of `_applicable_context_filenames()` (in priority order) that
-        exists on disk, relative to `config.workspace.path`, and wraps each one's contents in
-        a `<ContextFile filename="..." priority="N">` tag, `N` starting at `1` in that same
-        priority order — giving the model an explicit signal for which file should win if two
-        ever conflict.
+        Reads each applicable context filename that exists on disk, relative to
+        `config.workspace.path`, and wraps each one's contents in a
+        `<ContextFile filename="..." priority="N">` tag.
 
-        Additionally checks for `INSTRUCTIONS.md` in `KLORB_CONFIG_DIR` and includes it with highest
-        priority (priority 1) when present. This file is included in the system instructions even in
-        an untrusted workspace.
+        Additionally checks for `INSTRUCTIONS.md` in `KLORB_CONFIG_DIR` and includes it
+        with highest priority when present, even in an untrusted workspace.
         """
 
         context_files: list[tuple[str, str]] = []
@@ -82,18 +69,14 @@ class SessionSkillsMixin(SessionBase):
 
     def _applicable_context_filenames(self) -> list[str]:
         """Return the ordered list of context-instruction filenames to read, relative to the
-        workspace root, most authoritative first: `.klorb/INSTRUCTIONS.md` (priority 1 —
-        durable per-project instructions kept alongside `klorb-config.json` rather than at the
-        workspace root), then `AGENTS.md` (priority 2), then `CLAUDE.md`
-        (priority 3) when `_compatibility_claude_markdown` is enabled."""
+        workspace root, most authoritative first."""
         filenames = [f"{KLORB_PROJECT_DIR_NAME}/INSTRUCTIONS.md", "AGENTS.md"]
         if self._compatibility_claude_markdown:
             filenames.append("CLAUDE.md")
         return filenames
 
     def _ensure_skill_catalog(self) -> None:
-        """Build this session's skill catalog if it hasn't built one yet -- a no-op after the
-        first call. See `klorb.tools.skill.catalog.SkillCatalogRegistry.ensure`."""
+        """Build this session's skill catalog if it hasn't built one yet."""
         self._skill_catalog_registry.ensure(
             workspace_root=self.config.workspace.path,
             workspace_trusted=self.config.workspace.trusted,
@@ -103,14 +86,8 @@ class SessionSkillsMixin(SessionBase):
 
     def reload_skills(self) -> SkillCatalogs:
         """Rebuild this session's skill catalog from a fresh disk scan against the current
-        workspace -- the ">Reload skills" command palette action and `_klorb/reloadSkills` ACP
-        extension's shared implementation (see `klorb.tui.commands.skill_commands` and
-        docs/specs/klorb-server.md), and also called whenever a workspace's trust state changes
-        (a newly-trusted workspace's `.klorb/skills/` tier is otherwise invisible until an
-        explicit reload). Prefers the live `ProcessConfig.compatibility_claude_skills` this
-        session was constructed with over its own construction-time snapshot
-        (`_compatibility_claude_skills`), since a caller holding a `ProcessConfig` reference may
-        have just reloaded it (e.g. a newly-trusted workspace's own config layer)."""
+        workspace. Prefers the live `ProcessConfig.compatibility_claude_skills` this
+        session was constructed with over its own construction-time snapshot."""
         claude_skills_compat = (
             self._process_config.compatibility_claude_skills if self._process_config is not None
             else self._compatibility_claude_skills
@@ -124,20 +101,15 @@ class SessionSkillsMixin(SessionBase):
 
     def discover_skills(self) -> list[Skill]:
         """Every currently non-`deny`-verdicted skill, precedence-deduped by name, from this
-        session's catalog and its live `skill_rules`. No disk access -- see
-        `klorb.tools.skill.catalog.SkillCatalog.discoverable` and docs/specs/skills.md."""
+        session's catalog and its live `skill_rules`."""
         self._ensure_skill_catalog()
         return self._skill_catalog_registry.canonical().discoverable(self.config.skill_rules)
 
     @staticmethod
     def _format_skill_list(skills: list[Skill]) -> str:
         """Render `skills` as the newline-joined `- <name> (<namespace>): <description>` bullet
-        list shared by both skill interjections, always by canonical name (a skill's directory
-        basename, already lowercased and length-capped -- see `klorb.tools.skill.catalog.
-        build_catalogs`), never a frontmatter-name alias. A skill with an empty description
-        contributes just `- <name> (<namespace>)`. `description` is additionally capped
-        (`display_skill_description`) before display, since it's arbitrary frontmatter text with
-        no length limit of its own."""
+        list, always by canonical name. A skill with an empty description
+        contributes just `- <name> (<namespace>)`."""
         lines = []
         for skill in skills:
             description = display_skill_description(skill.description)
@@ -147,10 +119,7 @@ class SessionSkillsMixin(SessionBase):
 
     def _build_available_skills_interjection(self, skills: list[Skill]) -> str | None:
         """Return the body `send_turn()` wraps in an `AvailableSkills` `<SystemInterjection>` and
-        prepends onto the first turn's prompt, or `None` if no skill is discoverable. Lists every
-        discoverable, non-`deny`-verdicted skill. Built once and locked for the session — see
-        `_skills_seeded` and docs/specs/skills.md. `skills` is whatever `send_turn()` already
-        discovered for this turn -- see that method for why it isn't rediscovered here."""
+        prepends onto the first turn's prompt, or `None` if no skill is discoverable."""
         if not skills:
             return None
         return (
@@ -165,15 +134,7 @@ class SessionSkillsMixin(SessionBase):
         self, tokens: list[str], *, exclude: frozenset[tuple[str, str]] = frozenset(),
     ) -> str | None:
         """Return the body `send_turn()` wraps in a `SkillReference` `<SystemInterjection>` for
-        this turn only, or `None` if `tokens` names no discoverable skill. `tokens` is every
-        `/<name>` slug `send_turn()` already found in the turn's prompt via
-        `_skill_mention_tokens()` -- each resolved against the typed catalog (bare name via tier
-        precedence, or an exact `<namespace>:<name>` fqsn) and skipped if its canonical
-        `(namespace, name)` evaluates to `"deny"` or is in `exclude` (the skill a leading-mention
-        unconditional activation already fully handled -- see
-        `_build_user_skill_activation_interjection`). Always lists a mentioned skill by its
-        canonical name, never the alias the user may have typed. Reminds the model to load it via
-        `ActivateSkill`. See docs/specs/skills.md."""
+        this turn only, or `None` if `tokens` names no discoverable skill."""
         if not tokens:
             return None
         self._ensure_skill_catalog()
@@ -200,26 +161,17 @@ class SessionSkillsMixin(SessionBase):
         )
 
     def _build_user_skill_activation_interjection(self, skill: Skill) -> UserSkillActivation | None:
-        """When `skill` (the prompt's leading `/<token>` slug, already resolved by the caller
-        against the typed catalog -- see `_leading_skill_token()`) is non-`"deny"`-verdicted and
-        clears the `onActivateSkill` hook, return a `UserSkillActivation` whose `body` carries the
-        exact same `{namespace, name, content, files, tokens}` JSON payload `ActivateSkill` would
-        return (built by the same `skill_activation_payload()` both paths share), so the model can
-        apply the skill immediately with no `ActivateSkill` round trip.
+        """When `skill` (the prompt's leading `/<token>` slug) is non-`"deny"`-verdicted and
+        clears the `onActivateSkill` hook, return a `UserSkillActivation` whose `body` carries
+        the `ActivateSkill`-equivalent JSON payload so the model can apply the skill
+        immediately with no round trip.
 
         An `"ask"`-verdicted skill is auto-promoted to `"allow"` for the rest of this session
-        (`apply_skill_permission_grant(scope="session")`, no interactive prompt raised) before its
-        content is injected: typing `/<name>` as the leading token of a message *is* the user's
-        approval, the same way answering an interactive ask with "Allow" would be -- there's no
-        separate confirmation to ask for. This only ever widens `"ask"` to `"allow"`; it never
-        touches a `"deny"` verdict.
+        before its content is injected: typing `/<name>` as the leading token of a message
+        *is* the user's approval.
 
-        Returns `None` when `skill`'s verdict is `"deny"`, or an `onActivateSkill` handler vetoes
-        the activation -- gets no special treatment at all (as if the user's message didn't start
-        with a skill reference), the same whether the catalog was built with that verdict already
-        in place or the skill was denied later in this session and the (unrebuilt) catalog still
-        holds it; the latter case logs a `logger.warning()` so the silent skip is still observable.
-        See docs/specs/skills.md.
+        Returns `None` when `skill`'s verdict is `"deny"`, or an `onActivateSkill` handler
+        vetoes the activation.
         """
         skill_id = (skill.namespace, skill.name)
         verdict = evaluate_skill(self.config.skill_rules, skill_id)
@@ -257,15 +209,10 @@ class SessionSkillsMixin(SessionBase):
         return UserSkillActivation(body=body, skill_id=skill_id)
 
     def fire_activate_skill_hook(self, *, skill_namespace: str, skill_name: str) -> str | None:
-        """Dispatch `onActivateSkill` for `(skill_namespace, skill_name)`, about to be activated
-        -- called by `_build_user_skill_activation_interjection` (the leading-mention fast path)
-        and by `ActivateSkillTool.apply()` (the ordinary model-driven call), after each has
-        already resolved and gated the skill through `skillRules`.
+        """Dispatch `onActivateSkill` for `(skill_namespace, skill_name)`, about to be activated.
 
         `HookInput.is_user_mentioned`/`is_user_activated` are read off this turn's own
-        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id` (set by
-        `send_turn()`), not passed in by the caller -- so both call sites report the same facts
-        about what the user actually typed, regardless of which one is asking.
+        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id`.
 
         Returns a denial message when the aggregate `HookOutput` vetoes the activation
         (`success=False`, or a `permission` of `"ask"`/`"deny"`), `None` otherwise.
@@ -282,14 +229,9 @@ class SessionSkillsMixin(SessionBase):
         return None
 
     def grant_skill_bash_commands(self, skill: Skill) -> None:
-        """Pre-authorize `skill`'s `metadata.klorb.bashCommands` argv patterns (see
-        `klorb.tools.skill.common.skill_bash_command_patterns`) as session-`allow` `commandRules`
-        -- called by both activation paths once the `onActivateSkill` hook has cleared, so a
-        skill's own frontmatter can ship the bash commands its instructions need without a
-        workspace's `commandRules.allow` having to list them separately. Idempotent: granting the
-        same pattern again on a later activation is a no-op (`RuleGrantWriter.apply_decision`
-        dedupes against the existing `allow` list).
-        """
+        """Pre-authorize `skill`'s `metadata.klorb.bashCommands` argv patterns as session-`allow`
+        `commandRules`, so a skill's frontmatter can ship the bash commands its instructions need
+        without a workspace's `commandRules.allow` listing them separately. Idempotent."""
         patterns = skill_bash_command_patterns(skill.raw)
         if not patterns:
             return

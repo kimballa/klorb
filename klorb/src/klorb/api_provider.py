@@ -17,17 +17,13 @@ class ProviderResponse(BaseModel):
 
     message: Message
     """The assistant's reply. `message.num_tokens` is a client-side `tiktoken` estimate of
-    the reply's own content (see `Message.num_tokens`), not the provider's billed
+    the reply's own content, not the provider's billed
     completion-token count; `message.finish_reason` is the provider's reported stop reason."""
 
     prompt_tokens: int
     """Total input tokens billed for this request (covers the full message list sent,
     including the system prompt), as reported by the provider's usage stats. Retained for
-    logging/diagnostics only -- `klorb.session.Session` derives its own token accounting
-    entirely from each `Message`'s client-side `num_tokens` instead (see
-    docs/adrs/00121-count-every-message-tokens-client-side-with-tiktoken.md), since a provider's
-    aggregate usage figures are reported per-request, not broken down per message, and can't
-    be reconciled against individual messages without their own tokenizer anyway."""
+    logging/diagnostics only."""
 
     completion_tokens: int = 0
     """Total output tokens billed for this request (the model's reply tokens), as reported
@@ -40,9 +36,8 @@ class ProviderResponse(BaseModel):
     to compute the cache hit ratio for logging/diagnostics."""
 
     total_cost: float = 0.0
-    """Monetary cost of this request as reported by the provider (e.g. OpenRouter's
-    `usage.cost`). Zero when the provider doesn't report cost. Accumulated across the
-    session in `SessionStatistics`."""
+    """Monetary cost of this request as reported by the provider. Zero when the provider
+    doesn't report cost. Accumulated across the session in `SessionStatistics`."""
 
 
 class ResponseAborted(Exception):
@@ -84,44 +79,37 @@ class ApiProvider(ABC):
         and return its reply along with request-level token usage.
 
         `reasoning`, if given, is a provider-shaped request body requesting extended
-        thinking (e.g. `{"effort": "high"}` or `{"max_tokens": 32_768}` for OpenRouter);
-        omitted or `None` means no reasoning is requested.
+        thinking; omitted or `None` means no reasoning is requested.
 
-        `tools`, if given, is the OpenAI-style function-calling `tools` array (see
-        `klorb.tools.registry.ToolRegistry.tool_definitions`) offered to the model alongside
-        the prompt; omitted, `None`, or empty means no tools are offered. If the model
-        requests one or more tool calls, they're reported on the returned reply's
+        `tools`, if given, is the OpenAI-style function-calling `tools` array offered to the
+        model alongside the prompt; omitted, `None`, or empty means no tools are offered. If
+        the model requests one or more tool calls, they're reported on the returned reply's
         `Message.tool_calls`.
 
         `response_format`, if given, is an OpenAI-compatible structured-output request body
-        (e.g. `{"type": "json_schema", "json_schema": {...}}`) asking the model to reply with
-        JSON conforming to a schema, rather than free-form text — see
-        `klorb.permissions.risk_classifier.classify_command_risk` for the one caller that uses
-        this today. Omitted or `None` means no structured-output constraint is requested.
+        asking the model to reply with JSON conforming to a schema, rather than free-form text.
+        Omitted or `None` means no structured-output constraint is requested.
 
         `timeout`, if given, bounds this one request's wall-clock time (seconds), overriding
         whatever default timeout the underlying client would otherwise use; omitted or `None`
         means the client's own default applies. Meant for a caller with its own latency budget
-        distinct from the main conversation's (e.g. an interactive approval-flow side call that
-        must fail fast rather than stall a modal), not for the main conversation turn loop.
+        distinct from the main conversation's, not for the main conversation turn loop.
 
-        `drop_reasoning` (default `False`, from the active model's `Model.drop_reasoning()`)
-        controls whether prior turns' thinking/reasoning content is included in this request
-        at all: preserved and replayed by default, dropped entirely when `True`.
+        `drop_reasoning` controls whether prior turns' thinking/reasoning content is included
+        in this request at all: preserved and replayed by default, dropped entirely when `True`.
 
         If `on_chunk` is given, it is invoked once per non-empty text delta as the response
         streams in, in addition to the final reply being returned as usual. If
         `on_thinking_chunk` is given, it is invoked once per non-empty reasoning/thinking
         text delta, separately from `on_chunk`. If `on_reasoning_details` is given, it is
-        invoked with the current, fully-merged `reasoning_details` structured payload (see
-        `Message.reasoning_details`) each time a new fragment of it arrives.
+        invoked with the current, fully-merged `reasoning_details` structured payload each
+        time a new fragment of it arrives.
 
         If `cancel_event` is given and becomes set while the response is streaming in, the
         provider stops consuming the stream and raises `ResponseAborted` instead of
         returning normally.
 
         `max_tokens`, if given, caps the total tokens this one request may generate (reasoning
-        plus completion, for a model that bills both against the same budget) -- e.g. a
-        subagent's `CreateSubagent`-supplied output-token budget. Omitted or `None` means the
-        model's own default applies.
+        plus completion, for a model that bills both against the same budget). Omitted or `None`
+        means the model's own default applies.
         """

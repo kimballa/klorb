@@ -1,17 +1,5 @@
 # © Copyright 2026 Aaron Kimball
 """`ReplAppBase`: attribute-only declarations shared by every `ReplApp` mixin.
-
-`ReplApp` itself (`klorb.tui.app`) is composed from several mixins, each holding one
-cohesive slice of its ~150 methods, verbatim -- `self.foo(...)` resolves at runtime via MRO
-regardless of which mixin `foo` physically lives in, so no call site needs to change. But
-this repo's `make typecheck` runs mypy with `--disallow-untyped-calls` and
-`--disallow-untyped-globals`, so a mixin method referencing `self._some_attr` (set by
-`ReplApp.__init__`, which lives in a different file) needs `_some_attr` visible on `self`'s
-declared type from that mixin's own point of view -- mypy doesn't know that whichever
-concrete class eventually mixes this one in will also mix in the one that sets it.
-`ReplAppBase` is that shared point of view: every mixin declares
-`class FooMixin(ReplAppBase):`, and `ReplApp(FooMixin, ..., ReplAppBase)` is the only class
-with a real `__init__` body. This class carries no behavior of its own.
 """
 
 import asyncio
@@ -56,9 +44,8 @@ class ReplAppBase(App[None]):
     """Attribute and cross-mixin method declarations for every field/method `ReplApp` and its
     mixins reference on `self` from outside the file that actually defines it, so each mixin
     file type-checks on its own despite referencing state or behavior a different mixin (or
-    `ReplApp` itself) sets up. See the module docstring for why this class exists. Method
-    stubs here are never called -- every one is overridden by the mixin that actually owns it
-    once mixed into the concrete `ReplApp`.
+    `ReplApp` itself) sets up. Method stubs here are never called; every one is overridden by
+    the mixin that actually owns it once mixed into the concrete `ReplApp`.
     """
 
     _process_config: ProcessConfig

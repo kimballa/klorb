@@ -1,10 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`FileSystemWatcher`: the runtime counterpart to `klorb.hooks.config.
-FileSystemModifiedEventConfig` -- watches each configured entry's `watch` path under a
-workspace root and, once a debounced burst of changes settles, calls back with whichever
-entries had a change fall under their own path. Follows the same watchdog `Observer`/
-debounce-timer shape `klorb.tui.workspace_file_index.WorkspaceFileIndex` uses for the
-`@`-mention file index, generalized to a configurable debounce window.
+FileSystemModifiedEventConfig`.
 """
 
 import logging
@@ -32,9 +28,7 @@ def _path_matches(changed_path: Path, watch_target: Path) -> bool:
 
 
 def _dedupe(updates: list[FileSystemUpdate]) -> list[FileSystemUpdate]:
-    """Drop a repeat `(event, path)` pair, preserving first-seen order -- a single write can
-    raise more than one raw `modified` event for the same path within one debounce window, and
-    those carry no more information than the first."""
+    """Drop a repeat `(event, path)` pair, preserving first-seen order."""
     seen: set[tuple[str, str]] = set()
     deduped: list[FileSystemUpdate] = []
     for update in updates:
@@ -47,9 +41,7 @@ def _dedupe(updates: list[FileSystemUpdate]) -> list[FileSystemUpdate]:
 
 class _FsChangeHandler(FileSystemEventHandler):
     """Routes watchdog filesystem events into `FileSystemWatcher`'s debounced batch. Directory
-    events are dropped -- a directory's own creation/deletion carries no path a `watch`
-    entry's `action` would meaningfully act on; a recursive directory deletion still reports
-    each file beneath it individually."""
+    events are dropped."""
 
     def __init__(self, watcher: "FileSystemWatcher") -> None:
         self._watcher = watcher
@@ -128,8 +120,7 @@ class FileSystemWatcher:
     def _distinct_watch_dirs(self) -> set[Path]:
         """The directories to actually register with the `Observer`: each entry's own `watch`
         target if it's a directory, else its parent (inotify has no way to watch a single file
-        directly) -- deduplicated, since more than one entry can name the same or an
-        overlapping path. Entries whose `watch` escapes the workspace root are skipped with a
+        directly). Entries whose `watch` escapes the workspace root are skipped with a
         warning."""
         dirs: set[Path] = set()
         for entry in self._entries:
@@ -178,9 +169,6 @@ class FileSystemWatcher:
                 fs_updates=matched_updates))
         except Exception:
             # A new fs change independently re-arms the next debounce timer via `_record`, so
-            # this batch's own dispatch failing (a hook handler failure, or `Session.
-            # deliver_event_message` raising `ChainedHookMessageUndeliverableError` when the
-            # session is idle) doesn't stop future changes from being watched -- but leaving it
-            # uncaught would still surface as a bare, easy-to-miss thread-exception traceback.
+            # this batch's own dispatch failing doesn't stop future changes from being watched.
             logger.error("FileSystemModified dispatch failed for %d entr(y/ies).",
                          len(matched_entries), exc_info=True)

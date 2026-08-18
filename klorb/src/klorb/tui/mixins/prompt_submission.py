@@ -29,33 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 class TuiSessionWake(Message):
-    """Posted by the active session's registered wake handler (see `Session.
-    register_wake_handler`) when a `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` event
-    queues a message while no turn is in flight."""
+    """Posted by the active session's registered wake handler when a timer, filesystem, or
+    trust-change event queues a message while no turn is in flight."""
 
 
 class PromptSubmissionMixin(ReplAppBase):
-    """Prompt submission, shell-command dispatch, and turn finalization -- kept as one
-    mixin since `_send_prompt`'s `@work(thread=True)` body and `_finish_turn`/
-    `_show_response`/etc. are one control flow, even though they are not contiguous in
-    the original file. See `ReplApp` for how this mixes into the concrete app class."""
+    """Prompt submission, shell-command dispatch, and turn finalization."""
 
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         """Echo the submitted prompt into the history and dispatch it to the model, or
-        handle `:q`/`/quit`/`/exit` or a `!`-prefixed shell command synchronously.
-
-        `PromptInput._execute_palette_hit` handles a palette selection (e.g. `>Clear
-        session`) entirely on its own — invoking the hit's command directly rather than
-        posting `Submitted` — so a `>`-prefixed `prompt_text` reaching here is always one
-        that ruled out every palette option, dispatched as an ordinary prompt like any other
-        (see `docs/specs/command-palette-from-prompt.md`).
-
-        When a subagent (not the root session) is selected, the prompt is sent directly to it
-        instead — see `_submit_subagent_prompt`. Otherwise, when a turn is already in flight
-        (`_turn_in_flight`), the prompt is queued rather than dispatched — see `_queue_prompt` —
-        and will be delivered as a `role="user"` message right after the next tool-call round's
-        tool responses.
-        """
+        handle `:q`/`/quit`/`/exit` or a `!`-prefixed shell command synchronously."""
         prompt_text = event.value.strip()
         if not prompt_text:
             return
@@ -80,11 +63,7 @@ class PromptSubmissionMixin(ReplAppBase):
         self._submit_prompt(prompt_text)
 
     def _submit_subagent_prompt(self, prompt_text: str) -> None:
-        """Send `prompt_text` directly to the selected subagent (`dispatch_direct_message`),
-        bypassing the parent agent entirely -- called instead of `_submit_prompt`/`_queue_prompt`
-        whenever `_selected_handle is not None`. Synchronous: `dispatch_direct_message` never
-        blocks (it either enqueues or hands off to a daemon thread), unlike `_send_prompt`'s
-        worker, which runs an entire root turn to completion."""
+        """Send `prompt_text` directly to the selected subagent, bypassing the parent agent."""
         assert self._selected_handle is not None
         try:
             dispatch_direct_message(
@@ -94,17 +73,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _submit_shell_command(self, command: str) -> None:
         """Echo `!command` into the history, disable the input, and dispatch it to a worker
-        thread (`_run_shell_command`) so a slow command can't block the UI. Only one shell
-        command can be in flight at a time for this REPL: the input box stays disabled for the
-        duration, exactly as it does for a model turn in `_submit_prompt`, so a user can't
-        start a second one while the first is still running. The echoed `Static` is
-        constructed with `markup=False`: `command` is arbitrary user input and must render
-        verbatim rather than be parsed as Textual console markup.
-
-        Like `_submit_prompt`, drops the submit if a turn or shell command is already running
-        (`_turn_in_flight`) — the authoritative guard that keeps the two serial regardless of the
-        racy `disabled` flag.
-        """
+        thread so a slow command can't block the UI."""
         if self._turn_in_flight:
             return
         self._turn_in_flight = True
@@ -122,37 +91,14 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _queue_prompt(self, prompt_text: str) -> None:
         """Queue `prompt_text` for delivery once the current turn ends, and echo it into the
-        history with a `<Queued message>` header and italic styling.
-
-        Called by `on_prompt_input_submitted` when `_turn_in_flight` is `True` — i.e. the
-        user pressed Enter while the agent turn was still running. The message is enqueued
-        in the `Session` (see `Session.enqueue_queued_message`) which calls the
-        `on_enqueue_message` hook so the UI can create the italics block and save widget
-        references in `queued_msg.history_data`. When the turn ends, `_finish_turn` drains
-        every message queued during it (this one, and any others typed after it) and submits
-        them together as a single new turn -- see `_finish_turn` -- at which point
-        `on_send_queued_message` fires for each to remove its italics block.
-
-        The `Static` is constructed with `markup=False`: `prompt_text` is arbitrary user
-        input and must render verbatim rather than be parsed as Textual console markup.
-        """
+        history with a `<Queued message>` header and italic styling."""
         queued_msg = QueuedMessage(message_text=prompt_text)
         self._session.enqueue_queued_message(queued_msg)
 
     @work(thread=True)
     def _run_shell_command(self, command: str, cancel_event: threading.Event) -> None:
         """Run `command` via `UserShellCommand` on a worker thread, streaming its combined
-        stdout/stderr into the history as it arrives (mirroring `_send_prompt`'s progressive
-        rendering of a streamed model response). `output_lock` serializes the stdout and
-        stderr pump threads `UserShellCommand.run()` spawns internally — both call back into
-        `handle_output` concurrently, and without a lock two racing calls could each mount
-        their own output widget, or one line could clobber another's addition to `accumulated`.
-
-        The shell binary and timeout come from `ProcessConfig` (`shell_command`,
-        `shell_timeout_seconds`); a timeout or a Ctrl+C interrupt (`action_interrupt`, which
-        sets `cancel_event`) both kill the process and are reported as an error in the history
-        rather than raised, matching how a failed/aborted model turn is displayed.
-        """
+        stdout/stderr into the history as it arrives."""
         output_widget: Static | None = None
         accumulated = ""
         output_lock = threading.Lock()
@@ -169,7 +115,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
         error_message: str | None = None
         # Outer try/finally guarantees `_turn_in_flight` clears however this worker unwinds,
-        # including a BaseException past the handlers below -- see `_send_prompt` for the rationale.
+        # including a BaseException past the handlers below.
         try:
             try:
                 _, _, rc = UserShellCommand(
@@ -195,13 +141,9 @@ class PromptSubmissionMixin(ReplAppBase):
     def _mount_shell_output_widget(self, initial_text: str) -> Static:
         """Mount a new `Static` widget for a streaming shell command's output and return it.
 
-        Uses `Static` rather than the `Markdown` widget `_mount_response_widget` mounts for a
-        streaming model reply: shell output is plain text, not markdown, and `Markdown`'s
-        CommonMark rendering collapses a single newline within a paragraph into a soft line
-        break (a space), which mangles multi-line command output. `Static` renders text
-        verbatim, preserving every newline. Constructed with `markup=False` so a literal `[` in
-        the output (e.g. an `[INFO]` log tag) can't be misread as the start of a Textual
-        console markup tag and raise `MarkupError`.
+        Uses `Static` instead of `Markdown` because CommonMark collapses newlines within a
+        paragraph into spaces, which mangles multi-line command output.
+        `markup=False` prevents a literal `[` from being misread as a Textual markup tag.
         """
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
@@ -212,10 +154,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _update_shell_output_widget(self, widget: Static, text: str) -> None:
         """Update a streaming shell command's output `Static` widget with the latest
-        accumulated `text`, following the view to the bottom only if it was already pinned
-        there before this growth (see `_history_pinned_to_bottom`) — so a user who's scrolled
-        up to reread earlier output isn't yanked back down by every incoming chunk.
-        """
+        accumulated `text`."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         widget.update(text)
@@ -223,8 +162,8 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _finish_shell_command(self, error_message: str | None) -> None:
         """Show `error_message` (if any) in the history, then finish the shell command's
-        "turn" exactly like a model turn (`_finish_turn`): scroll to the end, refresh the
-        token tally, and re-enable/refocus the input box.
+        "turn": scroll to the end, refresh the token tally, and re-enable/refocus the
+        input box.
         """
         if error_message is not None:
             self._show_error(error_message)
@@ -233,14 +172,12 @@ class PromptSubmissionMixin(ReplAppBase):
             self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 
     def clear_session(self) -> None:
-        """Replace the active Session with a fresh, blank one -- the "Clear session" palette
-        command's action. See `_replace_session`."""
+        """Replace the active Session with a fresh, blank one."""
         self._replace_session(None)
 
     def rename_session(self, title: str) -> None:
         """Set the active session's display title and persist the change. Cancels the one-shot
-        naming classifier (if still pending) so it doesn't overwrite the user's choice, matching
-        `klorb.server.klorb_agent._ext_set_session_title`'s own handling."""
+        naming classifier (if still pending) so it doesn't overwrite the user's choice."""
         logger.debug("Renaming session title to %r", title)
         self._session.name = title
         self._session.session_naming_pending = False
@@ -252,27 +189,7 @@ class PromptSubmissionMixin(ReplAppBase):
         return self._session.name or ""
 
     def _replace_session(self, initial_message: str | None) -> None:
-        """Replace the active `Session` with a fresh one (new id, config re-read from disk
-        with CLI flags re-applied on top), reset the visible history to the mascot greeting
-        (`_mount_mascot_greeting`) followed by a "Session cleared." notice, and roll over the
-        per-session log file if session logging is enabled for this REPL invocation. If
-        `initial_message` is given, it's submitted as the new session's first turn once it's
-        installed; `None` to wait for a user prompt.
-
-        Guarded by `_replacing_session` against a second request arriving while this one is
-        already in progress, and marshaled onto this app's own thread if called from another
-        one.
-
-        Tears down the outgoing `Session` first (`Session.close()`) so a live resource it
-        registered a teardown for (e.g. `BashTool`'s persistent shell) doesn't leak past this
-        call — nothing else references the outgoing `Session` afterward.
-
-        The new session's `SessionConfig` is rebuilt by re-reading the config layers from
-        disk (keeping just the session-scoped parts) and applying the CLI flags on top, so a
-        config-file edit made between startup and this call takes effect and a `--model`
-        (etc.) flag survives a `/clear` the same way it survived startup — see
-        `apply_cli_flags_to_session` and docs/specs/process-and-session-config.md.
-        """
+        """Replace the active `Session` with a fresh one and reset the visible history."""
         if self._replacing_session:
             logger.warning(
                 "Ignoring a session-replacement request that arrived while another one was "
@@ -296,9 +213,8 @@ class PromptSubmissionMixin(ReplAppBase):
 
         # Re-read the config layers from disk into a fresh `SessionConfig` (only the
         # session-scoped parts), so a config change made after this process started is
-        # picked up here rather than silently ignored. Then layer
-        # the CLI flags on top, so a `--max-tool-calls-per-turn` (etc.) passed to this
-        # invocation survives a `/clear` the same way it survived startup.
+        # picked up here rather than silently ignored. Then layer the CLI flags on top,
+        # so a `--max-tool-calls-per-turn` passed to this invocation survives a `/clear`.
         reloaded_pc = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
         self._process_config.session = reloaded_pc.session
@@ -308,8 +224,7 @@ class PromptSubmissionMixin(ReplAppBase):
         # Take note of any warnings / syntax errors raised when re-parsing config files.
         new_warnings: list[str] = reloaded_pc.config_warnings
 
-        # The existing workspace is brought into the new session the same way it
-        # does when trust is first resolved; see docs/specs/process-and-session-config.md.
+        # The existing workspace is carried into the new session.
         new_session_config.workspace = workspace
 
         # The choice of model is a "live" setting that the user may have been manipulating
@@ -367,20 +282,7 @@ class PromptSubmissionMixin(ReplAppBase):
             self.call_after_refresh(self._submit_prompt, initial_message)
 
     def _submit_prompt(self, prompt_text: str) -> None:
-        """Echo `prompt_text` into the history and dispatch it. The echoed `Static` is
-        constructed with `markup=False`: `prompt_text` is arbitrary user input and must
-        render verbatim rather than be parsed as Textual console markup.
-
-        Drops the submit outright if a turn or shell command is already running
-        (`_turn_in_flight`): the input's `disabled` flag alone can't prevent a second submit
-        that was queued before the first one disabled the box, so this authoritative
-        check-and-set is what actually keeps turns serial (see `_turn_in_flight`). The input
-        is *not* disabled here — the user can keep typing and queue messages for delivery as
-        `role="user"` messages after the next tool-call round (see `_queue_prompt`).
-
-        `_send_prompt` mounts a `TurnWaitingStatic` on its worker thread as soon as it starts
-        the turn.
-        """
+        """Echo `prompt_text` into the history and dispatch it to the model."""
         if self._turn_in_flight:
             return
         self._turn_in_flight = True
@@ -396,47 +298,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     @work(thread=True)
     def _send_prompt(self, prompt_text: str, cancel_event: threading.Event) -> None:
-        """Send `prompt_text` to the model on a worker thread so the UI stays responsive.
-
-        Renders the response progressively as chunks stream in: a `Markdown` widget is
-        mounted on the first chunk and updated on each subsequent one. Reasoning/thinking
-        chunks, if the model sends any, are rendered the same way but behind a `<Thinking>`
-        label and in italics, via a separate `Static` widget (not `Markdown`: reasoning text
-        commonly spans multiple paragraphs, and Markdown's `*...*` emphasis syntax doesn't
-        apply across blank-line-separated blocks, whereas Rich's `[italic]...[/italic]`
-        console markup styles every line regardless). A structured `reasoning_details`
-        payload, if the provider sends one, is rendered below the `<Thinking>` block as a
-        one-line `<Reasoning>` indicator (see `summarize_reasoning_details`) -- but only when
-        it carries information the `<Thinking>` block can't show (e.g. an opaque/encrypted
-        entry); a payload made entirely of plain-text entries is suppressed as redundant.
-
-        A turn with tool calls is really a sequence of rounds under the hood (see
-        `Session._dispatch_turn`): each round streams its own thinking/response text, then, if
-        it ends in a tool-call request, `Session` dispatches those calls before starting the
-        next round's stream. `on_tool_call` fires once per finished call, in between two
-        rounds' streams, so seeing it is what marks a round boundary here — `round_index` is
-        bumped on every such call, and `handle_chunk`/`handle_thinking_chunk` compare it
-        against the round their current widget belongs to, starting a fresh widget rather than
-        appending to the previous round's whenever it's moved on. Without this, one round's
-        widget would keep absorbing every later round's text too, reading as a single
-        ever-growing block that swallows the tool calls mounted in between rather than as
-        separate, time-ordered blocks.
-
-        If `cancel_event` is set (via Escape / `action_abort_response`) before the response
-        finishes, `Session.send_turn()` raises `ResponseAborted`; the echoed prompt and any
-        widgets already mounted for this turn's partial response/thinking/tool calls are left
-        in place (`Session` keeps the same content in history, tagged `"aborted"` — see
-        `_handle_aborted_response`) rather than torn down, and the input box is left empty for
-        the next message rather than repopulated with this one. `response_widget`/
-        `thinking_widget` at that point necessarily belong to the round that was still
-        streaming when Escape fired, matching the single round's worth of content `Session`
-        keeps for it.
-
-        Before any of that, if this is the session's first submitted prompt
-        (`self._session.session_naming_pending`), `Session.send_turn()` claims the session
-        directory and kicks off the naming classifier on its own background thread without
-        waiting for it.
-        """
+        """Send `prompt_text` to the model on a worker thread so the UI stays responsive."""
         self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
         def handle_session_name_changed(result: SessionName | None) -> None:
@@ -517,18 +379,7 @@ class PromptSubmissionMixin(ReplAppBase):
         worker_thread_id = threading.get_ident()
 
         def call_on_app_thread(fn: Any, *args: Any) -> Any:
-            """Run `fn(*args)` on the app's own thread and return its result.
-
-            `Session.enqueue_queued_message`/`drain_queued_messages` invoke
-            `on_enqueue_message`/`on_send_queued_message` from wherever the caller happens to be
-            running: `_run_tool_calls` calls `drain_queued_messages` from this worker thread (mid
-            tool-call round), but `_queue_prompt` calls `enqueue_queued_message` directly from the
-            Textual event handler on the app thread, and `_finish_turn` (always reached via
-            `call_from_thread`) calls `drain_queued_messages` from the app thread too.
-            `call_from_thread` raises if called from the thread it would hop onto, so the two
-            call sites need different handling -- this picks the right one by comparing the
-            calling thread against `worker_thread_id`, captured once above.
-            """
+            """Run `fn(*args)` on the app's own thread and return its result."""
             if threading.get_ident() == worker_thread_id:
                 return self.call_from_thread(fn, *args)
             return fn(*args)
@@ -550,18 +401,7 @@ class PromptSubmissionMixin(ReplAppBase):
             queued_msg.history_data = (header_widget, prompt_widget)
 
         def handle_send_queued_message(queued_msg: QueuedMessage) -> None:
-            """Remove `queued_msg`'s italics block from the history now that it's been drained.
-
-            Only removes the widgets -- unlike an earlier version of this hook, it does *not*
-            submit `queued_msg` as its own new turn. `drain_queued_messages()` fires this once
-            per drained message, and a turn can drain more than one at once (several messages
-            typed in quick succession); calling `_submit_prompt` here per message would start a
-            second turn while the first was still `_turn_in_flight`, silently dropping every
-            message after the first (see `_finish_turn`, which instead submits every drained
-            message from a batch as a single concatenated turn). `deliver_queued_user_message`'s
-            mid-turn drain appends the drained message(s) to the conversation as a
-            `role="user"` message (see `SessionCoreMixin.deliver_queued_user_message`).
-            """
+            """Remove `queued_msg`'s italics block from the history now that it's been drained."""
             if queued_msg.history_data is not None:
                 header_widget, prompt_widget = queued_msg.history_data
                 call_on_app_thread(header_widget.remove)
@@ -583,13 +423,12 @@ class PromptSubmissionMixin(ReplAppBase):
             on_send_queued_message=handle_send_queued_message)
         # Stashed so `_finish_turn`'s end-of-turn `drain_queued_messages()` call has a live
         # `on_send_queued_message` hook to fire -- by the time that runs, `Session` has already
-        # cleared its own `_current_turn_handlers` (see `drain_queued_messages`'s docstring).
+        # cleared its own `_current_turn_handlers`.
         self._active_turn_callbacks = callbacks
 
         # The outer try/finally guarantees `_turn_in_flight` is cleared however this worker
-        # unwinds -- including a BaseException (e.g. asyncio.CancelledError / worker cancellation)
-        # that slips past `except Exception` below and would otherwise leave the flag stuck True
-        # forever. See `_ensure_turn_finished` and docs/specs/interrupt-and-liveness-watchdog.md.
+        # unwinds -- including a BaseException that slips past `except Exception` below and
+        # would otherwise leave the flag stuck True forever.
         try:
             try:
                 response_text = self._session.send_turn(prompt_text, callbacks)
@@ -606,9 +445,9 @@ class PromptSubmissionMixin(ReplAppBase):
                 else:
                     self.call_from_thread(self._show_response, response_text)
         finally:
-            # No-op on the normal path (a handler above already finished the turn); only does
-            # anything when the worker unwound without reaching one. Guarded because the event
-            # loop may already be gone during teardown.
+            # No-op on the normal path; only does anything when the worker unwound
+            # without reaching a handler. Guarded because the event loop may already
+            # be gone during teardown.
             try:
                 self.call_from_thread(self._ensure_turn_finished)
             except Exception:
@@ -616,20 +455,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def _handle_session_name_changed(self, result: SessionName | None) -> None:
         """React to `Session`'s `on_session_name_changed` callback firing: update the
-        `SESSION_NAME_ID` status line to the derived title. If naming failed (timeout,
-        unavailable classifier, malformed reply), `Session._run_session_naming` has already
-        set `self._session.name` to `klorb.session_naming.fallback_session_title`'s word/
-        character-capped derivation from the prompt instead, so the status line always shows
-        *some* title now.
-
-        This always fires for the *root* session's own naming classifier (a subagent's `name` is
-        pre-set from `CreateSubagent`'s `session_title` and never goes through this classifier at
-        all -- see docs/specs/subagents.md's "Subagent session model" section), so the
-        `#session-name` line is only actually touched while the root session is the one currently
-        selected in the subagents panel; otherwise the resolved title is left to show the next
-        time `SubagentsPanelMixin._select_session` re-selects the root, which reads `self._session.
-        name` fresh at that point regardless of when it actually resolved.
-        """
+        `SESSION_NAME_ID` status line to the derived title."""
         if self._selected_session is not self._session:
             return
         title = result.title if result is not None else (self._session.name or "")
@@ -652,11 +478,7 @@ class PromptSubmissionMixin(ReplAppBase):
             history, was_pinned, agent_turn_succeeded=True, response_text=response_text)
 
     def _show_error(self, message: str) -> None:
-        """Append an error message to the history and re-enable the input box. Constructed
-        with `markup=False`: `message` is often an exception's text (e.g. `str(OSError(...))`
-        can read `[Errno 2] ...`), which must render verbatim rather than be parsed as Textual
-        console markup.
-        """
+        """Append an error message to the history and re-enable the input box."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         history.mount(Static(f"Error: {message}", classes="error", markup=False))
@@ -666,16 +488,8 @@ class PromptSubmissionMixin(ReplAppBase):
         self, response_widget: Markdown | None, response_text: str,
         thinking_widget: Static | None, thinking_text: str,
     ) -> None:
-        """Leave the echoed prompt and every widget mounted for the aborted turn in place
-        (`Session` keeps the same content in history, tagged `processing_state="aborted"`,
-        rather than discarding it), tagging whichever of the response/thinking widgets was
-        still streaming when Escape fired with an "(interrupted)" marker. If neither had
-        started streaming yet (the turn was interrupted before its first chunk, e.g. during an
-        earlier round's tool-call dispatch), mount a standalone marker instead so the
-        interruption is still visible. The input box is left empty rather than repopulated
-        with the original prompt, since that prompt is now a real, if incomplete, turn in
-        history rather than a draft to resend.
-        """
+        """Leave the echoed prompt and every widget mounted for the aborted turn in place,
+        tagging still-streaming widgets with an "(interrupted)" marker."""
         if response_widget is not None:
             response_widget.update(f"{response_text}\n\n*(interrupted)*")
         elif thinking_widget is not None:
@@ -688,28 +502,13 @@ class PromptSubmissionMixin(ReplAppBase):
         self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
 
     def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None:
-        """Scroll `history` to its end iff `was_pinned` — `_history_pinned_to_bottom`'s value
-        captured immediately before the content that just changed was applied — so streaming
-        updates follow the user to the bottom only when they hadn't already scrolled away from
-        it.
-        """
+        """Scroll `history` to its end iff `was_pinned`."""
         if was_pinned:
             history.scroll_end(animate=False)
 
     def _finalize_queued_message_widgets(self) -> None:
         """Transition every history widget mounted by `_queue_prompt` from its queued
-        (italic) state to regular styling, confirming delivery.
-
-        Called by `_finish_turn` once the turn has completed — by that point, any messages
-        that were in the queue have been drained and attached to tool-response envelopes by
-        `_run_tool_calls()`. The header widget (`<Queued message>`) is removed entirely
-        (the italic cue is gone, and the header would be confusing without it), and the
-        prompt widget's CSS class is swapped from `queued-prompt` to `prompt` so it matches
-        a normally-submitted prompt's styling.
-
-        Idempotent: safe to call when `_queued_message_widgets` is already empty (a turn
-        that had no queued messages).
-        """
+        (italic) state to regular styling, confirming delivery."""
         for widget in self._queued_message_widgets:
             if "queued-prompt-header" in (widget.classes):
                 widget.remove()
@@ -722,68 +521,8 @@ class PromptSubmissionMixin(ReplAppBase):
         self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
         response_text: str | None = None,
     ) -> None:
-        """Scroll the history into view (iff `was_pinned`, see `_scroll_if_pinned`), refresh the
-        token tally, and re-enable and refocus the input box (see
-        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin._update_prompt_input_disabled_state`).
-        Also clears the in-flight turn's
-        cancel event and pending-prompt tracking (model turn) and the shell command's cancel
-        event (`_run_shell_command`), since neither Escape nor Ctrl+C has anything left to
-        abort/interrupt once a turn is done (successfully, in error, or aborted) — shared by
-        both a model turn and a shell command, since only one of the two is ever in flight at a
-        time. Clearing `_turn_in_flight` here (the terminal state of every model turn and shell
-        command) is what lets the next submit through, and resetting `_interrupt_notice_shown`
-        re-arms the one-time `Interrupting…` notice for the next turn. Just before that reset,
-        `_resolve_interrupt_notice` rewrites this turn's `Interrupting…` notice (if any) to
-        `<Interrupted>`, now that reaching here means the interrupt has actually taken hold.
-
-        Reached on every path where `Session.send_turn`/the shell command returns or raises, via a
-        terminal handler; `_send_prompt`/`_run_shell_command` additionally call it from a `finally`
-        (through `_ensure_turn_finished`) so a `BaseException` unwind of the worker still gets here.
-        Idempotent enough for that backstop: a second call after the flag is already cleared just
-        re-does harmless UI resets.
-
-        If a quit was requested while this turn was still running (`_exit_requested`, set by
-        `_begin_exit`), the deferred `self.exit()` happens here — now that the worker thread has
-        actually finished and can no longer be stranded by the event loop stopping out from under
-        it. Runs last, after the turn is fully wound down.
-
-        Also clears the turn's `TurnWaitingStatic` (`_clear_turn_waiting_widget`) as a fallback:
-        normally already cleared by the first response/thinking/tool-call widget mounted for the
-        turn, but a turn can end without ever reaching one (e.g. `_show_error` before any content
-        streamed), and this is idempotent for the ordinary case where it's already `None`.
-
-        Anything queued during this turn -- the user typing ahead, or a `chat` hook handler's
-        `onAgentTurnEnd`/`onSubagentTurnEnd`/event continuation (see `Session.
-        drain_next_turn_text`) -- is drained and folded into a single new turn, submitted once
-        via `_submit_prompt` -- not one `_submit_prompt` call per queued message, which would
-        only ever deliver the first (the second call would find `_turn_in_flight` already
-        `True`, set synchronously by the first, and get dropped -- see
-        `handle_send_queued_message`). Multiple queued messages are joined with a blank line
-        between each, in the order they were queued, so queueing "check the tests" then "also
-        check lint" while a turn is running reads to the model as one message covering both,
-        rather than as two separate turns or a lost second one.
-
-        Also persists the session's current state (`Session.persist_state()` -- a no-op for an
-        untrusted workspace, or if the session never successfully claimed a directory) at the
-        end of every turn, success, error, or interruption alike, so a saved session stays
-        current without requiring an explicit save prompt at quit time. See
-        docs/specs/session-persistence.md.
-
-        `agent_turn_succeeded` is `True` only for a model turn that actually produced a response
-        (`_show_response`/`_finalize_streamed_response`, which also pass that response's text as
-        `response_text`) -- `False` for an error, an aborted turn, the `_ensure_turn_finished`
-        backstop, or a `!`-prefixed shell command's own "turn" (`response_text` stays `None` for
-        all of those). When `self._quit_on_success` (`--quit-on-success`) is set,
-        `agent_turn_succeeded` is `True`, and no message was queued during the turn (see the
-        drain below), this stashes `response_text` on `self._final_turn_response` -- so
-        `klorb.tui.entrypoint.run_repl` can print it to stdout once the TUI has actually torn
-        down, since otherwise a quit-on-success exit would leave no visible trace of what the
-        agent actually said -- then closes the session and quits the process. Any other outcome
-        -- a queued interjection, an error, or an abort -- latches `self._quit_on_success` off
-        for the rest of the process's life instead of merely skipping the quit for this one
-        turn: see docs/adrs/00177-quit-on-success-latches-off-once-disregarded.md for why a
-        later turn that happens to finish clean must not re-arm it.
-        """
+        """Scroll the history into view, refresh the token tally, re-enable the input, and
+        drain any queued messages into a new turn."""
         self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
@@ -799,10 +538,9 @@ class PromptSubmissionMixin(ReplAppBase):
         self._resolve_interrupt_notice()
         self._interrupt_notice_shown = False
         self.refresh_bindings()
-        # Drain any queued messages so the on_send_queued_message hook fires (removing each
-        # one's italics block) and, if any were pending, fold them into a single new turn below.
-        # `Session._current_turn_handlers` is already `None` by now (the turn that owned it, if
-        # any, has already returned), so the callbacks built for that turn -- stashed by
+        # Drain any queued messages so the on_send_queued_message hook fires and, if any
+        # were pending, fold them into a single new turn below. `Session._current_turn_handlers`
+        # is already `None` by now, so the callbacks built for that turn -- stashed by
         # `_send_prompt` -- are passed explicitly instead.
         next_turn_text = self._session.drain_next_turn_text(self._active_turn_callbacks)
         self._active_turn_callbacks = None
@@ -820,7 +558,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
     def on_tui_session_wake(self, message: TuiSessionWake) -> None:
         """Handles a `TuiSessionWake`: drains and resubmits whatever an idle-triggered event or
-        `reset_session` just queued (see `Session.deliver_event_message`)."""
+        `reset_session` just queued."""
         if self._turn_in_flight:
             # A real user submission raced ahead of this wake; its own `_finish_turn` will
             # drain the same queued message once that turn ends.

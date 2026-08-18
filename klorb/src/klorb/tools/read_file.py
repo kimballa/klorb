@@ -22,18 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
-    """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers —
-    delegating that mechanic to `self.read_file_core` (a `klorb.tools.util.ReadFileCore`), the
-    same one `ReadScratchpadTool` uses, so it's written and tested once.
+    """Reads up to `max_lines` lines from a text file, prefixed with 1-indexed line numbers.
 
-    `filename` is resolved and checked against `readDirs` (see
-    `klorb.permissions.workspace.resolve_and_evaluate_read`) before the file is opened —
-    confined to `SessionConfig.workspace.path` unless `SessionConfig.workspace.trusted`.
+    `filename` is resolved and checked against `readDirs` before the file is opened.
 
     `content` is passed through `self._secret_redactor` (a `klorb.tools.util.SecretRedactor`),
-    masking likely credentials as `[[SECRET:<type>:<hash>]]` tokens before they reach the model
-    -- `EditFileTool` detokenizes the same tokens back to the real bytes when they're echoed
-    back. See docs/specs/secret-redaction.md.
+    masking likely credentials as `[[SECRET:<type>:<hash>]]` tokens before they reach the model.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -127,10 +121,7 @@ class ReadFileTool(Tool):
         )
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["content"]` capped to 8
-        lines — a full-length `ReadFile` result can be up to `self.read_file_core.max_lines`
-        (200 by default) lines, far more than is useful to show inline.
-        """
+        """Renders pretty JSON with `result["content"]` capped to 8 lines."""
         if error is not None or not isinstance(result, dict) or "content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
@@ -150,7 +141,6 @@ class ReadFileTool(Tool):
             open_full=lambda: self._open_full_view(filename, result.get("start_line", 1)))
 
     def _open_full_view(self, filename: str, scroll_to_line: int) -> FullFileView:
-        """Passively re-read `filename` in full for the click-to-expand overlay -- no permission
-        re-ask, since this only redisplays a path the model already legitimately read once."""
+        """Passively re-read `filename` in full for the click-to-expand overlay."""
         path, _ = resolve_and_evaluate_read(self.context, filename)
         return read_full_file_lines(lambda: self.read_file_core.open_resource(path), scroll_to_line)

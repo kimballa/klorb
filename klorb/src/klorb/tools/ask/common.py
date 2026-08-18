@@ -1,11 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Data types, parsing, and the `AskUserQuestionsRequired` exception shared between
-`klorb.tools.ask.ask_user_questions.AskUserQuestionsTool` and `klorb.session` — kept in a leaf
-module with no `klorb.tools.tool`/`klorb.tools.setup_context` import so `klorb.session` can
-import it at module level (as it already does `klorb.permissions.table`'s exceptions)
-without a cycle: `klorb.tools.tool` imports `klorb.tools.setup_context`, which imports
-`klorb.session`, so a module `klorb.session` imports must never itself import `klorb.tools.tool`.
-"""
+`klorb.tools.ask.ask_user_questions.AskUserQuestionsTool` and `klorb.session`."""
 
 from typing import Any
 
@@ -17,9 +12,7 @@ set rather than a long list the user has to scan."""
 
 class QuestionOption:
     """One multiple-choice option offered for a `QuestionSpec`. `recommended`, if set, marks
-    the model's suggested answer — display order and any "(Recommended)" badge is a TUI
-    concern (see `klorb.tui.panels.ask_user_questions_panel.AskUserQuestionsPanel`); this class
-    only carries the data.
+    the model's suggested answer.
     """
 
     def __init__(self, label: str, description: str | None, recommended: bool) -> None:
@@ -30,10 +23,10 @@ class QuestionOption:
 
 class QuestionSpec:
     """One question out of an `AskUserQuestionsRequired` batch: `header` is a short chip-style
-    label (roughly 12 characters or fewer), `question` is the full question text, and
-    `options` is either empty (the user is shown a free-text box with no listed choices) or
-    2-`MAX_MULTI_CHOICE_OPTIONS` `QuestionOption`s. An "Other: ___" free-text choice is always
-    available in addition to any listed `options` — it is never itself one of them.
+    label, `question` is the full question text, and `options` is either empty (the user is
+    shown a free-text box with no listed choices) or 2-`MAX_MULTI_CHOICE_OPTIONS`
+    `QuestionOption`s. An "Other: ___" free-text choice is always available in addition to
+    any listed `options`.
     """
 
     def __init__(self, header: str, question: str, options: list[QuestionOption]) -> None:
@@ -43,10 +36,8 @@ class QuestionSpec:
 
 
 class AskUserQuestionsRequired(Exception):
-    """Raised by `AskUserQuestionsTool.apply()` for every well-formed `questions` argument —
-    asking *is* this tool's entire job, so there is no other outcome to compute. Carries the
-    parsed `QuestionSpec`s in the same order the model supplied them, for
-    `Session._run_tool_calls` to ask about one at a time via `on_ask_user_questions`.
+    """Raised by `AskUserQuestionsTool.apply()` for every well-formed `questions` argument.
+    Carries the parsed `QuestionSpec`s in the same order the model supplied them.
     """
 
     def __init__(self, questions: list[QuestionSpec]) -> None:
@@ -97,7 +88,7 @@ def _parse_question(raw_question: dict[str, Any], *, index: int) -> QuestionSpec
 def parse_questions(raw_questions: list[dict[str, Any]]) -> list[QuestionSpec]:
     """Validate and parse `AskUserQuestionsTool`'s raw `questions` argument into `QuestionSpec`s,
     in the same order, raising `ValueError` with a model-actionable message on any malformed
-    entry (see `_parse_question`/`_parse_option`)."""
+    entry."""
     return [
         _parse_question(raw_question, index=index)
         for index, raw_question in enumerate(raw_questions)
@@ -105,10 +96,9 @@ def parse_questions(raw_questions: list[dict[str, Any]]) -> list[QuestionSpec]:
 
 
 def format_answer(option: QuestionOption | None, other_text: str | None) -> str:
-    """Render one question's final answer as a single string, per
-    `AskUserQuestionsAnswer.answer`'s contract (see `klorb.session`): a selected `option`
-    renders as `"label: description"` (just `"label"` if it has no `description`); free text
-    (`option is None`) renders as the raw `other_text` unchanged."""
+    """Render one question's final answer as a single string: a selected `option`
+    renders as `"label: description"` (or just `"label"` if it has no `description`);
+    free text (`option is None`) renders as the raw `other_text` unchanged."""
     if option is None:
         return other_text or ""
     if option.description:

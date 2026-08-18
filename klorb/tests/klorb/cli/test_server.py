@@ -18,8 +18,7 @@ from klorb.workspace import Workspace
 def stub_process_config() -> Iterator[MagicMock]:
     """Replace file-backed process config loading with a fresh default for every test in
     this module, so tests don't depend on `/etc`, `$HOME`, or the repo's own `cwd` being
-    free of a stray `klorb-config.json`. Tests that care about the loading behavior itself
-    patch or call `klorb.process_config.load_process_config` directly instead.
+    free of a stray `klorb-config.json`.
     """
     with patch("klorb.cli.server.load_process_config", return_value=ProcessConfig()) as mock_load:
         yield mock_load
@@ -104,10 +103,9 @@ def test_run_server_cli_logs_config_warnings(
 
 def test_run_server_cli_configures_logging_to_stderr_and_session_log_file() -> None:
     """`repl_mode=False` sends records to a plain `StreamHandler` (stderr) in addition to the
-    session log file, so a client that captures the server subprocess's stderr (e.g. the
-    VSCode plugin) sees debug-level output too -- see docs/specs/paths-and-logging.md.
-    `stderr_json=True` formats each stderr line as one JSON object so that client can parse
-    each record instead of treating it as opaque text."""
+    session log file, so a client that captures the server subprocess's stderr sees debug-level
+    output too. `stderr_json=True` formats each stderr line as one JSON object so that client
+    can parse each record instead of treating it as opaque text."""
     with patch("klorb.cli.server.generate_session_id", return_value="some-session-id"):
         with patch("klorb.cli.server.configure_logging") as mock_configure_logging:
             with patch("klorb.cli.server.ServerStreams") as mock_streams_cls:

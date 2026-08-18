@@ -22,6 +22,9 @@
 
 * the chunk encoder GPU subsystem prints a bright yellow warning log error to stderr when we start. It's benign but gets in the way of the TUI. Can we mute this? It's in a lower level compiled lib, not python logging.
 
+* all 4 conf keys not recognized for semantic search enable/disable?
+  2026-08-18 08:54:30 - WARNING:klorb.process_config:Unrecognized klorb-config.json key 'search.skillsIndex.enabled'; ignoring.
+  2026-08-18 08:54:30 - WARNING:klorb.process_config:Unrecognized klorb-config.json key 'search.workspaceIndex.enabled'; ignoring.
 
 ### Feature backlog
 

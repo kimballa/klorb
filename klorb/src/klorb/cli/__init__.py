@@ -1,9 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """klorb's command-line interface: the default (no-subcommand) entry point plus one module per
-`klorb <subcommand>`. Each subcommand module exports a `build_<name>_parser()` and a
-`run_<name>_cli(argv)`, both re-exported here so other code can drive a subcommand
-programmatically without importing its module directly.
-"""
+`klorb <subcommand>`."""
 
 from klorb.cli._common import (
     INIT_SUBCOMMAND,

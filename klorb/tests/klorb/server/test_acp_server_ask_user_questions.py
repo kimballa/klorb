@@ -66,7 +66,7 @@ _ASK_CAPABLE = ClientCapabilities(field_meta={"klorb": {"askUserQuestions": True
 
 @pytest.fixture
 async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
-    """Factory fixture, mirroring the other `server/` test modules' own: `await make_harness(
+    """Factory fixture: `await make_harness(
     provider=...)` returns a running `AcpHarness` wired to an isolated `TrustManager`, closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
@@ -140,9 +140,8 @@ async def test_answers_each_question_by_selected_option(
 async def test_cancelled_answer_short_circuits_the_remaining_questions(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:
-    """A `cancelled` answer to any one question fails the whole `AskUserQuestions` call (a
-    `business_logic` `ToolCallOutcome`, like a denied permission ask) rather than raising -- the
-    model still gets a turn to react to the failure, and no later question is ever asked."""
+    """A `cancelled` answer to any one question fails the whole `AskUserQuestions` call rather
+    than raising."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     mock_provider = MagicMock()

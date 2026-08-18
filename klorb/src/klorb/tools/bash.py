@@ -1,9 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that runs a shell command requested by the model, gated by two layers of defense: a
-`CommandRules`/`readDirs`/`writeDirs`-driven allow/ask/deny classification of the parsed command
-(never a regexp/lexical one — see `klorb.permissions.shell_parse`), and an OS-level `bwrap`
-sandbox boundary (`klorb.sandbox.build_bwrap_argv`) around the actual execution, with an
-unsandboxed fallback where `bwrap` can't create a sandbox. See
+`CommandRules`/`readDirs`/`writeDirs`-driven allow/ask/deny classification of the parsed command,
+and an OS-level `bwrap` sandbox boundary around the actual execution, with an unsandboxed
+fallback where `bwrap` can't create a sandbox. See
 docs/specs/bash-tool-and-command-permissions.md for the full design.
 """
 
@@ -59,11 +58,7 @@ logger = logging.getLogger(__name__)
 _TMP_DIR_PREFIX = "klorb-bash-"
 
 KLORB_ENV_FILE_VAR = "KLORB_ENV_FILE"
-"""Env var pointing a bash subprocess at its session's `session_env_file()` -- today only set
-for a `type="bash"` hook handler's subprocess (`klorb.hooks.bash_handler`), so a hook script can
-read/customize values without them being visible to the model as tool call args. An ordinary
-model-issued `Bash` command sources the env file directly (see `_env_file_source_command`) and
-doesn't see this var."""
+"""Env var pointing a bash subprocess at its session's `session_env_file()`."""
 
 _ENV_FILE_BASENAME = "bash_env"
 """Subdirectory name within a session's data directory holding the env file."""
@@ -140,75 +135,62 @@ def _env_export_lines(session_config: "SessionConfig | None") -> list[str]:
 _TOOL_STATE_KEY = "Bash"
 _SANDBOX_WARNED_KEY = "sandbox_warned"
 """`session.tool_state["Bash"]["sandbox_warned"]`: whether the one-time sandbox-fallback notice
-(see `_sandbox_notice`) has already been emitted for this session — `session.tool_state` starts
-empty for every new `Session`, so this naturally resets at session boundaries (startup, `/clear`)
-with no extra plumbing. Not meant to survive process restarts or to be a security control —
-purely to avoid repeating an informational notice on every call within the same session."""
+has already been emitted for this session."""
 
 _PERSISTENT_SHELL_KEY = "persistent_shell"
 """`session.tool_state["Bash"]["persistent_shell"]`: the single live `PersistentShell` (or
-`None`) `shell_lifetime="session"`/`"new"` calls reuse — see `PersistentShell` and
-`BashTool._execute_persistent`. At most one persistent shell exists per `Session` at a time."""
+`None`) `shell_lifetime="session"`/`"new"` calls reuse. At most one persistent shell exists
+per `Session` at a time."""
 
 _STANDING_INTERJECTION_SUBJECT = "SessionTerminal"
 """`Session.register_standing_interjection()` subject key `BashTool` registers under whenever it
-creates or reuses a persistent shell — see `_standing_interjection_provider` and
-docs/adrs/00081-standing-interjections-complement-one-shot-for-level-triggered-state.md."""
+creates or reuses a persistent shell."""
 
 _TEARDOWN_SUBJECT = "Bash"
 """`Session.register_teardown()` subject key `BashTool` registers under for killing a live
-persistent shell when the owning `Session` is closed — see `Session.close()`."""
+persistent shell when the owning `Session` is closed."""
 
 _TIMEOUT_GRACE_SECONDS = 3.0
 """How long a persistent-shell command is given to finish after `SIGINT` before being escalated
-to `SIGKILL` on timeout or cancellation — see `PersistentShell._run_raw`."""
+to `SIGKILL` on timeout or cancellation."""
 
 _CANCEL_POLL_SECONDS = 0.1
-"""How often the one-shot (`BashTool._execute`) and persistent-shell (`PersistentShell._run_raw`)
-wait loops wake up to check `Session.active_cancel_event` while a command runs, so a Ctrl+C/
-Escape interrupt is noticed promptly rather than only once the command's own output arrives or
-its full `tools.bash.timeout` elapses. Mirrors `klorb.tui.shell`'s identical
-`_POLL_INTERVAL_SECONDS` for the `!`-prefixed direct-shell feature."""
+"""How often the one-shot and persistent-shell wait loops wake up to check
+`Session.active_cancel_event` while a command runs, so a Ctrl+C/Escape interrupt is noticed
+promptly rather than only once the command's own output arrives or its full `tools.bash.timeout`
+elapses."""
 
 _CANCEL_FAILURE_REASON = (
     "Command canceled: the user pressed Ctrl+C/Escape to interrupt this tool call.")
 """`failure_reason` reported to the model when `Session.active_cancel_event` fires while this
-command is running — see `_execute`/`_execute_persistent`."""
+command is running."""
 
 _CANCEL_STDERR_NOTICE = "SIGINT Triggered by user"
 """Appended to the `stderr` returned to the model on a cancelled call, so the interruption is
-visible in the stream the model actually reads, not just in `failure_reason` — see
-`_append_cancel_notice`."""
+visible in the stream the model actually reads, not just in `failure_reason`."""
 
 _CANCEL_EXIT_STATUS = 130
 """Synthetic exit status reported for a cancelled call whose child process didn't itself report a
-distinct non-zero exit -- the conventional `128 + SIGINT` signal-death code (see
-`klorb.tools.bash._decode_exit`), used unconditionally rather than left `None`/`0` so the model
-always sees an unambiguous non-zero result for a cancelled call."""
+distinct non-zero exit."""
 
 
 def _append_cancel_notice(stderr_text: str) -> str:
     """Append `_CANCEL_STDERR_NOTICE` to `stderr_text` on its own line, so a cancelled call's
-    stderr always carries an explicit, model-visible marker of what happened — used by both
-    `_execute` and `_execute_persistent`."""
+    stderr always carries an explicit, model-visible marker of what happened."""
     if stderr_text and not stderr_text.endswith("\n"):
         stderr_text += "\n"
     return stderr_text + _CANCEL_STDERR_NOTICE
 
 
 _PWD_TIMEOUT_SECONDS = 10.0
-"""Timeout for the short internal round-trips `PersistentShell` runs on its own behalf — the
-`pwd` after every command (`_refresh_cwd`), and the `jobs -p`/`export -p` probes a
-reconcile-on-grow rebuild uses (`has_live_jobs`/`export_state`). Deliberately short and
-independent of `tools.bash.timeout`, since none of these ever legitimately takes long."""
+"""Timeout for the short internal round-trips `PersistentShell` runs on its own behalf.
+Deliberately short and independent of `tools.bash.timeout`, since none of these ever
+legitimately takes long."""
 
 
 def _pump_lines(stream: IO[str], stream_name: str, sink: "queue.Queue[tuple[str, str | None]]") -> None:
     """Read `stream` line by line, putting `(stream_name, line)` onto `sink` for each one, then
-    `(stream_name, None)` once `stream` hits EOF (the process exited or closed this fd) — the
-    background pump-thread half of `PersistentShell`'s command-boundary detection, mirroring the
-    existing pump-thread pattern used elsewhere for shelled-out children (see
-    `klorb.tui.shell.UserShellCommand`)."""
+    `(stream_name, None)` once `stream` hits EOF."""
     for line in iter(stream.readline, ""):
         sink.put((stream_name, line))
     sink.put((stream_name, None))
@@ -230,40 +212,17 @@ class PersistentCommandResult:
     is `False`."""
     timed_out: bool
     cancelled: bool
-    """Whether the caller's `cancel_event` (a Ctrl+C/Escape interrupt — see
-    `Session.active_cancel_event`) fired while this command was running, distinct from
-    `timed_out` — see `PersistentShell._run_raw`."""
+    """Whether the caller's `cancel_event` fired while this command was running, distinct from
+    `timed_out`."""
 
 
 class PersistentShell:
-    """A single, long-lived plain `bash` process (no `-i`, no `--rcfile`) reused across `Bash`
-    calls within one `Session`, for `shell_lifetime="session"`/`"new"` (see docs/specs/bash-tool-
-    and-command-permissions.md's "Session-scoped terminals" section and
-    docs/plans/archive/005-session-scoped-bash-terminals.md).
+    """A single, long-lived plain `bash` process reused across `Bash` calls within one
+    `Session`, for `shell_lifetime="session"`/`"new"`.
 
-    Deliberately **not** launched with the one-shot path's `-i` (interactive): confirmed
-    empirically that an interactive bash reading a continuous stream of commands from a pipe (as
-    opposed to running a single `-c "<command>"`) writes a `PS1` prompt to stderr before every
-    read, corrupting the sentinel-delimited stderr stream with prompt text interleaved into it —
-    a problem the one-shot path never hits, since a `-c` invocation never enters bash's
-    interactive read loop at all. `_spawn_persistent_shell` (`klorb.tools.bash.BashTool`) instead
-    launches a plain, non-interactive `bash` and runs an explicit bootstrap command (dummying
-    `$PS1` just long enough to satisfy the `[ -z "$PS1" ] && return` guard most real `.bashrc`
-    files start with, `source`-ing the rcfile, then unsetting `PS1`/`PS2` again) through the
-    ordinary `run_command` channel as this shell's first command — see `BashTool._spawn_persistent_
-    shell` and docs/adrs/00063-bash-env-uses-clearenv-plus-shareenv-setenv-plus-forced-rcfile.md for why
-    the guard clause needs `$PS1` set at all. A non-interactive bash never prints prompts, so
-    nothing needs to be stripped from its stderr the way `_strip_bash_shell_noise` strips the
-    one-shot path's fixed `-i` startup lines.
-
-    Unlike the one-shot `bash -c "<command>"` path, this shell never exits between commands, so
-    there is no process-exit signal to wait on: each command is followed by a fresh, random
-    sentinel token (`uuid4().hex`, not a fixed string, so it can't collide with the command's own
-    output) written to the shell's own stdin, and two background reader threads
-    (`_pump_lines`, one per stream) watch for a matching `__KLORB_DONE_<token>__` line to know the
-    command has finished. `run_command` is not safe to call concurrently from multiple threads —
-    nothing in this codebase does that today, since `Session._run_tool_calls` dispatches every
-    tool call in a turn's round sequentially (see the plan's "Cleanup and lifecycle" section).
+    Each command is followed by a fresh sentinel token written to the shell's stdin, and
+    two background reader threads watch for a matching sentinel line to know the command has
+    finished.
     """
 
     def __init__(
@@ -278,16 +237,11 @@ class PersistentShell:
         self.cwd: str | None = cwd
         self.sandbox_snapshot = sandbox_snapshot
         """The `klorb.sandbox.allowed_dir_snapshot()` this shell's live `bwrap` mount namespace
-        was launched with, or `None` when the shell runs unsandboxed. `BashTool._execute_persistent`
-        compares it against the session's current snapshot before each command: a `bwrap` mount
-        namespace is frozen at launch, so if the session's allowed-directory set has *grown* (an
-        interactive grant added an `allow`) the sandbox is stale and must be rebuilt to see the
-        new directory — see docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md. `None`
-        skips that check entirely (nothing to go stale without a mount namespace)."""
+        was launched with, or `None` when the shell runs unsandboxed. `None` skips the
+        reconcile-on-grow check entirely."""
         self.networking = networking
-        """This shell's live `klorb.sandbox.network.SandboxNetworking` (the network-egress proxy
-        backend + relay-stub wiring — see `BashTool._start_sandbox_networking`), or `None` when
-        the shell is unsandboxed or `tools.bash.network.enabled` is `False`."""
+        """This shell's live `SandboxNetworking`, or `None` when the shell is unsandboxed or
+        `tools.bash.network.enabled` is `False`."""
         self.alive = True
         self._queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
         assert self.process.stdout is not None
@@ -301,9 +255,9 @@ class PersistentShell:
         atexit.register(self.kill)
 
     def _write_stdin(self, text: str) -> bool:
-        """Write `text` to the shell's stdin, returning whether it succeeded. A failure (the
-        shell's stdin is already closed, e.g. because the process died) marks this shell dead
-        rather than raising, since that's a normal, expected way to discover a dead shell."""
+        """Write `text` to the shell's stdin, returning whether it succeeded. A failure marks
+        this shell dead rather than raising, since that's a normal, expected way to discover a
+        dead shell."""
         if self.process.stdin is None:
             self._mark_dead()
             return False
@@ -320,15 +274,12 @@ class PersistentShell:
         cancel_event: threading.Event | None = None,
     ) -> PersistentCommandResult:
         """Run `command` in this shell and return its result, including a refreshed
-        `terminal_cwd` (a `pwd` round-trip run immediately afterward, via `_refresh_cwd`) when
-        the shell is still alive and the command didn't time out or get cancelled.
+        `terminal_cwd` when the shell is still alive and the command didn't time out or get
+        cancelled.
 
-        `cancel_event`, if given, is polled while the command runs (see `_run_raw`) so a
-        Ctrl+C/Escape interrupt (`Session.active_cancel_event`) reaches this specific running
-        command immediately rather than only at the next tool-call boundary. Only the outermost,
-        model-issued command should pass one — the internal bootstrap/`pwd`/`jobs -p`/`export -p`
-        round-trips below never do, since they're harness bookkeeping, not the thing a user's
-        interrupt is aimed at."""
+        `cancel_event`, if given, is polled while the command runs so a Ctrl+C/Escape
+        interrupt reaches this specific running command immediately rather than only at the
+        next tool-call boundary."""
         stdout, stderr, exit_status, timed_out, cancelled = self._run_raw(
             command, timeout_seconds, cancel_event)
         cwd = self._refresh_cwd() if self.alive and not timed_out and not cancelled else self.cwd
@@ -344,12 +295,8 @@ class PersistentShell:
         return self.cwd
 
     def has_live_jobs(self) -> bool:
-        """Whether this shell currently has any background jobs (`jobs -p` prints a non-empty
-        list) — the probe `BashTool`'s reconcile-on-grow uses before rebuilding a stale sandbox,
-        so a rebuild never silently kills background work the model deliberately started (see
-        `BashTool._execute_persistent`). A dead or timed-out probe conservatively reports `False`
-        (there's no live shell whose jobs a rebuild could destroy). Cannot see already-`disown`'d
-        processes — the same acknowledged gap `jobs` itself has."""
+        """Whether this shell currently has any background jobs. A dead or timed-out probe
+        conservatively reports `False`."""
         stdout, _stderr, _exit_status, timed_out, _cancelled = self._run_raw(
             "jobs -p", _PWD_TIMEOUT_SECONDS)
         if not self.alive or timed_out:
@@ -357,12 +304,10 @@ class PersistentShell:
         return bool(stdout.strip())
 
     def export_state(self) -> str:
-        """This shell's exported environment as re-executable `declare -x` statements
-        (`export -p`), replayed into a rebuilt shell so cwd + exported env survive a
-        reconcile-on-grow sandbox rebuild — the load-bearing carryable state (see
-        `BashTool._rebuild_persistent_shell` and
-        docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md). Returns `""` if the shell died
-        or the probe failed, so a rebuild just proceeds without a replay rather than raising."""
+        """This shell's exported environment as re-executable `declare -x` statements, replayed
+        into a rebuilt shell so cwd + exported env survive a reconcile-on-grow sandbox rebuild.
+        Returns `""` if the shell died or the probe failed, so a rebuild just proceeds without
+        a replay rather than raising."""
         stdout, _stderr, exit_status, timed_out, _cancelled = self._run_raw(
             "export -p", _PWD_TIMEOUT_SECONDS)
         if not self.alive or timed_out or exit_status != 0:
@@ -374,22 +319,12 @@ class PersistentShell:
         cancel_event: threading.Event | None = None,
     ) -> tuple[str, str, int | None, bool, bool]:
         """Run `command` to completion (or timeout/cancellation/death) and return raw
-        `(stdout, stderr, exit_status, timed_out, cancelled)` — no cwd refresh, so `_refresh_cwd`
-        can call this itself without recursing into another cwd refresh.
+        `(stdout, stderr, exit_status, timed_out, cancelled)`.
 
-        See the module-level `PersistentShell` docstring for the sentinel-token protocol this
-        implements. On timeout, or on `cancel_event` becoming set (a Ctrl+C/Escape interrupt):
-        `SIGINT` is sent to the shell's whole process group first (the same delivery `Ctrl-C`
-        would use), and the sentinel wait continues for `_TIMEOUT_GRACE_SECONDS` longer. Because
-        this shell runs non-interactively (no `-i` — see the class docstring), its own default
-        `SIGINT` disposition is to terminate, not survive it the way an interactive shell would:
-        a plain, non-trapping command's `SIGINT` typically ends the whole shell promptly, well
-        within the grace period, rather than leaving it alive for a next call. Only a command
-        (or a shell) that explicitly makes itself immune to `SIGINT` consumes the full grace
-        period before being escalated to an unconditional `SIGKILL` on the whole process group —
-        there is no way to kill only the stuck command without a pty/job-control layer this
-        doesn't build. A cancellation is reported as `cancelled=True` regardless of which of
-        these ways it actually ends, since either way the user asked for it to stop.
+        On timeout, or on `cancel_event` becoming set, `SIGINT` is sent to the shell's
+        whole process group first, and the sentinel wait continues for
+        `_TIMEOUT_GRACE_SECONDS` longer. A cancellation is reported as `cancelled=True`
+        regardless of how cleanly it ends, since either way the user asked for it to stop.
         """
         if not self.alive:
             return "", "", None, False, False
@@ -524,20 +459,14 @@ class PersistentShell:
 
     def kill(self) -> None:
         """Unconditionally end this shell: `SIGKILL` its whole process group and mark it dead.
-        Safe to call more than once, or on an already-dead shell (a no-op past the first call) --
-        registered directly against `atexit` in `__init__`, and also called from
-        `BashTool._execute_persistent` (`shell_lifetime="new"`) and `Session.close()` (via the
-        teardown callback `BashTool` registers)."""
+        Safe to call more than once, or on an already-dead shell."""
         if not self.alive:
             return
         self._kill_process_group()
 
 
 def _standing_interjection_provider(shell: PersistentShell) -> Callable[[], str | None]:
-    """Build the `Session.register_standing_interjection` provider for a live persistent shell:
-    a message reminding the model it has one open (and how to keep using or close it) for as long
-    as `shell.alive`, `None` forever after it dies -- see docs/adrs/standing-interjections-
-    complement-one-shot-for-level-triggered-state.md."""
+    """Build the `Session.register_standing_interjection` provider for a live persistent shell."""
 
     def provider() -> str | None:
         if not shell.alive:
@@ -554,19 +483,15 @@ def _standing_interjection_provider(shell: PersistentShell) -> Callable[[], str 
 def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str, str]:
     """Build the environment `BashTool` runs a command with: `HOME`/`USER` are always shared
     from the klorb process's own environment, `WORKSPACE_ROOT` is always set to the resolved
-    workspace root, and `SHELL`/`BASH` are always set to `bash_command` (unconditionally — not
-    gated on any config, and not the klorb process's own `$SHELL`/`$BASH` if any — this is the
-    actual bash binary the command runs under, per `ProcessConfig.bash_command`). Everything else
+    workspace root, and `SHELL`/`BASH` are always set to `bash_command`. Everything else
     in the klorb process's own environment is left out.
 
     ``NO_COLOR``, ``session_config.share_env`` passthrough, and ``session_config.set_env``
-    overrides are written to the session env file (see `session_env_file`) and sourced inside
-    the shell before the user command runs, rather than injected into this process-level dict.
-    When a `bwrap` sandbox is in use this same dict is re-applied inside it via ``--clearenv`` +
-    ``--setenv`` (see `klorb.sandbox.build_bwrap_argv`); on the unsandboxed fallback path there's
-    no ``--clearenv`` to lean on, so ``subprocess.Popen(..., env=...)`` receives exactly this
-    dict, not ``None`` (which would inherit the entire parent environment), keeping the
-    least-privilege intent intact regardless of which path runs.
+    overrides are written to the session env file and sourced inside the shell before the
+    user command runs, rather than injected into this process-level dict. When a `bwrap`
+    sandbox is in use this same dict is re-applied inside it via ``--clearenv`` + ``--setenv``;
+    on the unsandboxed fallback path ``subprocess.Popen(..., env=...)`` receives exactly this
+    dict, keeping the least-privilege intent intact regardless of which path runs.
     """
     env: dict[str, str] = {}
     for name in ("HOME", "USER"):
@@ -580,11 +505,7 @@ def build_bash_env(session_config: SessionConfig, bash_command: str) -> dict[str
 
 def _sandbox_notice() -> str:
     """One-time, human-readable explanation of why this command ran without an OS-level sandbox
-    boundary — tailored by `klorb.sandbox.detect_bwrap_unavailable_reason()`: a missing `bwrap`
-    binary (fixable with `apt-get install bubblewrap`) versus a kernel/container policy that
-    forbids unprivileged user namespaces (common inside Docker/cloud-agent environments; fixed by
-    reconfiguring the host, not by installing anything). Only reached when `bwrap_available()` is
-    `False` — see `_maybe_sandbox_notice`."""
+    boundary. Only reached when `bwrap_available()` is `False`."""
     if detect_bwrap_unavailable_reason() == "missing_binary":
         detail = (
             "Sandbox layer unavailable; cannot launch a sandboxed shell. "
@@ -601,21 +522,15 @@ def _sandbox_notice() -> str:
 def _decode_exit(returncode: int) -> tuple[bool, str | None]:
     """Return `(success, failure_reason)` for a normal (non-timeout) process exit.
 
-    A signal death shows up one of two ways here, verified directly against this project's own
-    dev/cloud environment:
+    A signal death shows up one of two ways here:
 
-    * Positive, `128 + signum` — the outer `bash` we launch forked a real child for the target
-      command (e.g. it's not the last thing in the script, or it's part of a pipeline/compound
-      statement) and observed *that* child die by signal; bash itself then exits normally with
-      the conventional `128 + signum` code, which is what `Popen.returncode` reports.
-    * Negative, `-signum` — Python's ordinary direct-child-signaled convention. This happens
-      when bash's own tail-call optimization `exec()`s directly into a simple trailing external
-      command (no pipe/compound wrapping) instead of forking — confirmed empirically: `bash -c
-      "unset PS1; unset PS2; python3 -c '...os.kill(os.getpid(), signal.SIGSEGV)'"` reports a
-      *negative* `Popen.returncode`, not `139`, because bash's own process image was replaced by
-      the target's — there is no separate bash process left to translate the signal into a
-      normal exit. Both shapes are decoded the same way here so neither is mistaken for "exited
-      normally with a large status code".
+    * Positive, `128 + signum` — the outer `bash` forked a real child for the target command
+      and observed *that* child die by signal; bash itself then exits normally with the
+      conventional `128 + signum` code, which is what `Popen.returncode` reports.
+    * Negative, `-signum` — Python’s ordinary direct-child-signaled convention. This happens
+      when bash’s own tail-call optimization `exec()`s directly into a simple trailing external
+      command instead of forking. Both shapes are decoded the same way here so neither is
+      mistaken for "exited normally with a large status code".
     """
     if returncode == 0:
         return True, None
@@ -638,18 +553,14 @@ _BASH_NOISE_NO_JOB_CONTROL = "bash: no job control in this shell"
 _BASH_NOISE_PROC_GROUP_PREFIX = "bash: cannot set terminal process group ("
 _BASH_NOISE_PROC_GROUP_SUFFIX = "): Inappropriate ioctl for device"
 """The two fixed, content-independent lines `bash -i` always writes to stderr when launched
-with no controlling tty (stdin from `/dev/null`, per this tool's design) — confirmed empirically
-against this project's own dev/cloud environment. The process-group line's parenthesized number
-varies by platform/session (observed as `-1` in some environments, an actual pid in others), so
-it's matched by prefix/suffix rather than a single exact string; `no job control in this shell`
-is otherwise always identical. Stripped from the *front* of captured stderr only (see
-`_strip_bash_shell_noise`)."""
+with no controlling tty. The process-group line's parenthesized number varies by
+platform/session, so it's matched by prefix/suffix rather than a single exact string. Stripped
+from the *front* of captured stderr only."""
 
 
 def _strip_bash_shell_noise(text: str) -> str:
     """Remove `bash -i`'s fixed startup noise lines from the front of `text`, stopping at the
-    first line that doesn't match either known noise pattern — so real command output starting
-    on the very next line is left untouched."""
+    first line that doesn't match either known noise pattern."""
     lines = text.splitlines(keepends=True)
     index = 0
     while index < len(lines):
@@ -681,21 +592,15 @@ _CMDS_WITH_NETWORK_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "go": frozenset({"get", "install"}),
     "cargo": frozenset({"add", "install", "build"}),
 }
-"""Which subcommand(s) of `git`/`go`/`cargo` actually reach the network — these three, unlike
-every other entry `tools.bash.network.recognizedClients` names, are used constantly for purely
-local operations (`git status`, `go build` against an already-vendored module cache, `cargo
-build` with no new dependency), so scanning every invocation's arguments for a domain would be
-noisy and pointless. See `_bash_network_scan_targets`."""
+"""Which subcommand(s) of `git`/`go`/`cargo` actually reach the network — these three are used
+constantly for purely local operations, so scanning every invocation's arguments for a domain
+would be noisy and pointless."""
 
 _BARE_HOST_RE = re.compile(
     r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?::\d+)?$")
 """Matches a schemeless `host[:port]` token whose final label is alphabetic (a plausible TLD) —
-deliberately conservative, so a bare package name/version specifier (`requests`, `requests==2.28.1`,
-a subcommand like `install`) is never mistaken for a domain: none of those end in a dotted,
-letters-only label. A real domain missed by this heuristic (or a schemeless SCP-style git remote,
-`user@host:path`, which this doesn't attempt to parse) is still caught at connection time by
-`klorb.sandbox.network.ProxyBackend`'s own `bash_domain_rules` check — this scanner exists to ask
-*early*, not to be the only enforcement point. See `_extract_literal_domain`."""
+deliberately conservative, so a bare package name/version specifier is never mistaken for a
+domain."""
 
 
 def _extract_literal_domain(token: str) -> str | None:
@@ -766,40 +671,19 @@ def _network_command_domains(argv: list[str], recognized_clients: frozenset[str]
 class BashTool(InterruptibleTool):
     """Runs a single shell command string on the model's behalf.
 
-    The command is parsed via `shfmt --to-json` (`klorb.permissions.shell_parse.parse_command`),
-    never a regexp/lexical classifier. Every simple command extracted from the parse (across
-    pipelines, `&&`/`||`/`;` lists, subshells, command substitutions, control-flow bodies, etc.)
-    is evaluated against `context.session_config.command_rules`
-    (`klorb.permissions.command_access.CommandPermissionsTable`); every redirection's file target
-    is evaluated against `readFiles`/`writeFiles` and `readDirs`/`writeDirs` via the same
-    `resolve_and_evaluate_write`/`resolve_and_evaluate_read` the file tools use. The overall
-    verdict is the strictest of all
-    of these (`klorb.permissions.table.stricter_verdict`) — never more permissive than any single
-    contributor — enforced through the same `raise_if_not_allowed()` seam every other tool uses.
+    The command is parsed and every simple command extracted from the parse is evaluated
+    against `context.session_config.command_rules`; every redirection's file target is
+    evaluated against `readFiles`/`writeFiles` and `readDirs`/`writeDirs`. The overall verdict
+    is the strictest of all contributors, enforced through `raise_if_not_allowed()`.
 
-    Once permitted, the command runs via `bash --rcfile ${HOME}/.bashrc -i -c "unset PS1; unset
-    PS2; <command>"`, wrapped in a `bwrap` sandbox (see `klorb.sandbox.build_bwrap_argv`) whenever
-    one can actually be created on this host (`klorb.sandbox.bwrap_available`). Where it can't (no
-    `bwrap` binary, or a kernel/container policy forbidding unprivileged user namespaces — common
-    inside Docker/cloud-agent environments) the command falls back to unsandboxed execution, with
-    a one-time notice the first time that happens in a given session (see `_sandbox_notice`) — the
-    permission checks above are enforced identically either way.
+    Once permitted, the command runs via `bash -i -c`, wrapped in a `bwrap` sandbox whenever
+    one can be created. Where it can't, the command falls back to unsandboxed execution with a
+    one-time notice; the permission checks are enforced identically either way.
 
-    `shell_lifetime` is optional and selects how long the underlying shell process lives; a
-    missing key, a `None`, or an empty string all default to `"command"`. `"command"` spawns a
-    fresh, non-persistent shell that exits when the command finishes (no state carries over to
-    the next call); `"session"` reuses the one live persistent shell for this `Session` if one
-    exists, or creates it otherwise; `"new"` kills any existing persistent shell first, then
-    creates a fresh one that becomes the persistent shell for subsequent `"session"` calls. At
-    most one persistent shell exists per `Session` at a time — see `PersistentShell` and
-    docs/specs/bash-tool-and-command-permissions.md's "Session-scoped terminals" section.
-
-    `intent` is a required, model-supplied short statement of what `command` is trying to
-    accomplish — shown alongside the command in the approval dialog and the history scroll (see
-    `summary()` and `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`), and passed to
-    `klorb.permissions.risk_classifier` so a command that looks deceptively different from its
-    own stated intent scores as more risky. See docs/specs/bash-tool-and-command-permissions.md's
-    "Agent-stated intent" section.
+    `shell_lifetime` selects how long the underlying shell process lives: `"command"` spawns a
+    fresh shell that exits when the command finishes; `"session"` reuses the one live persistent
+    shell for this `Session`; `"new"` kills any existing persistent shell first, then creates a
+    fresh one. At most one persistent shell exists per `Session` at a time.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -926,56 +810,13 @@ class BashTool(InterruptibleTool):
     def _classify(
         self, analysis: BashCommandAnalysis, command: str, intent: str,
     ) -> tuple[Verdict, list[PermissionAskItem]]:
-        """Evaluate every simple command's `CommandPermissionsTable` verdict, every redirection
-        target's directory-access verdict, and every reason the walker itself forced an "ask".
+        """Evaluate every simple command's verdict, every redirection target's directory-access
+        verdict, and every reason the walker itself forced an "ask".
 
         A single `"deny"` anywhere short-circuits: the whole command is denied outright, with no
-        `PermissionAskItem`s collected at all (nothing else needs asking about once the call is
-        already going to be refused). Otherwise, every individual `"ask"` contributor becomes its
-        own `PermissionAskItem` — not just the strictest one — so `Session` can ask about each
-        in series (see `MultiPermissionAskRequired`) rather than collapsing a compound command
-        with several independent concerns into one opaque prompt. `"allow"` (no deny, no ask
-        items at all) means the whole command is permitted to run as-is.
-
-        Every collected item shares one `BashCommandContext` (see that class's own docstring for
-        the full field-by-field rationale): `command` (the model's original, unparsed command
-        string) becomes `command_text` — `analysis` alone has no notion of the raw command text,
-        and a UI (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`) needs it to show
-        what's actually being run, on top of each item's own specific `resource_description`
-        detail. `is_compound` (`analysis.command_count > 1` — every executable node the walker
-        visited, counted regardless of whether its own argv was fully literal, so a `for`/`if`/
-        `case` body command with a non-literal argument still counts even though it never reaches
-        `analysis.simple_commands`; see `BashCommandAnalysis.command_count`) lets a UI tell a
-        decision about one simple command (`resource_description`) apart from the full command
-        line it belongs to, even when that full line is short enough to display without
-        truncation. Each item gets its own `item_command_text` within that shared context —
-        `analysis`'s `SimpleCommand`/`ForcedAskReason`/`RedirectTarget` each carry their own
-        `source_text`, the exact original source of the one statement this particular item is
-        actually about, distinct from `command_text`'s full raw command — so a UI can show *this
-        item's own command* as the prominent preview, not the whole compound line every other item
-        in the same batch would show identically. `intent` (the model's own required argument
-        describing what the whole command is trying to accomplish) is shared identically across
-        every item too, so a UI and the risk classifier can both see it.
-
-        `context.permission_override`, when set, lets a previously-approved-once resource skip
-        straight past its check on this one retried call (see `PermissionOverride`): a simple
-        command whose exact argv is in `override.commands` never reaches `command_table`, and a
-        structural item's `resource_description` (the walker's own reason text — deterministic
-        across a retry, since `parse_command` is pure and `command` is identical) being in
-        `override.reasons` drops it rather than turning it into another `PermissionAskItem`.
-        Redirection targets don't need an analogous check here — they're `Path`s, already covered
-        by `override.paths` inside `evaluate_write`/`resolve_and_evaluate_read` themselves (see
-        `_evaluate_redirect`). A network-command's own extracted domain(s) (see below) are
-        likewise checked against `override.domains`.
-
-        When `tools.bash.network.enabled`, every simple command whose `argv0` is a recognized
-        network client (`_network_command_domains`) contributes one more independent check per
-        literal domain its arguments name — evaluated against `bash_domain_rules` exactly like
-        `klorb.sandbox.network.ProxyBackend` evaluates the same table at connection time, so an
-        `"ask"` here is the *same* decision the proxy would otherwise have to fail closed on.
-        This is additional to, never instead of, that simple command's own `CommandPermissionsTable`
-        verdict above — the same "on top of, not instead of" relationship `IMPLICIT_READ_COMMANDS`
-        already has with a bare `cat`/`less` invocation's `readDirs` check.
+        `PermissionAskItem`s collected. Otherwise, every individual `"ask"` contributor becomes
+        its own `PermissionAskItem` so `Session` can ask about each in series. `"allow"` (no
+        deny, no ask items) means the whole command is permitted to run as-is.
         """
         command_table = CommandPermissionsTable(self.context.session_config.command_rules)
         override = self.context.permission_override
@@ -1054,9 +895,8 @@ class BashTool(InterruptibleTool):
 
     def _compute_sandbox_dirs(self, home: Path) -> SandboxDirs:
         """The current `SandboxDirs` bind sets for this session's permission tables — recomputed
-        on demand (not cached) so a mid-session grant that widens `readDirs`/`writeDirs` is
-        reflected the next time a one-shot command is sandboxed, and so the persistent shell's
-        reconcile-on-grow check (`_execute_persistent`) sees the up-to-date set."""
+        on demand so a mid-session grant that widens `readDirs`/`writeDirs` is reflected the
+        next time a command is sandboxed."""
         config = self.context.session_config
         return compute_sandbox_dirs(
             workspace_root=config.workspace.path.resolve(),
@@ -1072,17 +912,11 @@ class BashTool(InterruptibleTool):
         """The `bwrap ... --` argv prefix for this session, to prepend to a shell invocation.
         Only meaningful when `bwrap_available()`; callers gate on that themselves.
 
-        `path_dirs` always includes the klorb process's own Python interpreter directory
-        (`sys.executable`'s parent), on top of the ordinary `PATH`-derived top-up binds — so the
-        in-sandbox network-egress relay stub (`klorb.sandbox.network`, launched with this same
-        interpreter — see `_start_sandbox_networking`) is always reachable inside the sandbox
-        regardless of whether that interpreter's own directory happens to be on `PATH`.
-        Deliberately *not* resolved (symlinks followed): the relay stub is launched with the
-        literal, unresolved `sys.executable` string (see `start_sandbox_networking`), so it's
-        that literal path's own directory that must be bound, not its eventual symlink target's
-        -- a venv's `python3` is commonly a symlink chain ending outside the venv's own `bin/`,
-        and binding only the resolved target's directory leaves the literal invoked path
-        unreachable."""
+        `path_dirs` always includes the klorb process's own Python interpreter directory, on
+        top of the ordinary `PATH`-derived top-up binds. Deliberately *not* resolved (symlinks
+        followed): the relay stub is launched with the literal `sys.executable` string, so it's
+        that literal path's own directory that must be bound, not its eventual symlink target's.
+        """
         interpreter_dir = Path(sys.executable).parent
         return build_bwrap_argv(
             workspace_root=self.context.session_config.workspace.path.resolve(),
@@ -1090,13 +924,9 @@ class BashTool(InterruptibleTool):
             path_dirs=[*path_dirs_from_env(), interpreter_dir])
 
     def _start_sandbox_networking(self) -> SandboxNetworking | None:
-        """Stand up this invocation's network-egress proxy (`klorb.sandbox.network.
-        ProxyBackend` + relay-stub wiring) if `tools.bash.network.enabled` allows it, else
-        `None` — `_execute`/`_spawn_persistent_shell` fold `None` into "sandboxed with no
-        network at all", exactly today's `--unshare-net`-denies-everything behavior. Only ever
-        called once `bwrap_available()` is already known `True`; there is nothing for a network
-        proxy to gate when the command isn't sandboxed at all (the unsandboxed fallback already
-        has unrestricted network access)."""
+        """Stand up this invocation's network-egress proxy if `tools.bash.network.enabled`
+        allows it, else `None`. Only ever called once `bwrap_available()` is already known
+        `True`."""
         if not self._network_enabled:
             return None
         return start_sandbox_networking(
@@ -1155,10 +985,7 @@ class BashTool(InterruptibleTool):
         workspace_root: Path, networking: SandboxNetworking | None,
     ) -> dict[str, Any]:
         """The body of `_execute()` proper, split out so `_execute()` itself can wrap it in a
-        `try`/`finally` that unconditionally closes `networking` (if any) on every exit path —
-        including the `FileNotFoundError`/`ValueError` raise below, which a `finally` on this
-        method's own body alone wouldn't reach cleanly given the nested `with open(...)` block
-        it raises out of."""
+        `try`/`finally` that unconditionally closes `networking` on every exit path."""
         tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_DIR_PREFIX))
 
         def cleanup_tmp_dir() -> None:
@@ -1307,10 +1134,8 @@ class BashTool(InterruptibleTool):
 
     def _maybe_sandbox_notice(self) -> str | None:
         """Return `_sandbox_notice()` the first time a command actually runs unsandboxed for the
-        current `Session` (tracked via `session.tool_state["Bash"]["sandbox_warned"]`), or every
-        such call if there's no `Session` to dedupe against — shared by `_execute` and
-        `_execute_persistent`. Returns `None` whenever `bwrap_available()` (the command ran inside
-        a real sandbox, so there's nothing to warn about)."""
+        current `Session`, or every such call if there's no `Session` to dedupe against. Returns
+        `None` whenever `bwrap_available()`."""
         if bwrap_available():
             return None
         if self.context.session is None:
@@ -1388,9 +1213,7 @@ class BashTool(InterruptibleTool):
     ) -> PersistentShell:
         """Replace a stale sandboxed persistent shell with a fresh one launched against the
         current (wider) permission tables, replaying the old shell's exported env + cwd, then
-        `SIGKILL` the old sandbox. Only called once `has_live_jobs()` has confirmed no background
-        work would be lost — see `_execute_persistent` and
-        docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md."""
+        `SIGKILL` the old sandbox."""
         restore_env = old.export_state()
         restore_cwd = old.cwd
         new_shell = self._spawn_persistent_shell(restore_env=restore_env, restore_cwd=restore_cwd)
@@ -1496,16 +1319,12 @@ class BashTool(InterruptibleTool):
         current permission tables before a command runs in it. Returns
         `(shell_to_use, sandbox_rebuilt, stale_refusal)`:
 
-        * Unsandboxed shell (`sandbox_snapshot is None`), or the allowed-dir set is unchanged (the
-          overwhelmingly common case): the same shell, `False`, `None` — run the command as-is.
-        * The allowed-dir set grew (an interactive grant added an `allow` since this sandbox
-          launched — see docs/adrs/00113-rebuild-persistent-sandbox-when-grants-grow.md) and the shell
-          has no live background jobs: a freshly rebuilt shell, `True`, `None`.
-        * It grew but the shell *does* have live background jobs: the original shell (untouched),
-          `False`, and a non-`None` refusal string — the caller must not run the command, to avoid
-          silently killing that background work; the model is told to opt into a
-          `shell_lifetime="new"` respawn instead (see
-          docs/adrs/00112-rebuild-persistent-sandbox-only-when-no-live-jobs.md).
+        * The allowed-dir set is unchanged (the overwhelmingly common case): the same shell,
+          `False`, `None`.
+        * The allowed-dir set grew and the shell has no live background jobs: a freshly rebuilt
+          shell, `True`, `None`.
+        * It grew but the shell has live background jobs: the original shell (untouched), `False`,
+          and a non-`None` refusal string.
         """
         if shell.sandbox_snapshot is None:
             return shell, False, None
@@ -1527,9 +1346,9 @@ class BashTool(InterruptibleTool):
     def _sandbox_stale_response(
         self, command: str, shell: PersistentShell, refusal: str,
     ) -> dict[str, Any]:
-        """The response for a reconcile-on-grow refusal (live background jobs blocked an automatic
-        rebuild — see `_reconcile_sandbox`): the command did not run, the existing terminal is
-        left alive and untouched, and `failure_reason` explains how to pick up the new grant."""
+        """The response for a reconcile-on-grow refusal: the command did not run, the existing
+        terminal is left alive and untouched, and `failure_reason` explains how to pick up the
+        new grant."""
         return {
             "command": command,
             "exit_status": None,
@@ -1549,10 +1368,8 @@ class BashTool(InterruptibleTool):
     def _finalize_persistent_output(
         self, stdout: str, stderr: str,
     ) -> tuple[str | None, str | None, str | None, str | None]:
-        """Spill `stdout`/`stderr` (in-memory strings, unlike `_execute`'s already-on-disk
-        capture files) to a fresh per-call directory if either exceeds `bash_spill_bytes`,
-        mirroring `_execute`'s `stdout`/`stdout_file` (`None`/non-`None`, exactly one of each
-        pair) contract."""
+        """Spill `stdout`/`stderr` to a fresh per-call directory if either exceeds
+        `bash_spill_bytes`."""
         stdout_over = len(stdout.encode("utf-8")) > self._spill_bytes
         stderr_over = len(stderr.encode("utf-8")) > self._spill_bytes
         if not stdout_over and not stderr_over:
@@ -1574,25 +1391,16 @@ class BashTool(InterruptibleTool):
         return None, str(path)
 
     def _grant_tmp_dir_read_access(self, tmp_dir: Path) -> None:
-        """Auto-grant read access to `tmp_dir` (this one invocation's own stdout/stderr capture
-        directory, and nothing else — a fresh `mkdtemp()` per call) so a follow-up `ReadFile`/
-        `Grep` call against a spilled `stdout_file`/`stderr_file` doesn't itself hit an "ask".
-        Appends to the live `session_config.read_dirs.allow` (reassigning the whole `DirRules`,
-        never mutating its list in place, per `DirRules`'s documented contract) — this is
-        automatic harness bookkeeping for the harness's own scratch output, not a
-        user-confirmed grant, so it bypasses `klorb.permissions.grant`'s interactive-grant flow
-        entirely (there is no ask being answered here).
-        """
+        """Auto-grant read access to `tmp_dir` so a follow-up `ReadFile`/`Grep` call against
+        a spilled `stdout_file`/`stderr_file` doesn't itself hit an "ask"."""
         read_dirs = self.context.session_config.read_dirs
         self.context.session_config.read_dirs = DirRules(
             deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
 
     def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
-        """A shell command that ran but failed (non-zero exit, timeout, a dead persistent
-        terminal, or a reconcile-on-grow refusal) doesn't raise — `apply()` returns a result
-        dict carrying `"success": False` (see `_decode_exit` and `_execute_persistent`). So the
-        base class's `error is None` heuristic isn't enough here: honor the result's own
-        `"success"` flag once no exception was raised.
+        """A shell command that ran but failed doesn't raise — `apply()` returns a result
+        dict carrying `"success": False`. The base class's `error is None` heuristic isn't
+        enough here: honor the result's own `"success"` flag once no exception was raised.
         """
         if error is not None:
             return False
@@ -1600,8 +1408,7 @@ class BashTool(InterruptibleTool):
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Prefix the rendered command with the model's own `intent` (when given), so the
-        history scroll shows what the command is *for* alongside what it actually runs — e.g.
-        `Bash: List all _wait_until call sites in test_tui_repl.py ($ grep -n ...)`."""
+        history scroll shows what the command is *for* alongside what it actually runs."""
         command = args.get("command", "?")
         intent = args.get("intent")
         label = f"{intent}\n$ {command}" if intent else command

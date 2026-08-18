@@ -2,17 +2,7 @@
 """Tests for klorb.sandbox.network: `ProxyBackend`'s SOCKS5/HTTP CONNECT protocol handling,
 domain evaluation against `bash_domain_rules`, `BlockedDomainRecorder` bookkeeping, and the
 relay-stub/bootstrap-script generation. See docs/specs/bash-tool-and-command-permissions.md's
-"Sandboxing" section.
-
-`ProxyBackend` itself never cares whether an accepted connection's fd came from a real TCP
-listener or anything else -- it just wraps it as a `socket.socket` and speaks the protocol over
-it. So these tests hand it one end of an ordinary `socket.socketpair()` in place of the in-sandbox
-relay stub's real TCP `accept()`, exactly the way `socket.send_fds`/`recv_fds` pass a real
-accepted connection's fd across the control channel -- no real TCP port, and no real `bwrap`
-sandbox, is needed to exercise `ProxyBackend` in isolation. End-to-end coverage through a real
-`bwrap` sandbox and the actual relay stub lives in `tests/klorb/tools/test_bash.py`'s
-`requires_bwrap` section.
-"""
+"Sandboxing" section."""
 
 import socket
 import threading
@@ -60,8 +50,7 @@ class _Harness:
 
 @pytest.fixture
 def echo_server() -> Iterator[Callable[[], int]]:
-    """Starts (lazily, once) a local TCP echo server, returning a callable giving its port --
-    used as the real outbound target an `"allow"`-verdict `CONNECT` should actually reach."""
+    """Starts (lazily, once) a local TCP echo server, returning a callable giving its port."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(("127.0.0.1", 0))
     srv.listen(8)
@@ -135,9 +124,8 @@ def test_socks5_denied_domain_refused_and_recorded() -> None:
 
 
 def test_socks5_unresolved_ask_also_refuses_immediately_no_hang() -> None:
-    """A domain matching no rule at all normalizes to "ask" -- v1 fails it closed exactly like an
-    explicit "deny", rather than hanging waiting for a live confirmation that doesn't exist yet."""
-    harness = _harness()  # empty bash_domain_rules -- nothing allowed, nothing denied.
+    """A domain matching no rule at all normalizes to "ask"."""
+    harness = _harness()  # empty bash_domain_rules.
     try:
         client = harness.open_client(b"S")
         client.sendall(bytes([0x05, 0x01, 0x00]))
@@ -160,8 +148,7 @@ def test_socks5_no_acceptable_auth_method_rejected() -> None:
     harness = _harness(allow=["example.com"])
     try:
         client = harness.open_client(b"S")
-        # Offer only username/password auth (0x02) -- no-auth (0x00) is the only method
-        # ProxyBackend accepts.
+        # Offer only username/password auth (0x02).
         client.sendall(bytes([0x05, 0x01, 0x02]))
         assert client.recv(2) == bytes([0x05, 0xFF])
         client.close()
@@ -176,7 +163,7 @@ def test_socks5_bind_command_rejected_not_connect() -> None:
         client.sendall(bytes([0x05, 0x01, 0x00]))
         assert client.recv(2) == bytes([0x05, 0x00])
         target = b"example.com"
-        # CMD=0x02 (BIND), unsupported -- only CONNECT (0x01) is implemented.
+        # CMD=0x02 (BIND), unsupported.
         request = (
             bytes([0x05, 0x02, 0x00, 0x03, len(target)]) + target + (443).to_bytes(2, "big"))
         client.sendall(request)
@@ -193,9 +180,7 @@ def test_socks5_malformed_greeting_closes_without_reply() -> None:
         client = harness.open_client(b"S")
         client.sendall(b"\x04\x01\x00")  # wrong VER byte.
         client.settimeout(1.0)
-        # Connection closed with no bytes ever sent back -- a clean EOF (b"") on most transports,
-        # but a connected AF_UNIX socketpair can also surface the peer's close as ECONNRESET;
-        # either way is "refused without a valid reply", never a real protocol reply.
+        # Connection closed with no bytes ever sent back.
         try:
             assert client.recv(16) == b""
         except ConnectionResetError:
@@ -268,9 +253,7 @@ def test_http_connect_bracketed_ipv6_target_parsed() -> None:
 
 
 def test_close_joins_the_accept_thread_before_returning() -> None:
-    """`close()` doesn't just signal the accept-loop thread to stop -- it waits for that thread to
-    actually exit, so a caller (a test, `Session.close()`) never races it: the thread's own
-    "stopping accept loop" log line has already landed by the time `close()` returns."""
+    """`close()` doesn't just signal the accept-loop thread to stop."""
     harness = _harness()
     harness.close()
     assert not harness.backend._thread.is_alive()

@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""The text-anchored block-substitution mechanic shared by `EditFileTool` and
-`EditScratchpadTool` — see `klorb.tools.util`'s package docstring for how the two tools each
-hold one of these as a member and delegate to it."""
+"""Text-anchored block-substitution mechanic for editing files and scratchpads."""
 
 import json
 import logging
@@ -24,8 +22,7 @@ _FUZZY_TRANSLATION = str.maketrans({
 })
 """Character classes the fuzzy fallback treats as equivalent when an exact match fails: em/en
 dash and minus sign as a plain hyphen, curly double quotes as `"`, curly single
-quotes/apostrophes as `'` -- a model often reproduces a file's literal punctuation using
-whichever variant its own tokenizer prefers."""
+quotes/apostrophes as `'`."""
 
 _FUZZY_WHITESPACE_MESSAGE = (
     "was matched by ignoring leading/trailing whitespace and normalizing dash/quote "
@@ -54,8 +51,7 @@ class LineRangeEdit:
 @dataclass(frozen=True)
 class _NormalizedEditArgs:
     """Resolved output of `EditFileCore._normalize_edit_args()`: exactly one of `old_text` or
-    the `old_text_start`/`old_text_end` pair is set (the other(s) `None`), alongside `new_text`
-    -- every other combination is rejected before this is constructed."""
+    the `old_text_start`/`old_text_end` pair is set (the other(s) `None`), alongside `new_text`."""
 
     old_text: str | None
     old_text_start: str | None
@@ -66,9 +62,7 @@ class _NormalizedEditArgs:
 class EditFileCore:
     """Replaces a block of `path`'s current content with `new_text`, locating that block by an
     exact text match (falling back to a whitespace/punctuation-tolerant one) rather than a line
-    number -- the shared mechanic behind `EditFileTool`, `EditScratchpadTool`, and
-    `EditMemoryTool`. See `klorb.tools.edit_file.EditFileTool` and
-    docs/specs/tool-framework.md for the full user-facing contract.
+    number. See docs/specs/tool-framework.md for the full user-facing contract.
 
     Two mutually exclusive forms locate the block, both required to align on whole lines (never
     a sub-line fragment, since matching is always against complete file lines):
@@ -86,9 +80,7 @@ class EditFileCore:
     """
 
     def parameter_properties(self) -> dict[str, Any]:
-        """Return the JSON-schema properties shared by `EditFileTool`, `EditScratchpadTool`, and
-        `EditMemoryTool`'s `parameters()` -- each adds its own `filename` property (or not) and
-        `required` list around this."""
+        """Return the JSON-schema properties for the edit tools' `parameters()`."""
         return {
             "old_text": {
                 "type": "string",
@@ -130,31 +122,22 @@ class EditFileCore:
         redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
         """Apply one block substitution to `path` per `args`, returning `start_line`/`end_line`
-        (the edited region, 1-indexed, renumbered to reflect `new_text`'s own line count --
-        possibly different from `replaced_lines`, the line count of the block that was matched
-        and replaced), `new_total_lines`, `post_edit_content`, `edit_success`, and `diff` -- a
-        jsonable rendering of `klorb.tools.util.diff_lines.build_diff_hunks()`'s
-        full before/after diff, for a `Tool`'s `diff_preview()` to parse back into `DiffHunk`s
-        (the caller adds `filename` if it has one).
+        (the edited region, 1-indexed, renumbered to reflect `new_text`'s own line count),
+        `new_total_lines`, `post_edit_content`, `edit_success`, and `diff`.
 
         When `redactor` is given, `old_text`/`old_text_start`/`old_text_end`/`new_text` are each
-        passed through `redactor.detokenize(session, ...)` before matching or writing -- so a
-        `[[SECRET:...]]` token a model echoes back from an earlier `ReadFile` resolves to the
-        file's real bytes rather than being matched or written literally. `post_edit_content`
-        and `diff` are then re-redacted before being returned, so the result never echoes a
-        plaintext secret back either. See docs/specs/secret-redaction.md.
+        passed through `redactor.detokenize(session, ...)` before matching or writing.
+        `post_edit_content` and `diff` are then re-redacted before being returned, so the result
+        never echoes a plaintext secret back either. See docs/specs/secret-redaction.md.
 
         `path` need not already exist when `args` uses `old_text=""`: a missing `path` is then
         treated exactly like an existing-but-empty one, `path`'s parent directories are created
-        as needed (mirroring `CreateFileCore.apply()`), and the result gains `created: true`.
-        For any other `args` shape, a missing `path` raises `FileNotFoundError` naming
-        `create_hint` (e.g. `"CreateFile"`) as the tool to create it with first.
+        as needed, and the result gains `created: true`. For any other `args` shape, a missing
+        `path` raises `FileNotFoundError` naming `create_hint` as the tool to create it with first.
 
-        `subject` names the thing being edited, for error messages (e.g. a filename, or `"the
-        scratchpad"`). `reread_hint` is substituted into every raised `ValueError`'s suggestion
-        for what to do next (e.g. `"re-ReadFile foo.py"` or `"re-ReadScratchpad your
-        scratchpad"`), so the message stays accurate for whichever caller
-        (`EditFileTool`/`EditScratchpadTool`/`EditMemoryTool`) invoked this.
+        `subject` names the thing being edited, for error messages. `reread_hint` is substituted
+        into every raised `ValueError`'s suggestion for what to do next, so the message stays
+        accurate for whichever caller invoked this.
         """
         normalized = self._normalize_edit_args(args)
         if redactor is not None:
@@ -253,8 +236,8 @@ class EditFileCore:
     ) -> "_NormalizedEditArgs":
         """Substitute any `SecretRedactor` tokens in `normalized`'s anchors/replacement text
         back to their real plaintext, so the resolvers below match against (and `apply()`
-        writes) the file's actual bytes rather than a `[[SECRET:...]]` placeholder -- see
-        docs/specs/secret-redaction.md."""
+        writes) the file's actual bytes rather than a `[[SECRET:...]]` placeholder.
+        See docs/specs/secret-redaction.md."""
         return replace(
             normalized,
             old_text=(
@@ -321,7 +304,7 @@ class EditFileCore:
         """Locate `old_text` (split into lines) as a contiguous block within `all_lines` and
         return `all_lines` with that block replaced by `new_text`'s lines. Raises `ValueError`
         if `old_text` matches nowhere, or names ready-to-use candidates if it matches more than
-        one location (see `_describe_old_text_ambiguity`)."""
+        one location."""
         total_lines = len(all_lines)
         block_lines = old_text.splitlines()
         block_len = len(block_lines)
@@ -352,11 +335,9 @@ class EditFileCore:
         """Locate `old_text_start` and `old_text_end` (each a contiguous block) within
         `all_lines`, pairing each start match with its nearest end match at or after that same
         line (so `old_text_start`/`old_text_end` naming the identical single line is a valid,
-        zero-interior span) -- not every later end match, so two blocks bounded by the same
-        repeated start/end pair elsewhere in the file don't multiply into a combinatorial
-        cross-product of candidates. Raises `ValueError` if either anchor matches nowhere, if no
+        zero-interior span). Raises `ValueError` if either anchor matches nowhere, if no
         start has any valid following end, or names ready-to-use candidates if more than one
-        pairing survives (see `_describe_range_ambiguity`)."""
+        pairing survives."""
         total_lines = len(all_lines)
         start_lines = old_text_start.splitlines()
         end_lines = old_text_end.splitlines()
@@ -437,9 +418,8 @@ class EditFileCore:
 
     @staticmethod
     def _normalize_fuzzy(line: str) -> str:
-        """Strip leading/trailing whitespace and fold dash/quote punctuation variants (see
-        `_FUZZY_TRANSLATION`) to their plain-ASCII equivalents, for `_block_matches`'s
-        fallback comparison."""
+        """Strip leading/trailing whitespace and fold dash/quote punctuation variants to their
+        plain-ASCII equivalents, for `_block_matches`'s fallback comparison."""
         return line.strip().translate(_FUZZY_TRANSLATION)
 
     def _minimal_disambiguating_n(
@@ -447,13 +427,13 @@ class EditFileCore:
     ) -> int:
         """Smallest `n` such that extending every span in `spans` (1-indexed, inclusive) by `n`
         lines on each side (clipped to the file's bounds) would, if sent verbatim as a real
-        `old_text`/`old_text_start`/`old_text_end` value, resolve unambiguously -- see
-        `_span_resolved_at`. Always terminates: once `n` is large enough that a span's window
-        has clipped to the entire file (`lo == 0` and `hi == len(all_lines)`), that window can
-        only ever match the file at its own single starting position (nothing else is the same
-        length), so every span resolves by `n == len(all_lines)` at the latest. Starts at
-        `n=1`, since every span in `spans` shares identical content at `n=0` by construction
-        (that's how they became candidates).
+        `old_text`/`old_text_start`/`old_text_end` value, resolve unambiguously. Always
+        terminates: once `n` is large enough that a span's window has clipped to the entire
+        file (`lo == 0` and `hi == len(all_lines)`), that window can only ever match the file
+        at its own single starting position (nothing else is the same length), so every span
+        resolves by `n == len(all_lines)` at the latest. Starts at `n=1`, since every span in
+        `spans` shares identical content at `n=0` by construction (that's how they became
+        candidates).
         """
         n = 1
         while not all(self._span_resolved_at(all_lines, span, n) for span in spans):
@@ -462,9 +442,7 @@ class EditFileCore:
 
     def _span_resolved_at(self, all_lines: list[str], span: tuple[int, int], n: int) -> bool:
         """True if extending `span` by `n` lines on each side (clipped to the file's bounds)
-        produces a block that matches `all_lines` only at that extended window's own position --
-        i.e. a real caller sending it verbatim as `old_text` (or `old_text_start`/
-        `old_text_end`) would resolve to exactly this span, not some other location."""
+        produces a block that matches `all_lines` only at that extended window's own position."""
         lo, hi = self._span_bounds(all_lines, span, n)
         window = all_lines[lo:hi]
         return self._find_block_matches(all_lines, window, fuzzy=False) == [lo + 1]

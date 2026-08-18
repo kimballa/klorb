@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that creates a new text file for a model. Refuses to overwrite an existing file."""
+"""A Tool that creates a new text file for a model, refusing to overwrite an existing file."""
 
 import logging
 from collections.abc import Sequence
@@ -16,19 +16,14 @@ logger = logging.getLogger(__name__)
 
 class CreateFileTool(Tool):
     """Creates a new text file with the given content. Raises `FileExistsError` if the file
-    already exists — use `EditFile` to modify an existing file's contents instead, so file
-    creation is always an explicit, auditable event rather than an implicit side effect of an
-    edit. Missing parent directories are created automatically. Delegates the file-creation
-    mechanic to `self.create_file_core` (a `klorb.tools.util.CreateFileCore`), the same one
-    `CreateMemoryTool` uses.
+    already exists. Missing parent directories are created automatically. Delegates the
+    file-creation mechanic to `self.create_file_core`.
 
-    `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
-    `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
+    `filename` is checked against `writeFiles` and otherwise confined to
     `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
 
     `self._secret_redactor` resolves any `[[SECRET:<type>:<hash>]]` token in the call's
     `content` back to real plaintext before writing, and re-masks the diff before it's returned.
-    See docs/specs/secret-redaction.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:

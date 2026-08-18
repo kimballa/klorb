@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Inline `/`-triggered fuzzy skill finder rendered above the prompt input. Mirrors
-`klorb.tui.widgets.file_finder`'s `@`-mention file finder: when the user types `/` at the
-start of the prompt or after whitespace, a popup narrows to matching skills as more of the
-query is typed. See docs/specs/skills.md.
+"""Inline `/`-triggered fuzzy skill finder rendered above the prompt input. See docs/specs/skills.md.
 """
 
 from dataclasses import dataclass

@@ -1,9 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Data types and the `EscalatePrivilegesRequired` exception shared between
 `klorb.tools.escalate_privileges.escalate_privileges.EscalatePrivilegesTool` and
-`klorb.session` — kept in a leaf module with no `klorb.tools.tool`/`klorb.tools.setup_context`
-import so `klorb.session` can import it at module level without a cycle.
-"""
+`klorb.session`."""
 
 from typing import Literal
 
@@ -14,8 +12,7 @@ Scope = Literal["workspace", "homedir"]
 
 class EscalatePrivilegesRequired(Exception):
     """Raised by `EscalatePrivilegesTool.apply()` when the user needs to approve escalation.
-    Carries the scope and the model-supplied reason for the request, for
-    `Session._run_tool_calls` to ask about via `on_escalate_privileges`.
+    Carries the scope and the model-supplied reason for the request.
     """
 
     def __init__(self, scope: Scope, reason: str) -> None:

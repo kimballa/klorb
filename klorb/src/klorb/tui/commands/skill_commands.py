@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider offering "Reload skills" — reindexes the process-wide skill catalog
-from a fresh disk scan, reflecting any skill added, removed, or edited since the last scan (or
-since process start). See `klorb.tools.skill.catalog` and docs/specs/skills.md.
+"""Command palette provider offering "Reload skills" to reindex the process-wide skill catalog.
+See docs/specs/skills.md.
 """
 
 from typing import Protocol, cast
@@ -21,10 +20,9 @@ class SupportsReloadSkills(Protocol):
 
 
 class SkillCommandProvider(Provider):
-    """Offers "Reload skills" via the command palette (`ctrl+p` or by typing `>reload skills` in
-    the prompt) -- rebuilds the process-wide skill catalog `klorb.tools.skill.catalog` otherwise
-    only builds once per process, so a skill added or changed on disk becomes visible without
-    restarting klorb.
+    """Offers "Reload skills" via the command palette, rebuilding the process-wide skill catalog
+    that otherwise only builds once per process so a skill added or changed on disk becomes
+    visible without restarting klorb.
     """
 
     async def search(self, query: str) -> Hits:

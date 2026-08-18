@@ -21,12 +21,8 @@ _GITIGNORE_HIDDEN_NOTE = (
 
 class FindFileTool(InterruptibleTool):
     """Recursively searches a directory tree for files and directories whose bare name (not full
-    path) matches a glob `pattern` (e.g. `*.py` or `*_context*`), reusing
-    `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at every directory
-    level, not just at `dirname` itself — see that function's docstring for how a denied,
-    ask-gated, or symlinked subdirectory is pruned rather than aborting the whole search. See
-    docs/adrs/00170-findfile-matches-directory-names-not-just-files.md for why directory names are
-    matched too.
+    path) matches a glob `pattern`, reusing `klorb.tools.util.walk_readable_tree` so the walk
+    obeys `readDirs` at every directory level, not just at `dirname` itself.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -195,10 +191,8 @@ class FindFileTool(InterruptibleTool):
         return f"Find file: {pattern!r} in {root} ({count}{suffix} match{plural}{cancelled})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["matches"]` capped to its
-        first 20 entries — a full result can hold up to `self._max_results` (100 by default)
-        matches, far more than useful to show inline.
-        """
+        """Same as the default pretty-JSON rendering, but with `result["matches"]` capped to
+        its first 20 entries."""
         if error is not None or not isinstance(result, dict) or "matches" not in result:
             return super().detail_view(args, result, error)
         matches = result["matches"]

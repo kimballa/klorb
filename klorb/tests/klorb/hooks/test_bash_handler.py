@@ -23,9 +23,7 @@ requires_bwrap = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run every test unsandboxed unless it opts in, mirroring `klorb.tools.test_bash`'s own
-    fixture -- deterministic regardless of whether the host running the suite has a working
-    `bwrap`."""
+    """Run every test unsandboxed unless it opts in."""
     monkeypatch.setattr("klorb.hooks.bash_handler.bwrap_available", lambda: False)
 
 

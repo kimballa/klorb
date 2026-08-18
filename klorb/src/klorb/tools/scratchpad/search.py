@@ -23,18 +23,11 @@ logger = logging.getLogger(__name__)
 
 class SearchScratchpadTool(Tool):
     """Searches the active session's scratchpad file for every line containing any of
-    `queries` -- each matched as a literal, case-insensitive substring (never a regular
-    expression), combined into one alternation for a single pass over the file (equivalent to
-    `grep -i -F -e 'seq1' -e 'seq2' ...` against the scratchpad file) -- and returns each match
-    together with `context_lines` (see `ProcessConfig.scratchpad_context_lines`) lines of
-    surrounding content on each side. Overlapping or adjacent matches' context windows are
-    merged, the same way `grep -C` collapses them, rather than reported as separate,
-    redundantly-overlapping results.
+    `queries` as a literal, case-insensitive substring, and returns each match together with
+    surrounding context lines. Overlapping or adjacent matches' context windows are merged.
 
-    `result["lines"]` is a flat list of dense-format strings shared with `GrepTool` (see
-    `klorb.tools.util.search_core`): a leading `*` marks a matching line, and each line carries
-    its own 1-based number, so a break between two merged context windows shows up as a jump in
-    those numbers rather than a separate block wrapper.
+    `result["lines"]` is a flat list of dense-format strings: a leading `*` marks a matching
+    line, and each line carries its own 1-based number.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -134,10 +127,7 @@ class SearchScratchpadTool(Tool):
         return f"Search scratchpad: {queries!r} ({count} match{plural})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["lines"]` capped to its
-        first 60 entries -- a scratchpad with many scattered matches could otherwise dump far
-        more context than useful to show inline.
-        """
+        """Renders pretty JSON with `result["lines"]` capped to its first 60 entries."""
         if error is not None or not isinstance(result, dict) or "lines" not in result:
             return super().detail_view(args, result, error)
         lines = result["lines"]

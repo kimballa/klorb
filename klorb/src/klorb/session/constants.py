@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Module-level constants, literals, and the session-id generator shared by `klorb.session`'s
-mixins -- separated out so they can be imported without pulling in `Session` itself."""
+"""Module-level constants, literals, and the session-id generator."""
 
 from datetime import datetime
 from typing import Literal
@@ -13,57 +12,47 @@ MAX_TOOL_CALL_ROUNDS = 200
 """Safety cap on how many model-to-tool round trips one turn will run before giving up, in
 case a model gets stuck repeatedly requesting tool calls without ever returning a final
 answer. Unlike `SessionConfig.max_tool_calls_per_turn`, this isn't user-configurable or
-interactively raisable — it's a hard backstop."""
+interactively raisable."""
 
 DEFAULT_MAX_TOOL_CALLS_PER_TURN = 100
 """Default value of `SessionConfig.max_tool_calls_per_turn`: how many individual tool calls
-(across every round) one turn will execute before asking the user whether to keep going (see
-`Session._confirm_limit_increase`)."""
+one turn will execute before asking the user whether to keep going."""
 
 DEFAULT_MAX_CHAINED_HOOK_TURNS = 5
 """Default value of `SessionConfig.max_chained_hook_turns`: how many turns in a row an
-`onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler may auto-chain (via
-`Session._deliver_chained_hook_message`) before further auto-chained turns are refused, until
-a real user-driven turn resets the count -- the same fail-safe shape as
-`DEFAULT_MAX_TOOL_CALLS_PER_TURN`, guarding against a misconfigured handler that keeps the
-agent talking to itself indefinitely. `0` disables chaining entirely; a negative value means
-no cap."""
+`onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler may auto-chain before further
+auto-chained turns are refused, until a real user-driven turn resets the count. `0`
+disables chaining entirely; a negative value means no cap."""
 
 DEFAULT_MEMORY_WRITE_PERMISSION: Verdict = "ask"
 DEFAULT_MEMORY_DELETE_PERMISSION: Verdict = "ask"
-"""Default `Verdict`s for `SessionConfig.memory_write_permission`/`memory_delete_permission` --
-see docs/specs/memories.md. Govern the `workspace` namespace only: a `global`-namespace memory
-operation, and any `read` in either namespace, is unconditionally allowed and never consults
-these."""
+"""Default `Verdict`s for `SessionConfig.memory_write_permission`/`memory_delete_permission`.
+Govern the `workspace` namespace only: a `global`-namespace memory operation, and any `read`
+in either namespace, is unconditionally allowed and never consults these."""
 
 
 class ToolCallLimitExceeded(Exception):
     """Raised when a turn exceeds one of the tool-calling safety caps without the model
     returning a final answer: more than `MAX_TOOL_CALL_ROUNDS` model-to-tool round trips, or
-    the user declined to raise `max_tool_calls_per_turn` past where it was exceeded (see
-    `Session._confirm_limit_increase`)."""
+    the user declined to raise `max_tool_calls_per_turn` past where it was exceeded."""
 
 
 class ChainedHookMessageUndeliverableError(Exception):
     """Raised by `Session.deliver_event_message` when an event handler's message arrives while
-    the session is fully idle (no turn in flight) and no host has registered a wake handler
-    (see `Session.register_wake_handler`)."""
+    the session is fully idle (no turn in flight) and no host has registered a wake handler."""
 
 
-# Two-word kebab-case nonce (e.g. "dastardly-happy") to disambiguate session ids
-# created within the same minute.
+# Two-word kebab-case nonce to disambiguate session ids created within the same minute.
 NONCE_WORD_COUNT = 2
 
 SESSION_ID_TIMESTAMP_FORMAT = "%Y-%m-%d-%H-%M"
 
 ThinkingEffort = Literal["low", "medium", "high"]
 """User-facing thinking depth knob, independent of whether the active model wants an
-effort keyword or a numeric token budget (see `klorb.models.model.ThinkingBudgetStyle`)."""
+effort keyword or a numeric token budget."""
 
 PermissionFramework = Literal["ask", "auto", "deny"]
-"""How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict — see
-`SessionConfig.permission_framework` and docs/specs/permissions.md's "Interactive 'ask'
-confirmation" section."""
+"""How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict."""
 
 PERMISSION_FRAMEWORK_INTERJECTIONS: dict[PermissionFramework, str] = {
     "auto": (
@@ -82,9 +71,7 @@ PERMISSION_FRAMEWORK_INTERJECTIONS: dict[PermissionFramework, str] = {
 }
 """Text `Session.set_permission_framework()` queues for `send_turn()` to wrap in a
 `<SystemInterjection subject="PermissionFramework">` tag and prepend to the next user turn's
-prompt, keyed by the newly-set `PermissionFramework` value — see
-`Session._pending_permission_framework_interjection` and docs/specs/permissions.md's
-"Permission framework change interjection" section."""
+prompt, keyed by the newly-set `PermissionFramework` value."""
 
 THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
     "low": 4_096,
@@ -93,9 +80,8 @@ THINKING_EFFORT_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
 }
 """Default reasoning token budgets used for `ThinkingBudgetStyle == "tokens"` models, keyed
 by the same `ThinkingEffort` levels offered for `"effort"`-style models, so both kinds of
-model share one user-facing knob. See [[map-thinking-effort-levels-to-fixed-token-budgets]].
-Overridable per process via `ProcessConfig.thinking_token_budgets`
-(see [[process-and-session-config]]); `Session` falls back to this default when none is
+model share one user-facing knob. Overridable per process via
+`ProcessConfig.thinking_token_budgets`; `Session` falls back to this default when none is
 given."""
 
 

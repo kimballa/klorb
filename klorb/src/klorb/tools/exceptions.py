@@ -1,14 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Exceptions shared across the `klorb.tools` package.
-
-Extracted into their own module so consumers (notably `klorb.session`, for
-`_run_tool_calls`'s statistics tracking) can reference tool-package exceptions without
-pulling in `klorb.tools.registry` — which itself imports `klorb.session.Session` at
-module scope and would form a circular import otherwise. `ErrorCategory` and `ToolCallError`
-live here rather than in `klorb.tools.response_envelope` for the same reason: this module
-stays a dependency-light leaf every tool can import without pulling in pydantic-model
-machinery, and `response_envelope.py` depends on this module in one direction only.
-"""
+"""Exceptions shared across the `klorb.tools` package."""
 
 from typing import Any, Literal
 
@@ -18,9 +9,8 @@ ErrorCategory = Literal[
 similar -- retrying might help), `"syntax"` (malformed call arguments -- fix and retry),
 `"validation"` (a bad argument value -- fix and retry), `"permission"` (access was denied --
 retrying won't help without a different approach), `"business_logic"` (the call ran but didn't
-achieve its goal -- e.g. a shell command that exited non-zero), `"signaled"` (the call was
-interrupted by an external signal -- user cancel or similar -- not retryable). See
-`klorb.tools.response_envelope` for how this feeds `ToolResponseEnvelope.is_retryable`."""
+achieve its goal), `"signaled"` (the call was interrupted by an external signal -- not
+retryable)."""
 
 
 class NoSuchToolException(Exception):
@@ -33,11 +23,8 @@ class NoSuchToolException(Exception):
 
 class ToolCallError(Exception):
     """Raise from any `Tool.apply()` to signal a categorized failure without inventing a
-    tool-specific result-dict failure shape (see `klorb.tools.response_envelope`).
-    `response_body`, if given, becomes the failed call's `ToolResponseEnvelope.response_body`
-    instead of `None` -- for a tool whose failure carries data worth keeping (partial output,
-    diagnostic detail) even though the call as a whole didn't succeed.
-    """
+    tool-specific result-dict failure shape. `response_body`, if given, becomes the failed
+    call's `ToolResponseEnvelope.response_body` instead of `None`."""
 
     def __init__(
         self, message: str, *, category: ErrorCategory = "business_logic",
@@ -52,11 +39,9 @@ class ToolInterruptError(ToolCallError):
     """Raised from a `Tool.apply()` when the tool is interrupted by an external signal:
     the user cancelling (`reason="user_cancel"`), the user sending a new message while
     the tool is blocked (`reason="new_message"`), or a caller-specified timeout expiring
-    (`reason="timeout"`). The `category` is derived from `reason`: `"signaled"` for
-    user cancellation and new-message interrupts (not retryable), `"transient"` for timeout
-    (retryable -- the caller may wait longer). `response_body` is always set to
-    an `{"incomplete": True, "incomplete_reason": <reason>, ...}` dict so the model sees a
-    uniform shape regardless of which interrupt triggered it.
+    (`reason="timeout"`). `response_body` is always set to an `{"incomplete": True,
+    "incomplete_reason": <reason>, ...}` dict so the model sees a uniform shape regardless
+    of which interrupt triggered it.
     """
 
     def __init__(

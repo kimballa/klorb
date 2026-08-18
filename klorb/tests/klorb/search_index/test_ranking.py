@@ -32,7 +32,7 @@ def test_empty_lists_produce_no_results() -> None:
 
 def test_ties_break_by_first_appearance_order() -> None:
     # "a" and "b" both appear only in the second list, at the same rank relative to each other
-    # they had in the (non-overlapping) first list's absence -- first-seen order is a-then-b.
+    # they had in the (non-overlapping) first list's absence
     fused = reciprocal_rank_fusion([["a"], ["b"]])
 
     scores = dict(fused)

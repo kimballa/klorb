@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`SessionTurnsMixin`: the turn-dispatch loop -- streams one request/response round trip
-(`_send_and_receive`), drives it through as many tool-call rounds as the model asks for
-(`_dispatch_turn`), and the three public entry points (`send_turn`, `retry_last_turn`,
-`run_one_shot`) that build or resend the user-facing `Message` each turn revolves around."""
+"""`SessionTurnsMixin`: the turn-dispatch loop."""
 
 import base64
 import logging
@@ -36,22 +33,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SKILL_MENTION_RE = re.compile(r"(?:^|\s)/([A-Za-z0-9][A-Za-z0-9._:-]*)")
-"""Matches a `/<token>` slug, where `token` may itself be a colon-qualified fully-qualified skill
-name (`<namespace>:<name>`, see `klorb.permissions.skill_access.format_fqsn`) -- a skill name can
-never contain a colon (`klorb.tools.skill.common.is_valid_skill_name`), so a colon inside the
-captured token is unambiguously the fqsn separator, not part of the name."""
+"""Matches a `/<token>` slug, where `token` may be a colon-qualified fully-qualified skill name."""
 
 _LEADING_SKILL_RE = re.compile(r"^\s*/([A-Za-z0-9][A-Za-z0-9._:-]*)")
-"""Matches a `/<token>` (see `_SKILL_MENTION_RE`) at the very start of a prompt, ignoring leading
-whitespace -- used to detect a message that *starts* with a skill reference, which
-`Session.send_turn()` treats as an unconditional activation rather than a casual mention (see
-`_build_user_skill_activation_interjection` and docs/specs/skills.md)."""
+"""Matches a `/<token>` at the very start of a prompt, ignoring leading whitespace."""
 
 
 def _skill_mention_tokens(prompt: str) -> list[str]:
-    """Every distinct `/<token>` slug mentioned in `prompt`, in first-seen order. A cheap,
-    disk-free candidate extraction `Session._build_skill_reference_interjection` runs before
-    deciding whether a skill-discovery scan is even worth doing for this turn."""
+    """Every distinct `/<token>` slug mentioned in `prompt`, in first-seen order."""
     seen: set[str] = set()
     tokens: list[str] = []
     for match in _SKILL_MENTION_RE.finditer(prompt):
@@ -73,37 +62,25 @@ _SKILL_WORD_RE = re.compile(r"(?<![a-zA-Z0-9])skills?\b|/skills?\b", re.IGNORECA
 
 
 def _prompt_mentions_skill(prompt: str) -> bool:
-    """Return ``True`` if ``prompt`` contains the word "skill" or "/skill" (case-insensitive).
-
-    Used by `Session.send_turn()` to decide whether to prepend the ``SkillReminder``
-    system interjection — a lightweight hint that suggests the agent look for relevant
-    skills via `SearchSkills` before proceeding.
-    """
+    """Return ``True`` if ``prompt`` contains the word "skill" or "/skill" (case-insensitive)."""
     return bool(_SKILL_WORD_RE.search(prompt))
 
 
 class HookDeniedTurnError(Exception):
     """Raised when an `onSubmitUserPrompt` hook's aggregate `HookOutput.success` is `False`,
-    refusing to send this turn to the model at all. Caught by `_dispatch_turn`'s own generic
-    `except Exception`, which marks `user_message` `processing_state="error"`/`last_error` and
-    re-raises -- exactly like any other turn-ending failure."""
+    refusing to send this turn to the model at all."""
 
 
 def wrap_system_interjection(subject: str, message: str) -> str:
     """Wrap `message` in a `<SystemInterjection subject="{subject}">...</SystemInterjection>`
     tag pair, so a model can tell an out-of-band harness notice apart from the user's own
-    turn content within the same `Message.content` — see `Session.send_turn()`'s handling of
-    `_pending_permission_framework_interjection`."""
+    turn content within the same `Message.content`."""
     return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
 
 
 def _image_header_text(index: int, image_fragment: MessageFragment) -> str:
-    """Text-fragment header `Session.send_turn()` prepends immediately ahead of each image
-    fragment, per the vendor guidance that images should follow the text prompt they
-    accompany (see docs/specs/vision-image-input.md). Names the image's 1-indexed position
-    among the ones attached to this turn, plus its origin -- `image_fragment.source_filename`
-    if the image came from a named file (a drag-drop), or "(pasted from clipboard)"
-    otherwise."""
+    """Text-fragment header prepended immediately ahead of each image fragment. Names the
+    image's 1-indexed position among the ones attached to this turn, plus its origin."""
     origin = (
         f"filename='{image_fragment.source_filename}'" if image_fragment.source_filename
         else "(pasted from clipboard)")
@@ -126,37 +103,23 @@ class SessionTurnsMixin(SessionBase):
     ) -> tuple[Message, ProviderResponse]:
         """Send one request to the active model and return `(reply, result)`.
 
-        Streams the reply: on the first chunk, a placeholder `Message`
-        (`processing_state="started_receipt"`, `streaming_content=[]`) is appended to
+        Streams the reply: on the first chunk, a placeholder `Message` is appended to
         `self._messages`, and each chunk's text is appended to it. On success, that same
-        placeholder is finalized in place (`content`, `streaming_content=None`,
-        `processing_state="complete"`, `finish_reason`) rather than appending a second,
-        duplicate `Message`; if no placeholder was ever created (e.g. a non-streaming test
-        double), the provider's reply is appended fresh instead. The finalized message's
-        `role` is `"tool_use"` (with `tool_calls` populated) if the model asked to call
+        placeholder is finalized in place rather than appending a second, duplicate
+        `Message`. The finalized message's `role` is `"tool_use"` if the model asked to call
         tools, or `"assistant"` otherwise.
 
         Reasoning/thinking deltas are handled the same way, but as a separate
         `role="thinking"` placeholder appended ahead of the reply one, so the two can be told
-        apart and rendered separately; a structured `reasoning_details` payload (see
-        `Message.reasoning_details`), if the provider sends one, is attached to that same
-        placeholder (lazily creating it too, if reasoning arrived as only structured details
-        with no plain-text delta ever streamed).
+        apart and rendered separately.
 
-        Every message's `num_tokens` is a client-side `tiktoken` count of its own content
-        (`klorb.token_estimate.estimate_tokens`) -- refreshed on every chunk while streaming,
-        so `Session.total_tokens_used()` has a live, steadily-accurate number throughout the
-        round trip, and left as-is once a message stops changing. See
-        docs/adrs/00121-count-every-message-tokens-client-side-with-tiktoken.md.
+        Every message's `num_tokens` is a client-side `tiktoken` count, refreshed on every
+        chunk while streaming.
 
-        On any exception other than `ResponseAborted`, whichever placeholder(s) were created
-        are mutated to `processing_state="error"`/`last_error` (partial `streaming_content`
-        left intact) before re-raising, mirroring how the caller is expected to mark the
-        turn's own anchor message (a user message, or a prior round's `tool_response`). On
-        `ResponseAborted`, those placeholder(s) are instead finalized in place with
-        `processing_state="aborted"` and whatever `streaming_content` had arrived before the
-        interruption folded into `content` — the user may still want to read a partial reply,
-        and it stays out of the way of a resent prompt since `"aborted"` isn't `"complete"`.
+        On any exception other than `ResponseAborted`, placeholder(s) are mutated to
+        `processing_state="error"` before re-raising. On `ResponseAborted`, they are
+        finalized with `processing_state="aborted"` and whatever `streaming_content` had
+        arrived is folded into `content`.
         """
         placeholder: Message | None = None
         thinking_placeholder: Message | None = None
@@ -292,38 +255,20 @@ class SessionTurnsMixin(SessionBase):
         """Send `user_message` (already present in `self._messages`) and mutate it in place.
 
         Delegates the actual request/response streaming to `_send_and_receive()`. If the
-        model's reply requests tool calls (`reply.role == "tool_use"`), `_run_tool_calls()`
-        dispatches them via `tool_registry` and appends their results as `tool_response`
-        messages, then `_send_and_receive()` is called again with the updated history — this
-        repeats until the model returns a plain `"assistant"` reply, or `ToolCallLimitExceeded`
-        is raised after `MAX_TOOL_CALL_ROUNDS` round trips or `max_tool_calls_per_turn`
-        individual tool calls in this turn (see `_run_tool_calls`). `self._tool_calls_this_turn`
-        is reset to `0` at the start of every call to `_dispatch_turn` (including retries).
+        model's reply requests tool calls, `_run_tool_calls()` dispatches them and
+        appends their results as `tool_response` messages, then `_send_and_receive()` is
+        called again with the updated history — this repeats until the model returns a plain
+        `"assistant"` reply, or `ToolCallLimitExceeded` is raised.
+        `self._tool_calls_this_turn` is reset to `0` at the start of every call.
 
-        `user_message.num_tokens` is already set (from `estimate_tokens(user_message.content)`
-        at construction, see `send_turn`/`retry_last_turn`) and untouched here. On success,
-        `processing_state` becomes `"complete"` and `last_error` is cleared. On failure,
-        `user_message` is mutated to `processing_state="error"` with `last_error` set (the
-        failing round's own placeholder(s) are already marked the same way by
-        `_send_and_receive`), and the exception is re-raised.
-
-        If `callbacks.cancel_event` is given and the provider raises `ResponseAborted` (because
-        it was set mid-stream), `user_message` and every message already appended for this
-        turn — any earlier round's completed `tool_use`/`tool_response` messages (their tool
-        calls already ran, with real side effects, and stay in history exactly like a
-        completed turn's would), plus the aborted round's placeholder(s), already finalized
-        with `processing_state="aborted"` by `_send_and_receive` — are left in
-        `self._messages` rather than erased. `user_message.processing_state` becomes
-        `"aborted"` too. The exception is re-raised so the caller can report the interruption.
+        On success, `processing_state` becomes `"complete"` and `last_error` is cleared. On
+        failure, `user_message` is mutated to `processing_state="error"` with `last_error`
+        set, and the exception is re-raised. On `ResponseAborted`, `user_message` becomes
+        `"aborted"` too.
 
         `_chained_hook_turns` resets to `0` here unconditionally, unless
-        `_chain_continuation_pending` says otherwise -- the one place every turn (root,
-        subagent, retry, or a hook-chained continuation) funnels through, so this is the single
-        rule governing when a `chat` handler's auto-chain budget starts over: an ordinary turn,
-        a retry, and whatever happens after an aborted or errored turn all reset it by default
-        (none of those reach `_fire_agent_turn_end_hook`, which only fires on a clean
-        completion), while only a turn resubmitted by `drain_next_turn_text()` from a purely
-        hook-originated queue leaves it alone."""
+        `_chain_continuation_pending` says otherwise.
+        """
         callbacks = callbacks or TurnEventHandlers()
         self._ensure_system_message()
         self._ensure_tool_defs_message()
@@ -403,13 +348,11 @@ class SessionTurnsMixin(SessionBase):
         return result_text
 
     def _apply_submit_user_prompt_hook(self, user_message: Message) -> None:
-        """Dispatch `onSubmitUserPrompt` for this (root-session) turn's `user_message`, before
+        """Dispatch `onSubmitUserPrompt` for this turn's `user_message`, before
         it's sent to the model. A `message` in the aggregate `HookOutput` rewrites
-        `user_message.content` (and its token estimate) in place -- `user_message.fragments`,
-        if any (an `@mention`/image attachment), is left untouched, so a rewrite only reaches
-        the model for a turn with no such attachments. `success=False` raises
-        `HookDeniedTurnError` instead of sending anything, letting `_dispatch_turn`'s own
-        generic exception handling mark and re-raise it like any other turn failure."""
+        `user_message.content` in place; `user_message.fragments` are left untouched.
+        `success=False` raises `HookDeniedTurnError`."""
+
         result = self._dispatch_hook("onSubmitUserPrompt", message=user_message.content)
         if result.success is False:
             raise HookDeniedTurnError(
@@ -419,21 +362,12 @@ class SessionTurnsMixin(SessionBase):
             user_message.num_tokens = estimate_tokens(user_message.content)
 
     def _fire_agent_turn_end_hook(self, reply_text: str) -> None:
-        """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended -- called
-        after `_dispatch_turn`'s own `finally` already cleared `_current_turn_handlers`, but
-        still on the same call stack as whichever host's `send_turn()` call is waiting on this
-        turn -- so a `chat` handler's chained follow-up is delivered via
-        `_deliver_chained_hook_message`, picked up once that host's own end-of-turn drain runs
-        (see `drain_next_turn_text`), rather than dispatched here with no live UI callbacks.
+        """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended.
 
-        A `reset_session` result (guaranteed by `HookDispatcher` to carry a non-empty `message`)
-        first dispatches `onSessionEnd` with `reason="ResetSession"` -- purely for its side
-        effects (e.g. a bash handler logging that this conversation ended); its own `HookOutput`
-        is discarded, the same as every other `onSessionEnd` firing being non-cancelable -- then
-        calls `Session.reset_session()` and delivers `result.message` as the reset
-        conversation's first turn the same way, since this call stack still has a live host.
-        `close()`'s own `onSessionEnd`-triggered reset has no such host (see `SessionCoreMixin.
-        close()`)."""
+        A `reset_session` result first dispatches `onSessionEnd` with `reason="ResetSession"`,
+        then calls `Session.reset_session()` and delivers `result.message` as the reset
+        conversation's first turn.
+        """
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
         if result.reset_session:
             assert result.message is not None
@@ -445,15 +379,11 @@ class SessionTurnsMixin(SessionBase):
             self._deliver_chained_hook_message(result.message)
 
     def deliver_event_message(self, text: str) -> None:
-        """Deliver an event handler's aggregate `message` (`FileSystemModified`/`Timer`/
-        `WorkspaceTrustChanged`) into this session's conversation.
+        """Deliver an event handler's aggregate `message` into this session's conversation.
 
-        If a turn is already running, `text` is queued (tagged `origin="event"`, so
-        `drain_next_turn_text` resets `_chained_hook_turns` for it like any non-hook message)
-        for that turn's own host to pick up once it ends -- the same live-host case ordinary
-        hook chaining relies on. Otherwise there is no turn in flight: `text` is still queued,
-        then `deliver_wake()` pings whichever host registered a wake handler (see
-        `register_wake_handler`)."""
+        If a turn is already running, `text` is queued for that turn's host to pick up
+        once it ends. Otherwise `text` is queued and `deliver_wake()` pings the registered
+        wake handler."""
         if self.current_turn_handlers() is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             return
@@ -465,13 +395,9 @@ class SessionTurnsMixin(SessionBase):
             f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
 
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
-        """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` (see
-        `klorb.workspace.session_store.write_session_image`) and return the same fragment with
-        `image_path` populated, so a later `persist_state()` call can drop the in-memory
-        `image_url` from `session.json` (see `Message.for_persistence`) without losing the
-        image. A no-op if this session's directory isn't claimed (an untrusted workspace never
-        persists), since there's nowhere durable to write to -- the fragment keeps its
-        in-memory `image_url` and is sent normally for the rest of this process's lifetime."""
+        """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` and return the
+        same fragment with `image_path` populated. A no-op if this session's directory isn't
+        claimed."""
         if self._session_subdir is None:
             return image_fragment
         assert image_fragment.image_url is not None
@@ -491,106 +417,14 @@ class SessionTurnsMixin(SessionBase):
     ) -> str:
         """Send one turn of the conversation to the active model and return its response.
 
-        Appends a new user `Message` to the session's history, sends the full history (plus
-        the session's resolved system prompt — see `_resolve_system_prompt`) to the
-        provider, and mutates that
-        same `Message` in place to reflect the outcome (see `_dispatch_turn`). `callbacks`
-        (a `TurnEventHandlers`, defaulting to one with every field `None` if omitted) bundles
-        every optional hook for this turn: `on_chunk`/`on_thinking_chunk`/`on_reasoning_details`
-        are invoked with each text/reasoning delta (and reasoning payload update) as the
-        response streams in; if `cancel_event` is set while the
-        response is streaming in, the turn is aborted: `ResponseAborted` is raised, and the
-        user `Message` appended here — along with whatever partial reply/thinking content and
-        completed tool-call rounds accumulated before the interruption — stays in history with
-        `processing_state="aborted"` rather than being removed (see `_dispatch_turn`);
-        `on_tool_call_limit_reached` is invoked (with a human-readable prompt) when a tool-call
-        safety limit is reached, to ask whether to double it and keep going — see
-        `_confirm_limit_increase`; `on_permission_ask` is invoked when a tool call hits an
-        `"ask"` permission verdict, to ask whether (and how broadly) to allow it — see
-        `_run_tool_calls`.
+        Appends a new user `Message` from `prompt`, resolves `@mention`ed files into
+        `MessageFragment`s, prepends any pending interjections (permission framework,
+        standing providers, skill activations, context files, memories, metadata), and
+        dispatches via `_dispatch_turn`. `image_fragments`, if given, are appended after
+        the prompt fragment.
 
-        Before any interjection is prepended, `resolve_at_mentions()` scans the raw `prompt` for
-        `@mention`ed files and resolves each into its own `MessageFragment`(s) -- text, or an
-        `image_url` fragment (spilled to disk via `_spill_image_fragment_to_disk` exactly like an
-        `image_fragments` attachment below) for a mention recognized as an image the active model
-        can accept. If any mentions resolved, those fragments plus one final fragment wrapping
-        the fully-embellished `prompt` become the user `Message`'s `fragments`, which a provider
-        sends in place of `content` (see `Message.provider_content()`); `content` still holds the
-        plain-text `prompt` either way, for anything that only wants that. See
-        docs/specs/at-mention-file-inlining.md.
-
-        `resolve_mentions`, when `False`, skips `resolve_at_mentions()` entirely -- any
-        `@filename` text in `prompt` is left as literal, unresolved text. Used for a message a
-        parent session sends into a subagent's own `send_turn()` call (`CreateSubagent`'s
-        `initial_message`, `MessageSubagent`'s `message`): this doesn't yet filter a resolved
-        mention's file contents through the *parent*'s `readDirs` before exposing it to the
-        (possibly more restricted) child, so mentions are left unresolved there rather than
-        risk leaking a file the child couldn't otherwise read — see docs/specs/subagents.md's
-        "Security model" section.
-
-        `image_fragments`, if given (already prepared for the active model by `klorb.images.
-        prepare.prepare_image_for_model` before this call), are appended *after* the prompt
-        fragment -- per vendor guidance to send the text prompt first, then images -- each
-        preceded by its own text-fragment header (see `_image_header_text`) and spilled to
-        `sessions/<subdir>/images/` if this session's directory is claimed (see
-        `_spill_image_fragment_to_disk`). See docs/specs/vision-image-input.md.
-
-        If a permission-framework change is pending (`set_permission_framework()` was called
-        since the last turn), the queued interjection is wrapped in a `<SystemInterjection
-        subject="PermissionFramework">` tag (see `wrap_system_interjection`) and prepended
-        onto `prompt` before it's stored as the user `Message`'s content — see
-        docs/specs/permissions.md's "Permission framework change interjection" section — and
-        the pending state is cleared, so it's applied exactly once. After that, every provider
-        registered via `register_standing_interjection()` is polled (in a fixed, deterministic
-        order — sorted by subject) and any non-`None` result is prepended the same way, but not
-        cleared: a standing interjection keeps appearing on every subsequent turn for as long as
-        its provider keeps returning a message.
-
-        When the user's own `prompt` *starts* with a skill reference (ignoring leading
-        whitespace) that resolves to an `"allow"`-verdicted skill, a `UserSkillActivation`
-        interjection carrying that skill's full `ActivateSkill`-equivalent JSON payload is
-        prepended immediately ahead of the original prompt text -- an unconditional activation,
-        not a mere reminder (see `_build_user_skill_activation_interjection`). A `SkillReference`
-        interjection is separately prepended for this turn when the prompt mentions any other
-        discoverable skill by `/<name>` (or `/<namespace>:<name>`), excluding whichever skill the
-        leading-mention activation already fully handled. On the first turn only, the one-shot
-        `AvailableSkills` catalog is also prepended (see `_build_skill_reference_interjection`/
-        `_build_available_skills_interjection` and docs/specs/skills.md).
-
-        Every `/<name>` reference found this way is also resolved and recorded on
-        `_current_turn_mentioned_skill_ids`/`_current_turn_leading_skill_id`, so a later
-        `ActivateSkill` tool call this same turn can report `is_user_mentioned`/
-        `is_user_activated` to the `onActivateSkill` hook (see
-        `SessionSkillsMixin.fire_activate_skill_hook`).
-
-        Finally, the very first time `send_turn()` is ever called on this `Session`
-        (`self._context_files_seeded` still `False`), `_build_context_files_interjection()` is
-        consulted once; a non-`None` result is wrapped in a `<SystemInterjection
-        subject="ProjectGuidance">` tag and prepended last, so it ends up as the outermost —
-        i.e. first-read — preamble to the whole prompt, ahead of the `PermissionFramework`/
-        standing/skill interjections above. `self._context_files_seeded` is then set
-        unconditionally, so this never runs again for the rest of the `Session`'s lifetime,
-        matching every other one-shot interjection's "fires once" contract — see
-        docs/specs/workspace-context-files.md.
-
-        On the first turn only, a one-shot `Memories` interjection cataloging every recorded
-        memory's filename and topic (via `ListMemories` -- see `_build_memories_interjection`)
-        is also prepended (see `self._memories_seeded`).
-
-        On the first turn only, a one-shot `AdditionalTools` interjection naming every
-        `default_visible()` tool the tool definitions omit a full schema for (see
-        `_build_additional_tools_interjection` and `ToolRegistry.additional_tool_summaries`) is
-        also prepended (see `self._additional_tools_seeded`).
-
-        On the first turn only, a one-shot `metadata` interjection carrying the session
-        start time and workspace root name is also prepended (see `self._metadata_seeded`).
-
-        A standing `AgentGroup` interjection (registered in `_reset_state`) emits a markdown
-        table of every agent in the session tree whenever group composition or subagent activity
-        changes -- polled by every `send_turn()` call.
-
-        Also on the first turn only (`self._session_naming_pending`), the session directory is
-        claimed and the session-naming classifier is kicked off.
+        On the first turn only, the session directory is claimed and the session-naming
+        classifier is kicked off.
         """
         original_prompt = prompt
         active_model = self.active_model()

@@ -218,8 +218,7 @@ class SearchMemoriesTool(Tool):
     ) -> list[tuple[str, Chunk, float]]:
         """Up to `SEMANTIC_TOP_K` `(namespace, chunk, score)` hits, scoring at least
         `SEMANTIC_MIN_SCORE`, from whichever of `namespaces`' catalogs `session.workspace_indexer`
-        (shared by both the `memories-workspace` and `memories-global` catalogs) currently
-        covers."""
+        currently covers."""
         indexer = self.context.session.workspace_indexer if self.context.session is not None else None
         if indexer is None:
             return []

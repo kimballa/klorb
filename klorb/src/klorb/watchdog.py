@@ -1,10 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Last-ditch process force-exit for a wedged klorb: a shared `force_exit` (best-effort,
-time-boxed cleanup then `os._exit`) and a `LivenessWatchdog` daemon thread that triggers it when
-the main-thread event loop stops snoozing it. UI-agnostic library code — the TUI wires it up in
-`klorb.tui.ReplApp`, but nothing here imports Textual. See
-docs/specs/interrupt-and-liveness-watchdog.md and
-docs/adrs/00123-liveness-watchdog-over-reactive-arming.md.
+"""Last-ditch process force-exit for a wedged klorb: a shared `force_exit` and a
+`LivenessWatchdog` daemon thread that triggers it when the main-thread event loop stops snoozing.
+See docs/specs/interrupt-and-liveness-watchdog.md.
 """
 
 import os
@@ -22,10 +19,7 @@ effective poll is `min(this, timeout / 4)` so a small `timeout` still gets sever
 def run_bounded_cleanup(cleanup: Callable[[], None], grace_seconds: float) -> None:
     """Run `cleanup` on a throwaway daemon thread and wait at most `grace_seconds` for it to
     finish. Any exception `cleanup` raises is swallowed. Returns once `cleanup` finishes or the
-    grace elapses, whichever comes first — so a cleanup that itself wedges (e.g. a session save
-    blocked on the very resource that caused the hang) can never prevent the caller from
-    proceeding to exit. Split out from `force_exit` so the bounding behavior is testable without
-    actually terminating the process."""
+    grace elapses, whichever comes first."""
 
     def _guarded() -> None:
         try:
@@ -41,12 +35,10 @@ def run_bounded_cleanup(cleanup: Callable[[], None], grace_seconds: float) -> No
 def force_exit(
     cleanup: Callable[[], None], grace_seconds: float, *, exit_code: int = 1,
 ) -> NoReturn:
-    """Run `cleanup` (time-boxed to `grace_seconds` via `run_bounded_cleanup`) and then hard-exit
-    the process with `os._exit(exit_code)`, bypassing all atexit hooks, `finally` blocks, and
-    Textual teardown. The last-ditch escape for a wedged klorb, shared by the double-Ctrl+C
-    handler and `LivenessWatchdog`. `os._exit` is deliberate: a wedged interpreter can't be
-    trusted to run a normal `sys.exit`/teardown path, so nothing beyond the best-effort cleanup
-    is attempted."""
+    """Run `cleanup` within `grace_seconds` and then hard-exit the process with
+    `os._exit(exit_code)`, bypassing all atexit hooks, `finally` blocks, and Textual teardown.
+    `os._exit` is deliberate: a wedged interpreter can't be trusted to run a normal
+    `sys.exit`/teardown path, so nothing beyond the best-effort cleanup is attempted."""
     run_bounded_cleanup(cleanup, grace_seconds)
     print("Watchdog forced exit!", file=sys.stderr, flush=True)
     os._exit(exit_code)
@@ -56,18 +48,14 @@ class LivenessWatchdog:
     """A daemon thread that force-exits the process if it isn't `snooze()`'d at least once every
     `timeout_seconds`. The owning event loop is expected to snooze it from a timer running on the
     main thread; the snooze therefore stops exactly when the main-thread event loop wedges, which is
-    the one hang mode neither key-event handling nor an external terminal `Ctrl+C` can escape
-    (see docs/specs/interrupt-and-liveness-watchdog.md).
+    the one hang mode neither key-event handling nor an external terminal `Ctrl+C` can escape.
 
     Because snoozing is driven by the event loop and not by any worker-thread activity, a slow or
-    silent model turn (which blocks only the worker thread) does not affect it — the main-thread
-    loop keeps servicing its timer and keeps snoozing.
+    silent model turn does not affect it.
 
     `on_expire` is invoked exactly once, from the watchdog's own thread, when a lapse is detected;
-    in production it is a `force_exit(...)` call (which never returns). `timeout_seconds <= 0`
-    disables the watchdog: `start()` becomes a no-op, so no background thread is created at all —
-    an escape hatch for users, and a way for tests to avoid a thread that could `os._exit` the
-    test process.
+    in production it is a `force_exit(...)` call. `timeout_seconds <= 0`
+    disables the watchdog: `start()` becomes a no-op, so no background thread is created at all.
     """
 
     def __init__(
@@ -89,7 +77,7 @@ class LivenessWatchdog:
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
         self._fired: bool = False
-        """True once `on_expire` has been invoked — exposed as `fired` for tests."""
+        """True once `on_expire` has been invoked."""
 
     @property
     def enabled(self) -> bool:
@@ -115,7 +103,7 @@ class LivenessWatchdog:
         self._last_snooze = self._clock()
 
     def stop(self) -> None:
-        """Disarm the watchdog (e.g. during an orderly shutdown) so it can't fire. Safe to call
+        """Disarm the watchdog so it can't fire. Safe to call
         more than once, or when never started."""
         self._stop.set()
 

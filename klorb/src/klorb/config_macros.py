@@ -11,11 +11,9 @@ KLORB_DATA_DIR_MACRO_NAME = "klorbDataDir"
 
 
 class MacroExpansionError(Exception):
-    """Raised by `expand_macros` when `text` contains a malformed or unrecognized `${...}`
+    """Raised when `text` contains a malformed or unrecognized `${...}`
     reference. `snippet` is the exact substring (verbatim from `text`) that triggered the
-    error — a caller with access to the raw config-file source can `str.find()` it to recover
-    a line/column for the error message, since macro tokens use only ASCII identifier
-    characters and never require JSON escaping.
+    error.
     """
 
     def __init__(self, message: str, *, snippet: str) -> None:
@@ -40,16 +38,10 @@ def expand_macros(text: str, *, macros: dict[str, str], forbid_char: str | None 
     that happens to contain the literal text `${...}` is not expanded a second time.
 
     Raises `MacroExpansionError` for an unterminated `${` (no matching `}`), an empty name
-    (`${}`), or a name absent from `macros` — a config author's typo must never silently
-    produce a rule that quietly fails to match anything (dangerous for a `deny` rule) or a
-    path built from an empty substitution (e.g. `${workspaceRoot}` silently becoming `""` would
-    turn `${workspaceRoot}/secrets` into the absolute path `/secrets`).
+    (`${}`), or a name absent from `macros`.
 
-    `forbid_char`, if given, rejects (also via `MacroExpansionError`) expanding a macro whose
-    resolved value contains that character — used by callers expanding into a `readFiles`/
-    `writeFiles` rule to guarantee expansion never introduces a new `*` wildcard
-    metacharacter that the rule's author didn't type themselves; see
-    docs/adrs/00175-file-rule-macro-values-may-not-contain-a-literal-star.md.
+    `forbid_char`, if given, rejects expanding a macro whose resolved value contains that
+    character.
     """
     pieces: list[str] = []
     i = 0

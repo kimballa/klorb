@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`WorkspaceIndexer`: owns one workspace's search index, covering all catalogs. See
-docs/specs/local-search-index.md.
+"""`WorkspaceIndexer`: owns one workspace's search index, covering all catalogs.
 """
 
 import hashlib
@@ -57,8 +56,7 @@ _ALWAYS_SKIP_DIR_NAMES = frozenset({".git", ".svn", ".cvs", ".hg",
 _GLOBAL_MEMORIES_VIRTUAL_DIRNAME = f"{KLORB_PROJECT_DIR_NAME}/global-memories"
 """Synthetic virtual path standing in for `KLORB_DATA_DIR/memories/` in `Chunk.source_path` and
 the `files` table's bookkeeping key, since that directory isn't nested under any workspace root.
-Kept under a `.klorb`-prefixed virtual path so it can never collide with a real `workspace`
-catalog path, since `_walk_indexable_files` always skips `.klorb`."""
+"""
 
 
 @dataclass
@@ -73,9 +71,7 @@ class ScanStats:
 
 
 class _ScanPhaseTimings:
-    """Cumulative wall-clock time `_scan_dirty_files` spent in each phase, summed across every
-    file and worker thread -- diagnostic only, logged at `run_foreground_scan`'s debug level so a
-    slow scan's dominant cost is visible directly instead of inferred from CPU usage."""
+    """Cumulative wall-clock time `_scan_dirty_files` spent in each phase, diagnostic only."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -117,8 +113,7 @@ def _read_text(path: Path) -> str | None:
 
 
 def _walk_indexable_files(root: Path, gitignore: GitignoreFilter) -> Iterator[Path]:
-    """Depth-first walk of `root`, yielding every non-gitignored file -- skipping `.git`/`.klorb`
-    unconditionally and any symlink."""
+    """Depth-first walk of `root`, yielding every non-gitignored file."""
     try:
         entries = sorted(root.iterdir(), key=lambda entry: entry.name)
     except OSError:
@@ -173,10 +168,8 @@ def _global_memory_entries() -> list[tuple[Path, str]]:
 def _skill_markdown_entries(
     workspace_root: Path, claude_skills_compat: bool,
 ) -> list[tuple[Traversable, str, str]]:
-    """Every markdown file (`SKILL.md` and any nested resource file) across every discoverable
-    skill in every tier, as `(target, catalog, source_path)` triples. Trust is hardcoded `True`:
-    a `WorkspaceIndexer` only ever exists for a trusted workspace (see
-    `SessionCoreMixin._create_workspace_indexer`)."""
+    """Every markdown file across every discoverable skill in every tier, as
+    `(target, catalog, source_path)` triples."""
     entries: list[tuple[Traversable, str, str]] = []
     for resolved in resolve_all_skills(
             workspace_root=workspace_root, workspace_trusted=True,
@@ -191,9 +184,8 @@ def _skill_markdown_entries(
 
 
 def _read_skill_text(target: Traversable) -> str | None:
-    """`target`'s decoded text, or `None` if it's unreadable or not valid UTF-8. Unlike
-    `_read_text`, applies no size gate -- `target` may be a packaged `importlib.resources`
-    `Traversable` with no `.stat()`, and skill files are small authored docs regardless of tier."""
+    """`target`'s decoded text, or `None` if it's unreadable or not valid UTF-8. Applies no size
+    gate -- `target` may be a packaged `importlib.resources` `Traversable` with no `.stat()`."""
     try:
         return target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -323,14 +315,14 @@ class WorkspaceIndexer:
         self, *, rebuild: bool = False, num_threads: int = 1, use_gpu: bool = True,
     ) -> ScanStats:
         """Synchronously scan the workspace and (re)index every dirty file, for `klorb index
-        scan`. Unlike `start()`'s background catch-up scan, this blocks until finished and fans
-        the chunk/embed work for changed files out across `num_threads` worker threads.
+        scan`. This blocks until finished and fans the chunk/embed work for changed files out
+        across `num_threads` worker threads.
 
         * `rebuild` clears the index first, so every file is treated as dirty.
         * `use_gpu` (the default) tries CUDA before falling back to CPU.
 
-        Raises `RuntimeError` if another process already owns this workspace's index (its own
-        watcher already keeps it current) or if the bundled embedding model isn't installed.
+        Raises `RuntimeError` if another process already owns this workspace's index or if the
+        bundled embedding model isn't installed.
         """
         if not embedding_model_available():
             raise RuntimeError("Embedding model not installed; run `klorb init` first.")
@@ -361,8 +353,7 @@ class WorkspaceIndexer:
         the one resulting `EmbeddingModel` across every worker thread regardless of `num_threads`.
 
         If `use_gpu` is false, or GPU wasn't actually available, this falls back to a CPU-only
-        `EmbeddingModel` private to each worker thread (`thread_embedding_model()`,
-        `_thread_local.model`, lazily built and reused for every file that thread processes).
+        `EmbeddingModel` private to each worker thread.
         """
         start_time = time.monotonic()
         shared_gpu_model = try_gpu_embedding_model() if use_gpu else None
@@ -423,13 +414,11 @@ class WorkspaceIndexer:
             for item in dirty:
                 process_one(item)
         else:
-            # Submitted up front (mirroring Executor.map's own eager-submit behavior) rather than
-            # via `with ThreadPoolExecutor(...) as pool:` -- that context manager's `__exit__`
-            # unconditionally calls `shutdown(wait=True)`, which on an interrupt would block until
-            # every already-submitted file finished, however deep the backlog, since none of them
-            # get cancelled. `cancel_futures=True` here drops every not-yet-started file
-            # immediately, so an interrupt only waits on the up-to-`num_threads` files already in
-            # flight rather than the whole scan.
+            # Submitted up front rather than via `with ThreadPoolExecutor(...) as pool:`:
+            # that context manager's `__exit__` unconditionally calls `shutdown(wait=True)`,
+            # which on an interrupt would block until every already-submitted file finished.
+            # `cancel_futures=True` here drops every not-yet-started file immediately, so an
+            # interrupt only waits on the up-to-`num_threads` files already in flight.
             pool = ThreadPoolExecutor(max_workers=num_threads)
             try:
                 futures = [pool.submit(process_one, item) for item in dirty]
@@ -482,8 +471,7 @@ class WorkspaceIndexer:
         `write_lock` for the whole scan rather than a separate file-lock acquisition per file.
         A file whose mtime matches its stored `FileIndexRecord.last_modified_ts` is skipped
         without reading or hashing it; a file whose mtime changed but whose content hash didn't
-        (e.g. a `git checkout` that touches mtimes) is skipped for chunking/embedding but still
-        gets its stored mtime refreshed."""
+        is skipped for chunking/embedding but still gets its stored mtime refreshed."""
         start_time = time.monotonic()
         existing = self._store.file_records()
         seen: set[str] = set()

@@ -20,7 +20,7 @@ from klorb.workspace import TrustManager
 
 def build_system_prompt_parser() -> argparse.ArgumentParser:
     """Build the argument parser for `klorb system-prompt`'s own flags
-    (`--role`/`--model`/`--config`) — see `run_system_prompt_cli()`.
+    (`--role`/`--model`/`--config`).
     """
     parser = argparse.ArgumentParser(
         prog=f"klorb {SYSTEM_PROMPT_SUBCOMMAND}",
@@ -63,8 +63,8 @@ def _print_section(header: str, body: str) -> None:
 
 def _render_tool_token_table(per_tool_tokens: dict[str, int]) -> str:
     """Render `per_tool_tokens` (tool name -> its full function-calling definition's token
-    count, from `klorb.token_estimate.tool_token_counts()`) as a column-aligned table sorted by
-    token count descending, with a trailing total row.
+    count) as a column-aligned table sorted by token count descending, with a trailing total
+    row.
     """
     rows = sorted(per_tool_tokens.items(), key=lambda kv: kv[1], reverse=True)
     headers = ("TOOL", "TOKENS")
@@ -86,12 +86,10 @@ def run_system_prompt_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb system-prompt`) and print the resolved
     system prompt and tool definitions to stdout, with a token-count summary at the bottom.
 
-    Resolves the config file stack (the same `/etc`/per-user/per-project/`--config` layers
-    `load_process_config()` always reads) to pick up the configured model, then layers the
-    `--model` flag on top when given. The workspace is resolved via a fresh `TrustManager`
-    (never bootstrapped — that needs the interactive TUI), the same non-interactive path a
-    headless one-shot prompt takes: if the project isn't trusted, its per-project config layer
-    is simply skipped, not prompted for.
+    Resolves the config file stack to pick up the configured model, then layers the
+    `--model` flag on top when given. The workspace is resolved via a fresh `TrustManager`:
+    if the project isn't trusted, its per-project config layer is simply skipped, not
+    prompted for.
 
     Output is plain text to stdout, with distinct markdown-style section headers separating
     the default system prompt (`default_sys.md`), the role-specific addendum, the tool

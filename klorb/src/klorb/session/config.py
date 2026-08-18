@@ -25,15 +25,12 @@ from klorb.workspace import Workspace
 
 
 class PermissionFrameworkState(BaseModel):
-    """Mutable holder for a session tree's `permission_framework` value, shared by reference
-    (never independently copied) across every `SessionConfig` in one tree -- see
-    `SessionConfig.permission_framework_state` and "Shared permission framework state" in
-    docs/specs/subagents.md. A plain `PermissionFramework` scalar field can't do
-    this: pydantic's `model_copy()` always produces an independent copy of a scalar attribute,
-    so cloning a `SessionConfig` for a subagent would silently diverge its permission
-    framework from its parent's. Wrapping the value in this one-field model instead lets
-    `model_copy()`'s shallow-copy semantics (which preserve, not clone, nested model
-    references) do the sharing for free."""
+    """Mutable holder for a session tree's `permission_framework` value. A plain
+    `PermissionFramework` scalar field can't do this: pydantic's `model_copy()` always produces
+    an independent copy of a scalar attribute, so cloning a `SessionConfig` for a subagent would
+    silently diverge its permission framework from its parent's. Wrapping the value in this
+    one-field model instead lets `model_copy()`'s shallow-copy semantics (which preserve, not
+    clone, nested model references) do the sharing for free."""
 
     value: PermissionFramework = "ask"
 
@@ -61,53 +58,48 @@ class SessionConfig(BaseModel):
     unlimited."""
     workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
     """Which directory this session considers its project root, whether it's a registered
-    project, and whether it's trusted — see `klorb.workspace.Workspace` and
-    docs/specs/projects-and-trust.md. Lives on `SessionConfig`, not `ProcessConfig`: multiple
+    project, and whether it's trusted — see `klorb.workspace.Workspace`.
+    Lives on `SessionConfig`, not `ProcessConfig`: multiple
     sessions can run concurrently within one process, each against a different directory (and
     so a different trust decision), which makes workspace identity a per-session concern, not
-    a process-wide one — see docs/adrs/00060-move-workspace-from-processconfig-to-sessionconfig.md.
+    a process-wide one.
 
     `workspace.path` is the directory the file-editing tools (`EditFile`, `ReplaceAll`,
-    `CreateFile`) are always confined to — see
-    `klorb.permissions.workspace.resolve_within_workspace` — a hard, non-config-overridable
+    `CreateFile`) are always confined to — a hard, non-config-overridable
     boundary. `ReadFile` gets the same hard boundary unless `workspace.trusted` is set (via the
     interactive workspace-trust flow). Defaults to `Workspace(path=Path.cwd())` for callers
-    that construct `SessionConfig` directly (e.g. tests); real runs get an explicit,
+    that construct `SessionConfig` directly; real runs get an explicit,
     ancestor-searched `path` from `klorb.permissions.directory_access.find_workspace_root()` via
-    `load_process_config()`. See docs/adrs/00025-confine-file-tools-to-workspace-root.md and
-    docs/specs/permissions.md."""
+    `load_process_config()`."""
     read_dirs: DirRules = Field(default_factory=DirRules)
     """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see
-    `klorb.permissions.directory_access` and docs/specs/permissions.md. Lives on
+    `klorb.permissions.directory_access`. Lives on
     `SessionConfig`, not `ProcessConfig`, because a future "ask" flow will let a user approve a
     rule for the rest of the session — the same reason `max_tool_calls_per_turn` lives here
     too."""
     write_dirs: DirRules = Field(default_factory=DirRules)
     """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
     `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
-    `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write` and
-    docs/specs/permissions.md."""
+    `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write`."""
     read_files: FileRules = Field(default_factory=FileRules)
     """`readFiles`-config-driven allow/ask/deny rules for individual files, consulted by
     `klorb.permissions.workspace.resolve_and_evaluate_read` ahead of, and independently from,
     `read_dirs` and the workspace-root boundary — an exact match here is used as-is, with no
-    directory-level fallback. See `klorb.permissions.file_access` and
-    docs/specs/permissions.md."""
+    directory-level fallback. See `klorb.permissions.file_access`."""
     write_files: FileRules = Field(default_factory=FileRules)
     """`writeFiles`-config-driven allow/ask/deny rules for individual files, consulted by
     `klorb.permissions.workspace.resolve_and_evaluate_write` ahead of, and independently from,
-    `write_dirs` and the workspace-root boundary — see `klorb.permissions.file_access` and
-    docs/specs/permissions.md."""
+    `write_dirs` and the workspace-root boundary — see `klorb.permissions.file_access`."""
     command_rules: CommandRules = Field(default_factory=CommandRules)
     """`commandRules`-config-driven allow/ask/deny rules `BashTool` consults — see
-    `klorb.permissions.command_access` and docs/specs/bash-tool-and-command-permissions.md.
+    `klorb.permissions.command_access`.
     Lives on `SessionConfig`, not `ProcessConfig`, for the same reason `read_dirs`/`write_dirs`
     do: the interactive "ask" flow lets a user approve a command pattern for the rest of the
     session."""
     skill_rules: SkillRules = Field(default_factory=SkillRules)
     """`skillRules`-config-driven allow/ask/deny rules `ActivateSkill`/`ReadSkillFile` consult,
-    matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access` and
-    docs/specs/skills.md. Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
+    matched by exact `(namespace, name)` identity — see `klorb.permissions.skill_access`.
+    Lives on `SessionConfig` like `command_rules`, so the interactive "ask"
     flow can approve a skill for the rest of the session."""
     web_domain_rules: DomainRules = Field(default_factory=DomainRules)
     """`webDomains`-config-driven allow/ask/deny rules `WebFetch` consults before any network
@@ -149,18 +141,18 @@ class SessionConfig(BaseModel):
     `web_domain_rules`, but a genuinely separate table: a `Bash` command runs inside an
     `--unshare-net` sandbox with no implicit trust in klorb's own network position, so this table
     ships with none of `web_domain_rules`'s loopback/RFC1918 allowances by default. A user who
-    needs a sandboxed command to reach `localhost`/the LAN (e.g. Cypress against a co-developed
-    dev server) grants it here through the ordinary ask/grant flow, not a hardcoded exception."""
+    needs a sandboxed command to reach `localhost`/the LAN grants it here through the ordinary
+    ask/grant flow, not a hardcoded exception."""
     share_env: list[str] = Field(default_factory=list)
     """Names of environment variables `BashTool` passes through from the klorb process's own
     environment into the shell command it runs, on top of the always-shared `HOME`/`USER` — see
     `klorb.tools.bash.build_bash_env`. On-disk `shareEnv`, concatenated across config layers
-    exactly like `read_dirs`/`write_dirs` (see `klorb.process_config.load_process_config`)."""
+    exactly like `read_dirs`/`write_dirs`."""
     set_env: dict[str, str] = Field(default_factory=dict)
     """Environment variable overrides `BashTool` sets for the shell command it runs, applied
     after `share_env`'s pass-through so they shadow it — see `klorb.tools.bash.build_bash_env`.
     On-disk `setEnv`, merged across config layers with a later layer's value for the same key
-    replacing an earlier layer's (see `klorb.process_config.load_process_config`)."""
+    replacing an earlier layer's."""
     permission_framework_state: PermissionFrameworkState = Field(
         default_factory=PermissionFrameworkState)
     """Holds the effective `permission_framework` value -- see `permission_framework` below
@@ -173,8 +165,7 @@ class SessionConfig(BaseModel):
     workspace's own `${workspace_root}/.klorb/` directory) and `"homedir"` (lifts the
     privileged-path deny on `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and `KLORB_STATE_DIR`). See
     `klorb.permissions.directory_access.is_privileged_path` for how the grants are applied.
-    Never persisted to disk: a grant here revokes when the session ends (e.g. a `/clear`
-    in the REPL starts a fresh `SessionConfig` with an empty set), and a config file can't
+    Never persisted to disk: a grant here revokes when the session ends, and a config file can't
     pre-populate it (it's absent from `SESSION_KEY_MAP`). Lives on `SessionConfig`, not
     `ProcessConfig`, precisely because escalation is session-scoped — a `Session` owns its
     own `SessionConfig`, so the grant dies with it rather than leaking to the next session
@@ -185,13 +176,13 @@ class SessionConfig(BaseModel):
         """How `Session._run_tool_calls` resolves a `PermissionAskRequired` verdict for every
         tool-use approval (today, `readDirs`/`writeDirs` "ask" rules; more approval kinds may
         exist in the future): `"ask"` uses `TurnEventHandlers.on_permission_ask` if the caller
-        gave one (e.g. the TUI's modal), else fails closed per call, same as `"deny"`; `"auto"`
+        gave one, else fails closed per call, same as `"deny"`; `"auto"`
         auto-approves every ask with an in-memory-only `"session"`-scope grant, without ever
         invoking `on_permission_ask`; `"deny"` fails closed per call without invoking
         `on_permission_ask` even if one was given. Deliberately absent from
         `klorb.process_config.SESSION_KEY_MAP` — like `interactive`, its default depends on
         whether the session is interactive, resolved explicitly by `klorb.cli.main()` rather
-        than a static config default. See docs/specs/permissions.md.
+        than a static config default.
 
         A thin read/write proxy onto `permission_framework_state.value` -- kept as a
         same-named property (rather than requiring every caller to spell out

@@ -1,10 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Computes and persists permission grants for a workspace-memory write/delete ask -- the
-`tools.memory.*Permission` counterpart to `klorb.permissions.skill_grant`. Unlike skills/
-commands/domains, memory permission is a flat scalar `Verdict` per operation, not a `deny`/`ask`/
-`allow` rule list, so this writes a single `sessionDefaults` key rather than reusing
-`klorb.permissions.rule_grant_base.RuleGrantWriter`. See docs/specs/memories.md and
-docs/specs/permissions.md.
+"""Computes and persists permission grants for a workspace-memory write/delete ask.
+
+See docs/specs/memories.md.
 """
 
 from pathlib import Path
@@ -49,14 +46,9 @@ def apply_memory_permission_grant(
     access: Literal["write", "delete"],
 ) -> None:
     """Record a permanent Allow or Deny decision for `access` (`"write"` covers both
-    `CreateMemory` and `EditMemory`; `"delete"` is `ForgetMemory`) at `scope` -- the
-    `tools.memory.*Permission` counterpart to
-    `klorb.permissions.skill_grant.apply_skill_permission_grant`; see that function's docstring
-    for the shared scope semantics (`"session"` stops at the live `SessionConfig`;
-    `"workspace"`/`"homedir"` additionally ripple into `process_config.session` and persist to
-    the scope's target file). There is no cross-file "clean a redundant ask entry" step here,
-    unlike the rule-list grants: a scalar grant simply overwrites the one Verdict, leaving
-    nothing stale behind.
+    `CreateMemory` and `EditMemory`; `"delete"` is `ForgetMemory`) at `scope`. There is no
+    cross-file "clean a redundant ask entry" step here, unlike the rule-list grants: a scalar
+    grant simply overwrites the one Verdict, leaving nothing stale behind.
     """
     field = _ACCESS_FIELD[access]
     setattr(session_config, field, action)

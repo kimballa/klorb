@@ -19,8 +19,7 @@ def _dir_from_env(env_var: str, default: Path) -> Path:
     """Resolve a klorb directory from an env var override, falling back to the given default.
 
     A leading `~`/`~user` in the override is expanded to the invoking user's home directory
-    (`Path.expanduser()`) here, at the single source of `get_klorb_config_dir()`/
-    `get_klorb_data_dir()`/`get_klorb_state_dir()`, so every consumer gets a correctly
+    (`Path.expanduser()`) here, so every consumer gets a correctly
     expanded, usable path without having to expand it again itself.
     """
     override = os.environ.get(env_var)

@@ -186,9 +186,8 @@ def test_dispatch_drops_reset_session_without_a_message(
 def test_dispatch_drops_reset_session_for_hooks_outside_the_allowlist(
     tmp_path: Path, hook_name: str,
 ) -> None:
-    """`RESET_SESSION_CAPABLE_HOOKS` (`klorb.hooks.config`) is the only hook/event set
-    `reset_session` survives folding for -- every other name's aggregate drops it silently, the
-    same way `tool_result` is ignored outside `onToolResult`."""
+    """`RESET_SESSION_CAPABLE_HOOKS` is the only hook/event set `reset_session` survives
+    folding for."""
     process_config = _process_config(tmp_path, {
         hook_name: [
             HookConfig(type="bash", shell='echo \'{"message": "restart me", "reset_session": true}\''),

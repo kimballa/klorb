@@ -1,7 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Skill access control: a `PermissionsTable` resource kind governing which skills the
 `ActivateSkill`/`ReadSkillFile` tools may load into the model's context, keyed on the exact
-`(namespace, name)` identity. See docs/specs/skills.md and docs/specs/permissions.md.
+`(namespace, name)` identity.
+
+See docs/specs/skills.md.
 """
 
 from typing import Literal
@@ -16,8 +18,7 @@ Namespace = Literal["workspace", "user", "internal"]
 VALID_NAMESPACES: tuple[Namespace, ...] = ("user", "workspace", "internal")
 """The three skill discovery tiers, in most- to least-specific precedence order: a user
 (homedir) skill overrides a same-named workspace (project) skill, which in turn overrides a
-same-named internal (packaged) skill. This is also the tier search order for resolving a bare,
-unqualified `/<name>` reference -- see `klorb.tools.skill.catalog`."""
+same-named internal (packaged) skill."""
 
 SkillId = tuple[str, str]
 """A skill's `(namespace, name)` identity -- the candidate type `SkillsAccessTable` matches."""
@@ -43,12 +44,10 @@ def parse_fqsn(fqsn: str) -> SkillId:
 
 class SkillRules(BaseModel):
     """One `skillRules` config key's `deny`/`ask`/`allow` rule lists of `(namespace, name)` pairs.
-    On disk each entry is a fully-qualified skill-name string `"<namespace>:<name>"` (see
-    `format_fqsn`/`parse_fqsn`), not a nested array -- unambiguous since a skill name can never
-    contain a colon, and friendlier in a hand-edited config than a two-element array. Immutable
-    after construction, like `CommandRules`. Rules and approval decisions always name a skill's
-    *canonical* `(namespace, name)` identity -- its directory basename, never a frontmatter-name
-    alias (see `klorb.tools.skill.model.Skill`)."""
+    On disk each entry is a fully-qualified skill-name string `"<namespace>:<name>"`, not a nested
+    array -- unambiguous since a skill name can never contain a colon, and friendlier in a
+    hand-edited config than a two-element array. Immutable after construction, like `CommandRules`.
+    Rules and approval decisions always name a skill's *canonical* `(namespace, name)` identity."""
 
     deny: list[SkillId] = Field(default_factory=list)
     ask: list[SkillId] = Field(default_factory=list)

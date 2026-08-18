@@ -1,26 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`SessionPersistenceMixin`: `Session`'s ownership of its own saved state and `session.lock` --
-claiming a `sessions/<subdir>/` directory in its workspace's per-project data directory, writing
-`session.json` to it, and keeping `sessions.json`'s recency index current. See
-docs/specs/session-persistence.md and docs/plans/ready/plan-017-multiple-sessions-per-workspace.md.
-
-This mixin, not the TUI or the ACP server, decides *whether* and *when* a session's state hits
-disk -- every caller (`klorb.tui.ReplApp`, a headless one-shot run, `klorb.server.klorb_agent.
-KlorbAcpAgent`) just calls `persist_state()`/`close()` at the right moments (end of turn, quit,
-crash, an explicit "clear session"/"start a new session"), so the on-disk format and locking
-discipline can't drift between the three call sites the way three independent implementations
-of "write `last-session.json`" once could have.
-
-There is deliberately no `atexit`-registered backstop that calls `close()` on interpreter
-shutdown: every real entry point already calls `close()` (or `persist_state()`) explicitly on
-its own way out -- the TUI's `action_quit`, its crash/force-exit paths, `klorb.cli.main()`'s
-one-shot path, and `KlorbAcpAgent.close()` -- so an `atexit` hook would be pure redundancy for
-production use, while for tests (which construct many short-lived `Session`s, most never
-explicitly closed) it would both leak every claimed `Session` for the rest of the process and,
-worse, fire its writes at interpreter shutdown *after* `pytest`'s `monkeypatch` fixtures have
-already reverted any per-test filesystem isolation -- writing real session files into the
-developer's actual `$KLORB_DATA_DIR`.
-"""
+"""`SessionPersistenceMixin`: `Session`'s ownership of its own saved state and `session.lock`."""
 
 import logging
 from datetime import datetime
@@ -33,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class SessionPersistenceMixin(SessionBase):
-    """Claims a `sessions/<subdir>/` directory for this `Session` (once its workspace is
-    trusted and its id has stopped changing -- see `claim_session_directory`), and keeps
+    """Claims a `sessions/<subdir>/` directory for this `Session` and keeps
     `session.json`/`sessions.json` current for as long as this `Session` stays open."""
 
     def claim_session_directory(self) -> None:

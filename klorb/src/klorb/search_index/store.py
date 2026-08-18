@@ -52,11 +52,10 @@ class IndexStats:
 
 class SearchIndexStore:
     """Owns one workspace's chunk index database at `db_path`. SQLite requires a connection's calls
-    to be serialized when shared across threads (the owning `WorkspaceIndexer`'s background
-    scan/watcher thread writes while a tool-calling thread reads concurrently), so every method
-    holds `self._thread_lock` for its own `self._conn` calls.
+    to be serialized when shared across threads, so every method holds `self._thread_lock` for
+    its own `self._conn` calls.
 
-    Every write method additionally acquires the short-lived `write.lock` (via `klorb.lockfile`)
+    Every write method additionally acquires the short-lived `write.lock`
     around its own transaction as defense in depth around the owner-lock handoff race described in
     docs/specs/local-search-index.md. A caller making many writes in a row can instead hold the
     lock itself via `acquire_write_lock()` and pass it into each write call, paying the file-lock
@@ -190,10 +189,7 @@ class SearchIndexStore:
         self, source_path: str, content_hash: str, last_modified_ts: float,
         write_lock: "WriteLock | None" = None,
     ) -> None:
-        """Record `source_path`'s whole-file `content_hash` and filesystem `last_modified_ts` --
-        distinct from any individual chunk's `Chunk.content_hash` -- so `file_records()` can
-        answer "did this file change since it was last indexed" unambiguously, without needing to
-        pick among a file's several chunks."""
+        """Record `source_path`'s whole-file `content_hash` and filesystem `last_modified_ts`."""
         with self._write_scope(write_lock), self._thread_lock:
             self._conn.execute(
                 "INSERT INTO files(source_path, content_hash, last_modified_ts) VALUES (?, ?, ?) "
@@ -203,9 +199,7 @@ class SearchIndexStore:
             self._conn.commit()
 
     def file_records(self) -> dict[str, FileIndexRecord]:
-        """Every currently-indexed `source_path` mapped to its `FileIndexRecord` -- used by the
-        indexer to skip re-reading and re-hashing a file whose mtime hasn't changed, and to detect
-        files that changed since they were last chunked."""
+        """Every currently-indexed `source_path` mapped to its `FileIndexRecord`."""
         with self._thread_lock:
             rows = self._conn.execute(
                 "SELECT source_path, content_hash, last_modified_ts FROM files").fetchall()
@@ -215,8 +209,7 @@ class SearchIndexStore:
 
     def clear(self, write_lock: "WriteLock | None" = None) -> None:
         """Delete every row from `chunks`/`chunks_fts`/`chunks_vec`/`files`, leaving the schema
-        itself intact -- used by `klorb index scan --rebuild` to force a full reindex from
-        scratch."""
+        itself intact."""
         with self._write_scope(write_lock), self._thread_lock:
             self._conn.execute("DELETE FROM chunks")
             self._conn.execute("DELETE FROM chunks_fts")

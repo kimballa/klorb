@@ -1,10 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.permissions.shell_parse: the shfmt-AST-to-BashCommandAnalysis walker. See
-docs/specs/bash-tool-and-command-permissions.md.
-
-These tests invoke the real `shfmt` binary (installed by the pinned `shfmt-py` dependency) —
-not a mocked AST — since the whole point of this module is to walk *actual* `shfmt --to-json`
-output; see docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md.
+"""Tests for klorb.permissions.shell_parse. See docs/specs/bash-tool-and-command-permissions.md.
 """
 
 from pathlib import Path
@@ -244,8 +239,7 @@ def test_test_clause_and_arithm_cmd_are_transparent() -> None:
     assert parse_command("(( 1 + 2 ))", SHFMT).command_count == 0
 
 
-# --- command_count: BashTool._classify's is_compound signal (see docs/adrs/
-# always-show-more-indicator-for-compound-command-ask-items.md) ---
+# --- command_count ---
 
 
 def test_command_count_matches_simple_commands_when_everything_is_literal() -> None:
@@ -254,9 +248,7 @@ def test_command_count_matches_simple_commands_when_everything_is_literal() -> N
 
 
 def test_command_count_counts_a_non_literal_argument_command_even_though_it_is_not_a_simple_command() -> None:  # noqa: E501
-    """A command diverted to forced_ask_reasons for a non-literal argument still executes --
-    command_count must count it even though it never reaches simple_commands (len(simple_commands)
-    would silently undercount it -- see the ADR)."""
+    """A command diverted to forced_ask_reasons for a non-literal argument still executes."""
     analysis = parse_command("echo $FOO && echo $BAR", SHFMT)
     assert analysis.simple_commands == []
     assert len(analysis.forced_ask_reasons) == 2
@@ -271,17 +263,14 @@ def test_command_count_for_if_with_a_test_command_condition() -> None:
 
 
 def test_command_count_for_if_with_a_non_literal_test_clause_condition() -> None:
-    """A `[[ ... ]]`/`(( ... ))` condition invokes no external program of its own (see
-    test_test_clause_and_arithm_cmd_are_transparent), so only the then-body's one real command
-    counts -- not compound, even with a non-literal argument in the body."""
+    """A `[[ ... ]]`/`(( ... ))` condition invokes no external program, so only the then-body's
+    one real command counts."""
     analysis = parse_command('if [[ -f foo ]]; then cat "$FOO"; fi', SHFMT)
     assert analysis.command_count == 1
 
 
 def test_command_count_for_loop_body_with_non_literal_argument_commands() -> None:
-    """Regression test: a `for` loop body of two non-literal-argument commands previously
-    computed len(simple_commands) == 0 (neither reaches simple_commands), so `is_compound` came
-    out False for a command that unambiguously runs two independent commands -- see the ADR."""
+    """A `for` loop body of two non-literal-argument commands computes the correct command_count."""
     analysis = parse_command('for f in *.txt; do echo "$f"; rm "$f"; done', SHFMT)
     assert analysis.simple_commands == []
     assert len(analysis.forced_ask_reasons) == 2
@@ -299,8 +288,7 @@ def test_command_count_includes_decl_clause() -> None:
     assert parse_command("export FOO=bar && export BAZ=$QUX", SHFMT).command_count == 2
 
 
-# --- source_text: PermissionAskItem.item_command_text's source data (see docs/adrs/
-# permission-ask-item-shows-its-own-command-text-not-the-full-compound.md) ---
+# --- source_text ---
 
 
 def test_source_text_for_loop_body_non_literal_commands_is_each_ones_own_statement() -> None:

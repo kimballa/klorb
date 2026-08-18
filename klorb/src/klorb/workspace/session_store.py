@@ -1,30 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Persisting and reloading a trusted workspace's saved sessions -- not just the most recent one,
-but up to `MAX_RECENT_SESSIONS` of them, each in its own subdirectory, indexed by recency in
-`sessions.json`. See docs/specs/session-persistence.md.
-
-`sessions/` lives in the same per-project directory as the prompt-input history file
-(`klorb.workspace.input_history.project_history_dir`), under `$KLORB_DATA_DIR`, not inside the
-workspace itself -- the same reasoning docs/adrs/store-last-session-under-klorb-data-dir-not-
-workspace.md gives for the single-slot design this module replaces:
-
-```text
-$KLORB_DATA_DIR/projects/<basename>-<token>/
-├── history                       # unchanged: append-only prompt-recall log
-├── workspace.lock                # guards read-modify-write of sessions.json
-└── sessions/
-    ├── sessions.json             # ordered index of recent sessions
-    └── <subdir>/
-        ├── session.json          # one saved session's full state
-        └── session.lock          # held by the live process that owns this session, if any
-```
-
-`sessions/` and each `sessions/<subdir>/` are created lazily, exactly like `project_history_dir`
-itself. `klorb.session.mixins.persistence.SessionPersistenceMixin` is the only caller that
-claims a session directory (via `session_lock_path` + `klorb.lockfile`) and calls
-`write_session_state`/`touch_recent_session`; this module owns the on-disk format and the
-`workspace.lock`-guarded index update, not session lifecycle policy (when to claim, when to
-release) -- see that mixin.
+"""Persisting and reloading a trusted workspace's saved sessions.
+See docs/specs/session-persistence.md.
 """
 
 import logging
@@ -54,8 +30,7 @@ SESSION_STATE_FILENAME = "session.json"
 WORKSPACE_LOCK_FILENAME = "workspace.lock"
 SESSION_LOCK_FILENAME = "session.lock"
 SESSION_IMAGES_DIR_NAME = "images"
-"""Subdirectory of `sessions/<subdir>/` holding on-disk-backed image-fragment bytes -- see
-`write_session_image`."""
+"""Subdirectory of `sessions/<subdir>/` holding on-disk-backed image-fragment bytes."""
 
 SESSIONS_LIST_SCHEMA_NAME = "klorb-session-list"
 SESSIONS_LIST_SCHEMA_VERSION = "1.0.0"
@@ -66,9 +41,7 @@ SESSION_STATE_SCHEMA_VERSION = "1.0.0"
 MAX_RECENT_SESSIONS = 30
 """Cap on how many sessions `sessions.json` keeps: whenever `touch_recent_session()` writes a
 list longer than this, entries past the cap (least recently touched first) have their
-directories deleted and are dropped from the index -- except any entry whose `session.lock` is
-currently held by a live process, which is kept regardless, so the list can legitimately exceed
-this cap while several sessions are simultaneously open. See `_prune_sessions_index`."""
+directories deleted and are dropped from the index."""
 
 
 class RecentSession(BaseModel):
@@ -79,9 +52,8 @@ class RecentSession(BaseModel):
     subdir: str
     title: str | None = None
     last_modified_timestamp: datetime | None = None
-    """When this session was last saved, mirroring `Session.last_modified_at` -- drives the
-    relative-age display ("2 hours ago") in the VS Code "Load session" picker. Absent (`None`)
-    in files written by an older klorb version that predates this field."""
+    """When this session was last saved, drives the relative-age display in the
+    "Load session" picker."""
 
 
 class SessionsIndexState(BaseModel):
@@ -98,24 +70,19 @@ class SessionState(BaseModel):
     config: SessionConfig
     messages: list[Message]
     statistics: SessionStatistics | None = None
-    """Running statistics accumulated during the session, if saved. Absent (``None``) in files
-    written by an older klorb version that predates session statistics tracking."""
+    """Running statistics accumulated during the session."""
     session_id: str | None = None
     """The session's `Session.id`, persisted so it can be restored on reload."""
     root_id: str | None = None
-    """The session's `Session.root_id`, persisted so it can be restored on reload. Absent
-    (`None`) in files written by an older klorb version that predates it."""
+    """The session's `Session.root_id`, persisted so it can be restored on reload."""
     session_name: str | None = None
-    """The human-readable session title (classifier-assigned, or the fallback derived by
-    `klorb.session_naming.fallback_session_title`), persisted so the TUI's status bar and the
+    """The human-readable session title, persisted so the TUI's status bar and the
     "Load session" picker can display it without re-deriving it."""
     cur_chainlink_task_id: int | None = None
-    """The saved session's `Session.cur_chainlink_task_id`, if any (see
-    docs/specs/chainlink-task-tracking.md). Absent (`None`) in files written by an older klorb
-    version that predates chainlink task tracking."""
+    """The saved session's `Session.cur_chainlink_task_id`, if any."""
     last_modified_timestamp: datetime | None = None
     """The saved session's `Session.last_modified_at`, persisted so it can be restored on
-    reload. Absent (`None`) in files written by an older klorb version that predates it."""
+    reload."""
 
 
 def sessions_dir(workspace: Workspace) -> Path:
@@ -129,10 +96,8 @@ def sessions_list_path(workspace: Workspace) -> Path:
 
 
 def workspace_lock_path(workspace: Workspace) -> Path:
-    """The `workspace.lock` path for `workspace` -- guards read-modify-write access to
-    `sessions.json`. Lives directly in the per-project directory (a sibling of `sessions/`), not
-    inside it, since it's short-lived contention control for the *index* specifically, not a
-    per-session concern."""
+    """The `workspace.lock` path for `workspace`, guarding read-modify-write access to
+    `sessions.json`."""
     return project_history_dir(workspace) / WORKSPACE_LOCK_FILENAME
 
 
@@ -153,18 +118,15 @@ def session_lock_path(workspace: Workspace, subdir: str) -> Path:
 
 def session_images_dir(workspace: Workspace, subdir: str) -> Path:
     """The `images/` directory holding on-disk-backed image-fragment bytes for the session
-    saved in `sessions/<subdir>/` -- see `write_session_image`."""
+    saved in `sessions/<subdir>/`."""
     return session_subdir_path(workspace, subdir) / SESSION_IMAGES_DIR_NAME
 
 
 def write_session_image(workspace: Workspace, subdir: str, data: bytes, extension: str) -> str:
     """Write `data` to a freshly-named file under `session_images_dir(workspace, subdir)`,
-    creating that directory if needed, and return its path relative to `sessions/<subdir>/`
-    (e.g. `"images/<uuid>.webp"`) -- the value `klorb.message.MessageFragment.image_path`
-    stores. Deleting a session's directory (`_prune_sessions_index`'s `shutil.rmtree`)
-    already cleans up every image written here for free, since it lives inside that same
-    subtree.
-    """
+    creating that directory if needed, and return its relative path. Deleting a session's
+    directory already cleans up every image written here, since it lives inside that same
+    subtree."""
     images_dir = session_images_dir(workspace, subdir)
     images_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}.{extension}"
@@ -175,21 +137,15 @@ def write_session_image(workspace: Workspace, subdir: str, data: bytes, extensio
 
 
 def read_session_image(workspace: Workspace, subdir: str, image_path: str) -> bytes:
-    """Read back the bytes at `image_path` (as returned by `write_session_image`, relative to
-    `sessions/<subdir>/`) -- used by `klorb.session.restore.try_restore_session` to rehydrate
-    a restored image fragment's wire-format `image_url`."""
+    """Read back the bytes at `image_path` relative to `sessions/<subdir>/`."""
     return (session_subdir_path(workspace, subdir) / image_path).read_bytes()
 
 
 def read_sessions_index(workspace: Workspace) -> SessionsIndexState:
     """Load `workspace`'s `sessions.json`, or an empty index if the file doesn't exist, belongs
-    to a different schema, or fails to validate as `SessionsIndexState` (a hand-edited or
-    otherwise corrupted file) -- treated as "no recent sessions" rather than raised, the same
-    fail-open contract `klorb.workspace.last_session.read_last_session` had for a single save
-    file. No locking here: `write_versioned_json`'s atomic temp-file-then-`os.replace()` means a
-    read can never observe a torn file, so a reader doesn't need to serialize against a
-    concurrent updater's short `workspace.lock`-guarded critical section (see
-    `touch_recent_session`)."""
+    to a different schema, or fails to validate as `SessionsIndexState`. No locking needed:
+    `write_versioned_json`'s atomic temp-file-then-`os.replace()` means a read can never observe
+    a torn file."""
     data = read_versioned_json(
         sessions_list_path(workspace), expected_schema_name=SESSIONS_LIST_SCHEMA_NAME)
     if not data:
@@ -210,21 +166,20 @@ def _write_sessions_index(workspace: Workspace, index: SessionsIndexState) -> No
 
 
 def _is_safe_session_subdir(workspace: Workspace, subdir: str) -> bool:
-    """Whether `subdir` (an untrusted `RecentSession.subdir` read back from `sessions.json`)
-    resolves to somewhere inside `sessions_dir(workspace)` once `..` segments and symlinks are
-    followed. Guards `_prune_sessions_index` against a hand-edited or corrupted index entry that
-    could otherwise send `shutil.rmtree`/`session_lock_path` outside the session store."""
+    """Whether `subdir` resolves to somewhere inside `sessions_dir(workspace)` once `..`
+    segments and symlinks are followed. Guards `_prune_sessions_index` against a hand-edited
+    or corrupted index entry that could otherwise send `shutil.rmtree`/`session_lock_path`
+    outside the session store."""
     root = sessions_dir(workspace).resolve()
     candidate = (root / subdir).resolve()
     return candidate.is_relative_to(root)
 
 
 def _prune_sessions_index(workspace: Workspace, index: SessionsIndexState) -> None:
-    """Mutate `index.recent_sessions` in place, dropping (and deleting the directory of) every
+    """Mutate `index.recent_sessions` in place, dropping and deleting the directory of every
     entry beyond `MAX_RECENT_SESSIONS` whose `session.lock` isn't currently held by a live
-    process -- see `MAX_RECENT_SESSIONS`'s own docstring. An entry whose `subdir` fails
-    `_is_safe_session_subdir` is dropped without touching the filesystem at all. Called only
-    from `touch_recent_session()`, already holding `workspace.lock`."""
+    process. An entry whose `subdir` fails `_is_safe_session_subdir` is dropped without
+    touching the filesystem at all."""
     kept = index.recent_sessions[:MAX_RECENT_SESSIONS]
     overflow = index.recent_sessions[MAX_RECENT_SESSIONS:]
     for entry in overflow:
@@ -253,15 +208,12 @@ def touch_recent_session(
 ) -> None:
     """Move (or insert) the `session_id`/`subdir`/`title` entry to the front of `workspace`'s
     `sessions.json`, replacing any existing entry for the same `subdir`. Then prunes anything
-    that falls past `MAX_RECENT_SESSIONS` (see `_prune_sessions_index`).
+    that falls past `MAX_RECENT_SESSIONS`.
 
-    Guarded by `workspace.lock` (`acquire_lockfile_with_backoff`) for the duration of this one
-    read-modify-write; if the lock can't be acquired after retrying (another process is mid
-    read-modify-write of its own and doesn't finish within the backoff window), this call is
-    skipped entirely -- logged as a warning, not raised, since a missed recency update is
-    recoverable (the next `persist_state()` call tries again) and must never interrupt the turn
-    that triggered it.
-    """
+    Guarded by `workspace.lock` for the duration of this one read-modify-write; if the lock
+    can't be acquired after retrying, this call is skipped entirely and logged as a warning,
+    since a missed recency update is recoverable and must never interrupt the turn that
+    triggered it."""
     lock = acquire_lockfile_with_backoff(workspace_lock_path(workspace))
     if lock is None:
         logger.warning(
@@ -296,10 +248,7 @@ def write_session_state(
 ) -> None:
     """Save `config` and `messages` to `sessions/<subdir>/session.json`, schema-enveloped per
     docs/specs/persisted-json-schema-versioning.md. Overwrites any previous state for this
-    specific `subdir` outright -- there is only ever one current state per saved session, the
-    same way the single-slot design this replaces overwrote its one `last-session.json`; what's
-    different is that a workspace now has many `subdir`s, each independently overwritable.
-    """
+    specific `subdir` outright."""
     state = SessionState(
         config=config, messages=[message.for_persistence() for message in messages],
         statistics=statistics,
@@ -313,11 +262,9 @@ def write_session_state(
 
 def read_session_state(workspace: Workspace, subdir: str) -> SessionState | None:
     """Load the session saved in `sessions/<subdir>/session.json`, or `None` if no file exists
-    there, it belongs to a different schema (`read_versioned_json` already logs a warning and
-    discards it), or its data doesn't validate as `SessionState` at all -- a required key
-    missing entirely, or a present field with a value of the wrong shape. That last case is a
-    `pydantic.ValidationError`, caught here and treated the same as "nothing to restore" rather
-    than propagating, so a corrupted save file can't crash a restore attempt."""
+    there, it belongs to a different schema, or its data doesn't validate as `SessionState`. A
+    `pydantic.ValidationError` from invalid data is caught and treated as nothing to restore
+    rather than propagated, so a corrupted save file can't crash a restore attempt."""
     data = read_versioned_json(
         session_state_path(workspace, subdir), expected_schema_name=SESSION_STATE_SCHEMA_NAME)
     if not data:

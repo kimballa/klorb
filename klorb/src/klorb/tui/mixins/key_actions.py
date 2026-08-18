@@ -37,58 +37,29 @@ MASCOT_ART = """\
 
 _INTERRUPTING_MESSAGE = "Interrupting… (Ctrl+C again to quit)"
 """Shown in the history the first time Escape/Ctrl+C is pressed during an in-flight turn, so the
-user gets immediate confirmation the keystroke was received (rather than wondering if the app has
-deadlocked) — see `KeyActionsMixin._note_interrupt_requested`."""
+user gets immediate confirmation the keystroke was received."""
 
 _INTERRUPTED_MESSAGE = "<Interrupted>"
 """What the `_INTERRUPTING_MESSAGE` notice is rewritten to once the interrupt has actually taken
-hold — i.e. the turn it was interrupting has finished winding down (`_finish_turn` →
-`_resolve_interrupt_notice`), turning the transient "Interrupting…" into a settled record that it
-did."""
+hold."""
 
 _DOUBLE_INTERRUPT_WINDOW_SECONDS = 1.0
-"""How long a Ctrl+C press's effect on the next one lasts, for `KeyActionsMixin.action_interrupt`'s
-streak escalation (interrupt/copy, then a warning, then a force-exit via
-`KeyActionsMixin._force_exit` — two presses total from a bare/idle start, three from a copy or an
-interrupt) — see docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C semantics" section."""
+"""How long a Ctrl+C press's effect on the next one lasts."""
 
 _FORCE_EXIT_CLEANUP_GRACE_SECONDS = 3.0
-"""How long the force-exit path waits for its best-effort cleanup (stack dump + session save) to
-finish before calling `os._exit` regardless — see `KeyActionsMixin._force_exit` and
-`klorb.watchdog.force_exit`."""
+"""How long the force-exit path waits for its best-effort cleanup to finish before calling
+`os._exit` regardless."""
 
 _CTRL_C_QUIT_WARNING = "Press Ctrl+C again to quit."
-"""Shown in the history for an idle Ctrl+C press (nothing selected, nothing running) — a second
-press within `_DOUBLE_INTERRUPT_WINDOW_SECONDS` force-exits — see
-`KeyActionsMixin._note_ctrl_c_quit_warning`/`action_interrupt`."""
+"""Shown in the history for an idle Ctrl+C press (nothing selected, nothing running)."""
 
 
 class KeyActionsMixin(ReplAppBase):
-    """Key handling, actions, quit/exit flow, and watchdog liveness snoozing -- see
-    `ReplApp` for how this mixes into the concrete app class."""
+    """Key handling, actions, quit/exit flow, and watchdog liveness snoozing."""
 
     def on_key(self, event: events.Key) -> None:
         """Redirect text-like keystrokes into the prompt input when they'd otherwise land
-        on the (non-editable) history scroll.
-
-        The history `VerticalScroll` can receive focus — by clicking it or tabbing into it
-        — but it isn't an editable widget, so typing there would silently do nothing. Rather
-        than make the user click back into the box to start typing, treat a printable
-        keystroke that reaches this App-level handler while the history is focused as a
-        request to type into the message box: move focus there and insert the character,
-        so the keystroke isn't lost and the box is ready for the rest of what the user is
-        typing. Non-printable keys (arrows, escape, ctrl-combos, ...) are left alone, since
-        those are navigation/controls the history scroll legitimately handles or the App's
-        own bindings consume.
-
-        Only acts when the history scroll itself is the focused widget, and only when the
-        prompt input is in a state to accept input — i.e. not disabled while an interaction
-        panel (a permission ask or an `AskUserQuestions` prompt) or a modal is active.
-        Textual keeps an active modal on its own screen, so the base `Screen`/`App` key
-        dispatch routes that screen's events there before this handler ever runs; this guard
-        keeps the redirect from fighting a focused modal's own input widgets if one should
-        ever share the history's widget identity (it doesn't today, but the check is cheap).
-        """
+        on the (non-editable) history scroll."""
         if not event.is_printable or event.character is None:
             return
         focused = self.focused
@@ -119,44 +90,17 @@ class KeyActionsMixin(ReplAppBase):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the `abort_response` binding from the footer unless something is currently
-        running for the selected session (see `_something_abortable_for_selection`), since
-        there's nothing for Escape to abort otherwise.
-        """
+        running for the selected session."""
         if action == "abort_response":
             return self._something_abortable_for_selection()
         return True
 
     def action_abort_response(self) -> None:
-        """Escape: interrupt whatever is currently running for the selected session (an in-flight
-        model turn — including a Bash tool call inside it, see `Session.active_cancel_event` — a
-        `!`-prefixed shell command, or a selected subagent's own turn), the same as a solitary
-        Ctrl+C (`action_interrupt`) — but Escape only ever does this; it has no copy-text or
-        quit-warning meaning."""
+        """Escape: interrupt whatever is currently running for the selected session."""
         self._interrupt_running_activity()
 
     def _interrupt_running_activity(self) -> None:
-        """Show the `Interrupting…` notice and signal whatever's currently running to stop.
-
-        If a subagent is selected (`_selected_handle`), this sets only *its own* `cancel_event`
-        (the subagent's `klorb.agents.runtime._run_subagent_turn` catches the resulting
-        `ResponseAborted` and appends `SUBAGENT_ABORTED_MARKER` to its relayed output) and shows
-        "Sending interrupt…" in `#subagent-history` right away, via
-        `SubagentsPanelMixin._note_subagent_interrupt_requested` -- the abort can take a moment to
-        land, so this is the subagent-view analog of `_note_interrupt_requested`'s
-        `_INTERRUPTING_MESSAGE`, flipping to "Subagent interrupted." once the handle actually
-        finishes (see `_mount_subagent_status_notice`). The root session's own
-        `_cancel_event`/`_shell_cancel_event`, and its own `_INTERRUPTING_MESSAGE` notice (which
-        would otherwise land in the root's own, currently-hidden, `#history`), are left untouched,
-        so aborting a subagent's turn never interrupts or narrates over whatever the root session
-        is doing.
-
-        Otherwise, this shows the `Interrupting…` notice and signals a `!`-prefixed shell
-        command's `_shell_cancel_event`, or an in-flight model turn's `_cancel_event`
-        (`_signal_turn_cancellation`) — which also reaches a synchronous Bash tool call running
-        inside that turn via `Session.active_cancel_event`, causing it to send `SIGINT` to its own
-        child process rather than waiting for the next tool-call boundary. Shared by Escape
-        (`action_abort_response`) and a Ctrl+C that lands on running activity
-        (`action_interrupt`)."""
+        """Show the `Interrupting…` notice and signal whatever's currently running to stop."""
         if self._selected_handle is not None:
             self._note_subagent_interrupt_requested(self._selected_handle)
             self._selected_handle.cancel_event.set()
@@ -168,13 +112,7 @@ class KeyActionsMixin(ReplAppBase):
             self._signal_turn_cancellation()
 
     def _signal_turn_cancellation(self) -> None:
-        """Tell an in-flight model turn's worker thread to unwind. Sets `_cancel_event` (so
-        `Session.send_turn` raises `ResponseAborted` at its next stream or round/tool boundary —
-        see `Session._dispatch_turn`) *and* resolves any pending interaction panel's decision with
-        a safe deny/cancelled default (`_release_pending_interaction`), so a worker parked in
-        `App.call_from_thread` awaiting a user decision is released too — the cancel event alone
-        can't wake it, since it's blocked on the decision future, not mid-stream. A no-op when
-        nothing is pending, so it's safe to call unconditionally."""
+        """Tell an in-flight model turn's worker thread to unwind."""
         if self._cancel_event is not None:
             self._cancel_event.set()
         if self._release_pending_interaction is not None:
@@ -182,54 +120,18 @@ class KeyActionsMixin(ReplAppBase):
 
     def _note_ctrl_c_copy(self) -> None:
         """Record that the most recent Ctrl+C (or Cmd+C) press copied selected text to the
-        clipboard, for `action_interrupt`'s own streak bookkeeping. Called by
-        `SelectionSafeScreen.action_copy_text`/`PromptInput.action_copy` rather than from
-        `action_interrupt` itself: Textual's own binding-chain resolution runs those bindings
-        *ahead of* this app's `action_interrupt` and never falls through to it at all once a
-        selection exists to copy — see docs/specs/interrupt-and-liveness-watchdog.md's "Ctrl+C
-        semantics" section."""
+        clipboard."""
         self._last_ctrl_c_at = time.monotonic()
         self._last_ctrl_c_kind = "copy"
 
     def _note_ctrl_c_quit_warning(self) -> None:
-        """Mount the "press again to quit" notice into the history for an idle Ctrl+C press —
-        see `action_interrupt`'s `"bare"` case."""
+        """Mount the "press again to quit" notice into the history for an idle Ctrl+C press."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.mount(Static(_CTRL_C_QUIT_WARNING, classes="notice", markup=False))
         history.scroll_end(animate=False)
 
     def action_interrupt(self) -> None:
-        """Ctrl+C: behavior depends on what's true right now, mirroring a terminal's own Ctrl+C
-        interrupting the foreground job rather than closing the shell (see docs/specs/interrupt-
-        and-liveness-watchdog.md's "Ctrl+C semantics" section):
-
-        * **Selected text.** Never reaches this method at all: Textual's own `Screen`/`TextArea`
-          bindings for Ctrl+C (`SelectionSafeScreen.action_copy_text`/`PromptInput.action_copy`)
-          run earlier in the binding chain and copy-and-stop, only falling through here (via
-          `SkipAction`) once nothing is selected. Both record the press via `_note_ctrl_c_copy`
-          so the streak logic below still knows a Ctrl+C just happened.
-        * **Something running** (`_turn_in_flight`: an in-flight model turn — including a
-          synchronous Bash tool call inside it — or a `!`-prefixed shell command) — *and* the
-          immediately preceding press, if any within the window, wasn't itself an interrupt or a
-          bare "nothing to do" press: interrupt it, identically to Escape
-          (`_interrupt_running_activity`). This only ever fires once per streak; it does not
-          re-signal on a later press even if the activity is still in flight, so it can't loop.
-        * **Everything else** (nothing running, or something's still running but this streak
-          already interrupted it once): shows a "press again to quit" notice
-          (`_note_ctrl_c_quit_warning`) — unless the *immediately preceding* press was itself one
-          of these "nothing new to do" presses within the window, in which case this one
-          force-exits (`_force_exit`, i.e. `os._exit`) instead.
-
-        Net effect: a solitary bare Ctrl+C (nothing selected, nothing running) takes two presses
-        to force-exit (warn, then quit); a copy or an interrupt takes three (the copy/interrupt
-        itself, then a warning, then a quit) — see docs/adrs/idle-ctrl-c-force-exits-not-the-
-        polite-quit-flow.md. A running activity is deliberately interrupted rather than the app
-        being quit out from under it: that would strand the turn's worker thread and hang
-        process shutdown (see `_begin_exit`), so interrupting-then-quitting is both safer and the
-        more conventional terminal gesture. This handler runs on the event loop, so its
-        force-exit escalation only helps when the loop is still alive — a wedged loop is the
-        `LivenessWatchdog`'s job instead.
-        """
+        """Ctrl+C: interrupt running activity, or warn/force-exit if idle."""
         now = time.monotonic()
         within_window = (now - self._last_ctrl_c_at) < _DOUBLE_INTERRUPT_WINDOW_SECONDS
         previous_kind = self._last_ctrl_c_kind
@@ -249,26 +151,12 @@ class KeyActionsMixin(ReplAppBase):
 
     async def action_quit(self) -> None:
         """Ctrl+Q (and the built-in "Quit the application" system command): close the live
-        session and exit. No confirmation prompt — session state is always persisted on quit,
-        unconditionally, via `Session.close()` (which writes a final `session.json` and
-        releases `session.lock` before tearing down any other live per-session resources; a
-        no-op if this session never claimed a directory, e.g. an untrusted workspace) — see
-        docs/specs/session-persistence.md.
-
-        Overrides `App.action_quit` (which just calls `self.exit()`) keeping its exact
-        signature (`async def action_quit(self) -> None`) so it stays a valid override.
-        """
+        session and exit."""
         self._session.close()
         self._begin_exit()
 
     def _begin_exit(self) -> None:
-        """Exit the app, but never while a worker thread is still running: if a model turn or shell
-        command is in flight (`_turn_in_flight`), exiting immediately would stop the event loop
-        while that worker is parked in `App.call_from_thread`, so its `future.result()` would never
-        return and its non-daemon executor thread would block process shutdown until it's ^C'd (the
-        "TUI is gone but the process won't end" hang). Instead, signal the worker to unwind
-        (`_release_workers_for_exit`) and defer the real `self.exit()` to `_finish_turn`, which the
-        worker reaches once its turn actually ends. When nothing is in flight, exits right away."""
+        """Exit the app, but never while a worker thread is still running."""
         if not self._turn_in_flight:
             self.exit()
             return
@@ -289,17 +177,8 @@ class KeyActionsMixin(ReplAppBase):
             self._release_pending_interaction()
 
     def action_toggle_tool_call_detail(self) -> None:
-        """Ctrl+O: flip every `ToolCallStatic` currently in the history — from any turn, not
-        just the latest — between its one-line summary and its fuller detail view, all at once.
-
-        Also updates the footer's own label for this binding — `"Detail"` while summaries are
-        shown (offering to reveal detail), `"Hide"` once detail is shown (offering to go back)
-        — since a binding's description is otherwise fixed at `BINDINGS` class-definition time.
-        `self._bindings` is this `ReplApp` instance's own mutable copy of the merged class-level
-        `BINDINGS` (see `DOMNode.__init__`), so replacing its `"ctrl+o"` entry only affects this
-        instance; `refresh_bindings()` is Textual's documented hook for prompting `Footer` to
-        redraw after such a change.
-        """
+        """Ctrl+O: flip every `ToolCallStatic` currently in the history between its one-line
+        summary and its fuller detail view, all at once."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         anchor = self._capture_scroll_anchor(history)
 
@@ -318,13 +197,7 @@ class KeyActionsMixin(ReplAppBase):
     @staticmethod
     def _capture_scroll_anchor(history: VerticalScroll) -> tuple[Widget, int] | None:
         """Identify whichever direct child of `history` currently occupies the top of the
-        viewport, and how many of its own lines are already scrolled past, so a layout change
-        that resizes other children (e.g. `Ctrl+O` toggling tool-call detail — see
-        `action_toggle_tool_call_detail`) can restore that same child to that same on-screen
-        line afterward instead of leaving `scroll_y` pointing at whatever unrelated content
-        now happens to occupy that offset. Returns `None` only when `history` has no children
-        to anchor to.
-        """
+        viewport, and how many of its own lines are already scrolled past."""
         children = list(history.children)
         if not children:
             return None
@@ -339,33 +212,13 @@ class KeyActionsMixin(ReplAppBase):
     @staticmethod
     def _restore_scroll_anchor(history: VerticalScroll, anchor_widget: Widget, line_offset: int) -> None:
         """Scroll `history` so `anchor_widget` sits at the same on-screen line it held when
-        `_capture_scroll_anchor` recorded `line_offset`. Runs via `call_after_refresh` (see
-        caller), which is what makes `anchor_widget.virtual_region` reflect the widget's
-        post-change height rather than a stale pre-refresh layout; `scroll_to` itself clamps
-        to the valid scroll range, so an offset past the (possibly now-shorter) content simply
-        lands at the bottom instead of overshooting.
-        """
+        `_capture_scroll_anchor` recorded `line_offset`."""
         region = anchor_widget.virtual_region
         history.scroll_to(y=region.y + line_offset, animate=False, immediate=True)
 
     def on_mount(self) -> None:
-        """Point tiktoken at the `klorb init`-installed cache (see
-        `configure_tiktoken_cache_env()`) now that the app is actually running, so its log
-        message routes through the app's log / the session log file rather than leaking to
-        raw stderr ahead of the TUI taking over the terminal — see
-        docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md. Then label and focus
-        the input box, cap its growth at the configured max height, watch the history's and
-        subagent-history's scroll positions (see `_on_history_scroll_changed`/
-        `_on_subagent_history_scroll_changed`), start the subagents panel's tick timer (see
-        `_start_subagents_panel_timer`), show the initial `> palette` hint (the box
-        starts empty), greet the user with the klorb mascot (see
-        `_mount_mascot_greeting`), note in the history if no per-user config file exists
-        yet (see `CONFIG_MISSING_MESSAGE`), reports any config layer that failed to parse (see
-        `ProcessConfig.config_warnings`), then hand off to
-        `_run_startup_workspace_and_initial_message` to resolve (and, if this is a brand-new
-        workspace, interactively bootstrap) workspace trust before submitting any initial
-        message as the first turn.
-        """
+        """Initialize the TUI: configure tiktoken cache, focus the input, set up scroll
+        watchers, start the watchdog timer, and bootstrap workspace trust."""
         configure_tiktoken_cache_env()
 
         # Initialize sidebar visibility from config
@@ -407,24 +260,17 @@ class KeyActionsMixin(ReplAppBase):
         self._run_startup_workspace_and_initial_message()
 
     def _mount_mascot_greeting(self, history: VerticalScroll) -> None:
-        """Mount the klorb mascot art plus a freshly-picked random greeting (`random_greeting()`)
-        into `history` — called on startup (`on_mount`) and again by `clear_session` so a fresh
-        session always opens with the same welcome, not just the process's very first one."""
+        """Mount the klorb mascot art plus a freshly-picked random greeting into `history`."""
         history.mount(Static(f"{MASCOT_ART}\n\n{random_greeting()}", classes="mascot"))
 
     def on_unmount(self) -> None:
-        """Disarm the liveness watchdog as the app tears down, so it can't fire during the
-        post-run shutdown window (crash handling, session save) once the event loop has stopped
-        snoozing it — see `_snooze_watchdog` and docs/specs/interrupt-and-liveness-watchdog.md.
-        Also stops the `@`-mention file finder's background filesystem observer, if one was
-        started (see `WorkspaceBootstrapMixin._resolve_workspace_trust`)."""
+        """Disarm the liveness watchdog and stop the file-index observer as the app tears down."""
         self._watchdog.stop()
         if self._file_index is not None:
             self._file_index.close()
 
     def _snooze_watchdog(self) -> None:
-        """Tell the liveness watchdog the event loop is alive. Driven by a `set_interval` timer on
-        the main thread (see `on_mount`), so it stops exactly when the loop wedges."""
+        """Tell the liveness watchdog the event loop is alive."""
         self._watchdog.snooze()
 
     def _collect_hang_diagnostics(self) -> None:
@@ -453,9 +299,7 @@ class KeyActionsMixin(ReplAppBase):
 
     def _force_exit(self) -> NoReturn:
         """Last-ditch escape from a wedged klorb: dump thread stacks + save the session
-        (best-effort, time-boxed), then `os._exit`. Called by the watchdog (from its own thread)
-        and by the double-Ctrl+C handler (`action_interrupt`). Never returns — see
-        `klorb.watchdog.force_exit` and docs/specs/interrupt-and-liveness-watchdog.md."""
+        (best-effort, time-boxed), then `os._exit`."""
         force_exit(self._collect_hang_diagnostics, _FORCE_EXIT_CLEANUP_GRACE_SECONDS)
 
     def _note_interrupt_requested(self) -> None:
@@ -474,12 +318,7 @@ class KeyActionsMixin(ReplAppBase):
 
     def _resolve_interrupt_notice(self) -> None:
         """Rewrite this turn's `_INTERRUPTING_MESSAGE` notice to `_INTERRUPTED_MESSAGE` once the
-        interrupt has actually taken hold — called from `_finish_turn`, which is reached only
-        after the interrupted turn has finished winding down. A no-op when no interrupt notice
-        was shown this turn (`_interrupt_notice_widget is None`), so an uninterrupted turn's
-        completion leaves the history untouched. Clears `_interrupt_notice_widget` afterward so
-        the next turn starts fresh (`_interrupt_notice_shown` is reset alongside it in
-        `_finish_turn`)."""
+        interrupt has actually taken hold."""
         if self._interrupt_notice_widget is not None:
             self._interrupt_notice_widget.update(_INTERRUPTED_MESSAGE)
             self._interrupt_notice_widget.remove_class("interrupting")
@@ -487,12 +326,7 @@ class KeyActionsMixin(ReplAppBase):
             self._interrupt_notice_widget = None
 
     def _ensure_turn_finished(self) -> None:
-        """Backstop that runs `_finish_turn` iff a turn is still marked in flight — i.e. no
-        terminal handler already finished it. Called from `_send_prompt`/`_run_shell_command`'s
-        `finally` so that even a `BaseException` unwind of the worker thread (e.g.
-        `asyncio.CancelledError`, which slips past `except Exception`) still clears
-        `_turn_in_flight` and re-enables input. A no-op on the normal path, where a handler
-        already cleared the flag. See docs/specs/interrupt-and-liveness-watchdog.md."""
+        """Backstop that runs `_finish_turn` iff a turn is still marked in flight."""
         if not self._turn_in_flight:
             return
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)

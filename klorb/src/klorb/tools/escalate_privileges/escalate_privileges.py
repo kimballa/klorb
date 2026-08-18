@@ -1,19 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that requests elevated privileges for workspace access.
-
-Mirrors the shape of the permission-ask mechanism (`klorb.permissions.table.
-PermissionAskRequired`, `klorb.session.PermissionAskContext`/`PermissionDecision`) and
-`AskUserQuestionsTool`: a `Tool`'s `apply()` can't itself block on user input (see `Tool`'s
-single `ToolSetupContext` argument contract), so `EscalatePrivilegesTool.apply()` validates
-its arguments and, if they're well-formed, always raises `EscalatePrivilegesRequired` rather
-than returning a value. `Session._run_tool_calls` catches it, asks the user via
-`on_escalate_privileges` (if given), and assembles the decision into the tool's result.
-
-The data types and validation logic themselves live in `klorb.tools.escalate_privileges.common`
-rather than here, so `klorb.session` can import them without importing this module (which pulls
-in `klorb.tools.tool`/`klorb.tools.setup_context`, and so `klorb.session` itself -- see that
-module's docstring for the full cycle).
-"""
+"""A Tool that requests elevated privileges for workspace access."""
 
 from typing import Any
 
@@ -25,13 +11,10 @@ class EscalatePrivilegesTool(Tool):
     """Requests elevated privileges for workspace access in the current session.
 
     The valid scope values are:
-    - "workspace": grants read/write access to the ${workspaceRoot}/.klorb/ directory
-      (currently hard-blocked from direct tool access).
-    - "homedir": grants read/write access to KLORB_DATA_DIR and KLORB_STATE_DIR
-      (the process-wide klorb data and state directories).
+    - "workspace": grants read/write access to the ${workspaceRoot}/.klorb/ directory.
+    - "homedir": grants read/write access to KLORB_DATA_DIR and KLORB_STATE_DIR.
 
-    This is a temporary, session-only grant that revokes at the end of the session --
-    there is no permanent approval option.
+    This is a temporary, session-only grant that revokes at the end of the session.
 
     When invoked, an interstitial approval panel appears explaining the request and
     offering "Approve" and "Deny" options. If approved, the grant takes effect

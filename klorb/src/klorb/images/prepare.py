@@ -1,9 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Resize/downsample/transcode pipeline for a raw image file headed into a vision model's
-prompt content (see docs/specs/vision-image-input.md and docs/plans/archive/020-vision-image-
-input.md). `prepare_image_for_model` is the module's one entry point: every caller (the ACP
-prompt boundary today; a future TUI/CLI attachment path) hands it raw bytes and a target
-`Model` and gets back wire-ready base64 data sized and formatted for that model."""
+prompt content.
+"""
 
 import base64
 import io
@@ -23,7 +21,7 @@ _PIL_FORMAT_BY_MIME_TYPE: dict[str, str] = {
     "image/jpeg": "JPEG"
 }
 """Every output format `prepare_image_for_model` is willing to transcode to. Restricted to
-lossless WebP/PNG plus a JPEG fallback -- see `prepare_image_for_model`'s docstring."""
+lossless WebP/PNG plus a JPEG fallback."""
 
 _EXTENSION_BY_MIME_TYPE: dict[str, str] = {
     "image/webp": "webp",
@@ -41,18 +39,12 @@ _RETRY_SCALE_FACTOR = 0.75
 
 class ImageTooLargeError(Exception):
     """Raised by `prepare_image_for_model` when an image still exceeds `ImagePipelineConfig.
-    max_bytes_raw` after `_MAX_DOWNSCALE_RETRIES` rounds of further downscaling -- surfaced to
-    the user as "image too large for `<model>`", not silently truncated."""
+    max_bytes_raw` after `_MAX_DOWNSCALE_RETRIES` rounds of further downscaling."""
 
 
 class ImagePipelineConfig(BaseModel):
     """The `tools.images.*` settings `prepare_image_for_model` needs, extracted from
-    `klorb.process_config.ProcessConfig` by the caller rather than imported here directly --
-    `klorb.images.prepare` sits underneath `klorb.session` in the import graph (`klorb.
-    session.mixins.turns` imports `extension_for_mime_type`), and `ProcessConfig` itself
-    imports from `klorb.session`, so importing `ProcessConfig` here would be circular. Mirrors
-    how `klorb.tools.util.ReadFileCore` takes `ProcessConfig.read_file_max_lines`/
-    `read_file_max_line_length` as plain constructor args for the same reason."""
+    `klorb.process_config.ProcessConfig` by the caller rather than imported here directly."""
 
     default_max_dimension_px: int
     max_bytes_raw: int
@@ -122,12 +114,9 @@ def _choose_mime_type(model: Model, config: ImagePipelineConfig) -> str:
 
 
 def _encode(image: Image.Image, mime_type: str) -> bytes:
-    """Encode `image` as `mime_type` into memory. WebP/PNG are saved lossless (no JPEG block
-    artifacts to blur small text in a code/terminal screenshot, the primary expected use
-    case); JPEG uses quality 90. `image.save()` is never passed `exif=`, so whatever EXIF
-    block `ImageOps.exif_transpose()` left on `image.info` (GPS/device metadata included)
-    never reaches the output bytes -- an intentional privacy behavior, not just an
-    orientation fix."""
+    """Encode `image` as `mime_type` into memory. WebP/PNG are saved lossless; JPEG uses
+    quality 90. `image.save()` is never passed `exif=`, so whatever EXIF block
+    `ImageOps.exif_transpose()` left on `image.info` never reaches the output bytes."""
     buffer = io.BytesIO()
     pil_format = _PIL_FORMAT_BY_MIME_TYPE[mime_type]
     if pil_format == "WEBP":
@@ -142,11 +131,10 @@ def _encode(image: Image.Image, mime_type: str) -> bytes:
 def prepare_image_for_model(raw_bytes: bytes, model: Model, config: ImagePipelineConfig) -> PreparedImage:
     """Resize, transcode, and base64-encode `raw_bytes` for `model`'s vision input.
 
-    EXIF orientation is baked in (`ImageOps.exif_transpose`) and then dropped entirely from
-    the output (see `_encode`). The image is downscaled (never upscaled) to fit `model`'s
-    `vision_details` bounds, or `config.default_max_dimension_px` for a model with no
-    declared bounds (see `_target_box`), and transcoded to the first of `config.
-    preferred_formats` the model supports (see `_choose_mime_type`).
+    EXIF orientation is baked in and then dropped entirely from the output. The image is
+    downscaled (never upscaled) to fit `model`'s `vision_details` bounds, or
+    `config.default_max_dimension_px` for a model with no declared bounds, and transcoded to
+    the first of `config.preferred_formats` the model supports.
 
     If the encoded result still exceeds `config.max_bytes_raw`, the target box is
     shrunk by `_RETRY_SCALE_FACTOR` and re-encoded, up to `_MAX_DOWNSCALE_RETRIES` times,
@@ -193,10 +181,9 @@ def prepare_image_for_model(raw_bytes: bytes, model: Model, config: ImagePipelin
 
 def extension_for_mime_type(mime_type: str) -> str:
     """The file extension `klorb.workspace.session_store.write_session_image` uses when
-    spilling a prepared image's bytes to disk, for `mime_type` (one of `_PIL_FORMAT_BY_MIME_TYPE`'s
-    keys). Falls back to `"bin"` for an unrecognized mime type rather than raising, since a
-    wrong extension is cosmetic (the file is never re-opened by extension, only by its stored
-    path) while raising here would turn an already-transcoded, already-validated image into a
+    spilling a prepared image's bytes to disk, for `mime_type`. Falls back to `"bin"` for
+    an unrecognized mime type rather than raising, since a wrong extension is cosmetic while
+    raising here would turn an already-transcoded, already-validated image into a
     lost attachment.
     """
     return _EXTENSION_BY_MIME_TYPE.get(mime_type, "bin")

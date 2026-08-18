@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.file_access: FileRules/FileAccessTable exact-match and
-`*`-wildcard evaluation. See docs/specs/permissions.md's "File access" section.
-"""
+`*`-wildcard evaluation."""
 
 from pathlib import Path
 
@@ -36,8 +35,7 @@ def test_no_matching_rule_returns_none(tmp_path: Path) -> None:
 
 
 def test_exact_match_only_no_containment(tmp_path: Path) -> None:
-    """Unlike DirectoryAccessTable, a rule naming a directory does not match files inside it —
-    FileAccessTable is exact-match only."""
+    """A rule naming a directory does not match files inside it."""
     directory = tmp_path / "some_dir"
     directory.mkdir()
 
@@ -48,9 +46,8 @@ def test_exact_match_only_no_containment(tmp_path: Path) -> None:
 
 
 def test_device_path_outside_workspace_root_matches_exactly(tmp_path: Path) -> None:
-    """The motivating case: a rule naming a path outside the workspace root (e.g. a character
-    device) still matches exactly, since FileAccessTable has no workspace-root containment
-    notion at all -- that boundary lives in klorb.permissions.workspace, not here."""
+    """The motivating case: a rule naming a path outside the workspace root still
+    matches exactly, since FileAccessTable has no workspace-root containment notion at all."""
     table = FileAccessTable(FileRules(allow=[Path("/dev/null")]), tmp_path)
     assert table.evaluate(Path("/dev/null")) == "allow"
     assert table.evaluate(Path("/dev/zero")) is None

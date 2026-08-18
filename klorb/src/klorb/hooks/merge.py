@@ -29,8 +29,7 @@ def parse_handler_list(
     """Parse a raw JSON value (expected to be a list of handler-config dicts) into `model`
     instances, returning `(parsed, warnings)`. A `raw_handlers` that isn't a list contributes
     nothing; an individual entry that fails to validate against `model` is skipped rather than
-    dropping the rest of the list — either way, a human-readable message naming
-    `source_label` is added to `warnings` instead of raising.
+    dropping the rest of the list.
     """
     warnings: list[str] = []
     if not isinstance(raw_handlers, list):

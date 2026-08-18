@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """A Tool that runs several `path`s through the real permission-evaluation seam and raises
-`MultiPermissionAskRequired` (rather than a single `PermissionAskRequired`) when more than one
+`MultiPermissionAskRequired` when more than one
 needs confirmation, used only in tests to drive `Session._run_tool_calls`'/`_resolve_multi_
 permission_ask`'s serial multi-item ask handling without needing a real `BashTool` invocation.
 """
@@ -15,12 +15,12 @@ from klorb.tools.tool import Tool
 
 
 class AskMultiPermissionTool(Tool):
-    """Evaluates every path in `paths` (always as a write) against the real `writeDirs`/
-    `readDirs` tables. Any `"deny"` anywhere short-circuits to an immediate `PermissionError`
-    (no ask items collected at all, mirroring `BashTool._classify`). Otherwise, every path that
-    evaluates to `"ask"` becomes its own `PermissionAskItem`; if any exist, raises
-    `MultiPermissionAskRequired` with all of them. With nothing to ask about, succeeds with a
-    `"granted:<path1>,<path2>,..."` marker. Used only in tests.
+    """Evaluates every path in `paths` (always as a write) against the real
+    `writeDirs`/`readDirs` tables. Any `"deny"` anywhere short-circuits to an
+    immediate `PermissionError`. Otherwise, every path that evaluates to `"ask"`
+    becomes its own `PermissionAskItem`; if any exist, raises
+    `MultiPermissionAskRequired` with all of them. With nothing to ask about,
+    succeeds with a `"granted:<path1>,<path2>,..."` marker. Used only in tests.
     """
 
     def name(self) -> str:

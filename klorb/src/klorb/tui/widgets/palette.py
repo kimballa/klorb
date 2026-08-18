@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Typeahead command palette rendered inline above the prompt input, driven by a leading
-`>` in the prompt textbox rather than the `ctrl+p` modal (see
-`docs/specs/command-palette-from-prompt.md`).
+`>` in the prompt textbox rather than the `ctrl+p` modal. See docs/specs/command-palette-from-prompt.md.
 """
 
 from inspect import isclass
@@ -17,10 +16,8 @@ PROMPT_PALETTE_ID = "prompt-palette"
 
 
 def _provider_classes(app: App[object]) -> set[type[Provider]]:
-    """Resolve `app.COMMANDS`/`app.screen.COMMANDS` (each either a `Provider` subclass or a
-    zero-arg callable returning one — the same lazy-loading convention Textual's own
-    `CommandPalette._provider_classes` supports, used for e.g. `get_system_commands_provider`)
-    into a set of `Provider` subclasses.
+    """Resolve `app.COMMANDS`/`app.screen.COMMANDS` into a set of `Provider` subclasses,
+    accepting either a `Provider` subclass or a zero-arg callable returning one.
     """
     classes: set[type[Provider]] = set()
     for entry in set(app.COMMANDS) | set(app.screen.COMMANDS):
@@ -39,7 +36,7 @@ def _provider_classes(app: App[object]) -> set[type[Provider]]:
 
 def _sort_key(hit: Hit | DiscoveryHit) -> tuple[float, str]:
     """Descending match score, then ascending (case-insensitive) alphabetical `text` as a
-    tiebreak — see `gather_palette_hits`.
+    tiebreak.
     """
     return (-hit.score, str(hit.text).casefold())
 
@@ -49,18 +46,10 @@ async def gather_palette_hits(app: App[object], query: str) -> list[Hit | Discov
     `query`, sorted by descending match score, breaking ties alphabetically (case-insensitive,
     A-Z) by each hit's plain `text` (`_sort_key`). A `DiscoveryHit` (yielded for an empty
     `query`, i.e. the bare `>` full listing) always scores `0.0`, so with no query to rank by,
-    every hit ties and the tiebreak alone determines the order — the full listing comes out
-    alphabetical, while a narrowing query still ranks its closest textual matches first. This
-    mirrors `Provider._search`'s own empty-query-means-`discover()` contract without the modal
-    `CommandPalette`'s own search-box UI, since the prompt textbox already serves as the search
-    box for this typeahead.
+    every hit ties and the tiebreak alone determines the order.
 
     Each provider is freshly constructed and torn down per call rather than cached across
-    keystrokes, mirroring `Provider._post_init()`/`_shutdown()`'s documented lifecycle
-    (`_post_init()` must run before `_search()` can yield anything: it's what flips
-    `_init_success`, the flag `_search()` checks before calling `search()`/`discover()` at
-    all) — cheap here since none of `klorb`'s providers override `startup()`/`shutdown()`
-    with real work.
+    keystrokes.
     """
     hits: list[Hit | DiscoveryHit] = []
     for provider_cls in _provider_classes(app):
@@ -119,7 +108,7 @@ class PromptPalette(OptionList, can_focus=False):
     @property
     def current_hit(self) -> Hit | DiscoveryHit | None:
         """The `Hit`/`DiscoveryHit` for the currently-highlighted row, or `None` if the popup
-        has no rows (e.g. the query rules out every palette option).
+        has no rows.
         """
         if self.highlighted is None:
             return None

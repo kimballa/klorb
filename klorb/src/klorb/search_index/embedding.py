@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`EmbeddingModel`: local ONNX text embedding via `fastembed`, loaded from the bundled model
-installed to `embedding_model_target_dir()` by `install_embedding_model()` -- never downloaded at
-runtime. See docs/specs/local-search-index.md.
+installed to `embedding_model_target_dir()` by `install_embedding_model()`.
 """
 
 import ctypes
@@ -21,70 +20,51 @@ logger = logging.getLogger(__name__)
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIMENSIONS = 384
 EMBEDDING_THREADS = 2
-"""Caps `onnxruntime`'s intra-op thread pool for the embedding session. Unset (the `fastembed`
-default), it sizes the pool to the machine's full physical core count."""
+"""Caps `onnxruntime`'s intra-op thread pool for the embedding session."""
 MAX_GPU_INDEXING_THREADS = 4
 """Default cap on `klorb index scan`'s worker-thread count when GPU embedding is in use, since a
 shared CUDA `EmbeddingModel` session and the search index's single-writer SQLite connection both
-serialize concurrent callers -- more threads past this point add lock-contention overhead instead
-of throughput."""
+serialize concurrent callers.
+"""
 EMBEDDING_MODEL_RESOURCE_NAME = "embedding-model"
 """Directory name of the packaged embedding-model resource tree within `klorb.resources`, and
-the subdirectory of `KLORB_DATA_DIR` it's copied to -- the on-disk cache layout
-`huggingface_hub`/`fastembed` read back offline (see `install_embedding_model`)."""
+the subdirectory of `KLORB_DATA_DIR` it's copied to.
+"""
 
 CUDA_PROVIDER = "CUDAExecutionProvider"
-"""`onnxruntime` execution provider name for NVIDIA CUDA GPU acceleration (Linux/Windows) -- see
-docs/adrs/00196-gpu-embedding-uses-cuda-not-directml.md for why CUDA over DirectML (whose
-`onnxruntime-directml` PyPI package ships Windows-only wheels, unusable from WSL2's own Linux
-Python). Not a default klorb dependency -- `bin/install-cuda-nvidia.sh` installs `onnxruntime-gpu`
-and its matching NVIDIA runtime packages on demand."""
+"""`onnxruntime` execution provider name for NVIDIA CUDA GPU acceleration."""
 
 COREML_PROVIDER = "CoreMLExecutionProvider"
-"""`onnxruntime` execution provider name for Apple's Core ML (macOS GPU/Neural Engine acceleration)
--- ships in the default `onnxruntime` PyPI package, but only for the darwin platform. Unlike
-CUDA_PROVIDER, there is no separate GPU wheel or runtime libraries to install."""
+"""`onnxruntime` execution provider name for Apple's Core ML."""
 
 _HF_HUB_OFFLINE_ENV_VAR = "HF_HUB_OFFLINE"
 
 
 def embedding_model_target_dir() -> Path:
-    """Where `install_embedding_model()` copies the packaged model tree to, and where
-    `EmbeddingModel` points `fastembed`'s `cache_dir` at: `$KLORB_DATA_DIR/embedding-model`."""
+    """Where `install_embedding_model()` copies the packaged model tree to."""
     return get_klorb_data_dir() / EMBEDDING_MODEL_RESOURCE_NAME
 
 
 def embedding_model_available() -> bool:
-    """Whether `embedding_model_target_dir()` exists -- checked up front by
-    `klorb.search_index.indexer.WorkspaceIndexer` before starting any background work, so an
-    environment that never ran `klorb init` (most unit tests, a fresh CI container) doesn't spawn
-    a thread doomed to fail on its first `EmbeddingModel()` construction."""
+    """Whether `embedding_model_target_dir()` exists."""
     return embedding_model_target_dir().is_dir()
 
 
 def cuda_available() -> bool:
-    """Whether the installed `onnxruntime` build was compiled with `CUDAExecutionProvider` --
-    true only if `onnxruntime-gpu` (not the plain CPU `onnxruntime` package klorb otherwise
-    depends on) is installed; both provide the same importable `onnxruntime` module, so this is
-    a build-capability check, not proof the provider can actually load at runtime (its own CUDA/
-    cuDNN shared libraries might still be missing -- see `EmbeddingModel`'s own post-construction
-    check for that)."""
+    """Whether the installed `onnxruntime` build was compiled with `CUDAExecutionProvider`."""
     import onnxruntime
     return CUDA_PROVIDER in onnxruntime.get_available_providers()
 
 
 def coreml_available() -> bool:
-    """Whether the installed `onnxruntime` build was compiled with `CoreMLExecutionProvider` --
-    true for the default macOS `onnxruntime` wheel; unlike `cuda_available()` this needs no
-    separate GPU package."""
+    """Whether the installed `onnxruntime` build was compiled with `CoreMLExecutionProvider`."""
     import onnxruntime
     return COREML_PROVIDER in onnxruntime.get_available_providers()
 
 
 def _gpu_provider_for_platform() -> str | None:
     """Which `onnxruntime` execution provider `EmbeddingModel(use_gpu=True)` should request on
-    this platform: `COREML_PROVIDER` on macOS, `CUDA_PROVIDER` on Linux/Windows, `None` where
-    klorb has no GPU story at all."""
+    this platform."""
     if sys.platform == "darwin":
         return COREML_PROVIDER
     if sys.platform in ("linux", "win32"):
@@ -94,23 +74,13 @@ def _gpu_provider_for_platform() -> str | None:
 
 def _preload_nvidia_cuda_libraries() -> None:
     """Best-effort `ctypes.CDLL(..., mode=RTLD_GLOBAL)` preload of every shared library shipped
-    by the `nvidia-*` pip packages (`nvidia-cublas`, `nvidia-cudnn-cu13`, `nvidia-curand`, ...)
-    onnxruntime's CUDA execution provider dynamically links against.
+    by the `nvidia-*` pip packages onnxruntime's CUDA execution provider dynamically links against.
 
     Those packages install their `.so` files under `site-packages/nvidia/**/lib/`, a location
-    `onnxruntime`'s own `dlopen()` calls don't search -- and setting `LD_LIBRARY_PATH` from
-    within an already-running process doesn't help either, since the dynamic loader only
-    consults it once at process start, not per `dlopen()` call. Explicitly preloading each
-    library (in no particular order; the loader resolves cross-library symbol references lazily
-    against whatever's already loaded, so load order doesn't matter here) with `RTLD_GLOBAL`
-    makes them available for onnxruntime's own subsequent `dlopen()` of
-    `libonnxruntime_providers_cuda.so` to resolve against, without requiring the caller to set
-    `LD_LIBRARY_PATH` before starting the process at all. `nvidia` is a namespace package (PEP
-    420, no `__init__.py`) -- it has no `__file__`, so its installed location comes from
-    `__path__` instead, which can list more than one directory if several `nvidia-*`
-    distributions each contributed their own. A no-op if the `nvidia` package isn't installed (no
-    CUDA runtime packages present) or a given library fails to load (surfaced later as a
-    provider-loading failure `EmbeddingModel` itself checks for)."""
+    `onnxruntime`'s own `dlopen()` calls don't search. Explicitly preloading each library with
+    `RTLD_GLOBAL` makes them available for onnxruntime's own subsequent `dlopen()` of
+    `libonnxruntime_providers_cuda.so` to resolve against.
+    """
     try:
         import nvidia
     except ImportError:
@@ -126,12 +96,10 @@ def _preload_nvidia_cuda_libraries() -> None:
 
 
 def install_embedding_model() -> list[str]:
-    """Recursively copy the packaged `embedding-model` resource tree (`klorb.resources/
-    embedding-model/`, fetched once via `scripts/fetch_embedding_model.py` and shipped as package
-    data) into `embedding_model_target_dir()`, creating it as needed. Always copies, the same as
-    `klorb.token_estimate.install_tiktoken_cache()` and for the same reason: this is package data
-    the running klorb version ships with, not something a user hand-edits. Raises `OSError` if
-    the target can't be created or written."""
+    """Recursively copy the packaged `embedding-model` resource tree into
+    `embedding_model_target_dir()`, creating it as needed. Always copies rather than checking
+    whether the destination already matches. Raises `OSError` if the target can't be created or
+    written."""
     target = embedding_model_target_dir()
     with importlib.resources.as_file(
         importlib.resources.files("klorb.resources").joinpath(EMBEDDING_MODEL_RESOURCE_NAME)
@@ -145,18 +113,13 @@ class EmbeddingModel:
     forcing `HF_HUB_OFFLINE` so a missing/stale local copy fails fast rather than silently
     reaching Hugging Face.
 
-    * `threads` caps the wrapped session's own intra-op thread pool,
-      defaulting to `EMBEDDING_THREADS`; a caller running several instances concurrently passes a
-      smaller value per instance so their combined CPU usage stays predictable.
-    * `use_gpu` requests the platform's GPU provider
-      falling back to `CPUExecutionProvider` only for ops the GPU provider doesn't implement. Raises
-      `RuntimeError` if this platform has no GPU story, the provider isn't compiled into the installed
-      `onnxruntime`, or it's compiled in but still fails to actually load. Most callers want
-      `try_gpu_embedding_model()` instead of `use_gpu=True` -- it wraps this into a graceful CPU
-      fallback.
+    * `threads` caps the wrapped session's own intra-op thread pool, defaulting to
+      `EMBEDDING_THREADS`.
+    * `use_gpu` requests the platform's GPU provider. Raises
+      `RuntimeError` if this platform has no GPU story, the provider isn't compiled into the
+      installed `onnxruntime`, or it's compiled in but still fails to actually load.
 
-    Construction raises `FileNotFoundError` if `embedding_model_target_dir()` doesn't exist yet
-    (`klorb init` hasn't run).
+    Construction raises `FileNotFoundError` if `embedding_model_target_dir()` doesn't exist yet.
     """
 
     def __init__(self, *, threads: int = EMBEDDING_THREADS, use_gpu: bool = False) -> None:
@@ -193,10 +156,7 @@ class EmbeddingModel:
                 # fastembed's own `cuda` parameter defaults to Device.AUTO, which auto-detects
                 # and tries CUDAExecutionProvider whenever it's compiled into the installed
                 # onnxruntime -- regardless of `providers` here. False always, since this class
-                # already decides GPU-vs-CPU explicitly itself (via `providers` above): letting
-                # fastembed's own auto-detection additionally kick in for a CPU-only construction
-                # would attempt (and log a scary failure for) a CUDA load this class never asked
-                # for.
+                # already decides GPU-vs-CPU explicitly itself.
                 cuda=False)
         finally:
             if previous_offline is None:
@@ -205,8 +165,7 @@ class EmbeddingModel:
                 os.environ[_HF_HUB_OFFLINE_ENV_VAR] = previous_offline
         if gpu_provider is not None:
             # The actual providers the constructed session ended up using -- reached via
-            # fastembed's own model wrapper, since neither it nor onnxruntime raise when a
-            # requested provider fails to load; they just silently run on whatever's left.
+            # fastembed's own model wrapper.
             actual_providers = self._model.model.model.get_providers()  # type: ignore[attr-defined]
             if gpu_provider not in actual_providers:
                 raise RuntimeError(

@@ -6,28 +6,22 @@ import json
 
 JSON_ERROR_CONTEXT_LINES = 2
 """Number of source lines shown before and after the offending line in the excerpt
-`format_json_error_context` builds — enough to orient a reader without dumping the whole
-document."""
+`format_json_error_context` builds."""
 
 _MAX_LINE_WIDTH = 100
-"""Longest a single excerpt line is shown without windowing/truncation — long lines are common
-in a tool call's raw `arguments` string (typically compact, single-line JSON), and dumping one
-in full would bury the caret in noise."""
+"""Longest a single excerpt line is shown without windowing/truncation."""
 
 
 def format_json_error_context(
     text: str, exc: json.JSONDecodeError, *, context_lines: int = JSON_ERROR_CONTEXT_LINES,
 ) -> str:
-    """Render a small, line-numbered excerpt of `text` around `exc.lineno`/`exc.colno`
-    (1-indexed, per the `json` module), with a `^` caret directly beneath `exc.colno` on the
+    """Render a small, line-numbered excerpt of `text` around `exc.lineno`/`exc.colno`,
+    with a `^` caret directly beneath `exc.colno` on the
     offending line.
 
-    The caret always lands under the line it names, not after the whole excerpt — the excerpt
-    is built line-by-line, so this holds even when `text` spans many lines (a tool call's
-    `arguments` string routinely does, since embedded, unescaped newlines are themselves a
-    common cause of the parse failure this is rendering). A line longer than `_MAX_LINE_WIDTH`
-    is windowed around its relevant column rather than shown in full, so one very long line
-    (a compact JSON blob is often entirely one line) doesn't bury the excerpt in noise; other,
+    The caret always lands under the line it names, not after the whole excerpt. A line
+    longer than `_MAX_LINE_WIDTH` is windowed around its relevant column rather than shown in
+    full, so one very long line doesn't bury the excerpt in noise; other,
     merely-long context lines are truncated with a trailing `...` instead, since exact alignment
     doesn't matter there.
     """

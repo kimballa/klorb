@@ -3,7 +3,7 @@
 finder (`klorb.tui.widgets.file_finder`), via filesystem push notifications from the `watchdog`
 PyPI package -- unrelated to `klorb.watchdog.LivenessWatchdog`, klorb's own hang-detection
 heartbeat -- rather than periodic rescans. This is the same mechanism WSGI dev-server reloaders
-(e.g. werkzeug's) use to detect file changes without polling.
+use to detect file changes without polling.
 """
 
 import logging
@@ -33,7 +33,7 @@ instead of one per event."""
 _ABORT_CHECK_INTERVAL = 256
 """How many directory entries `_scan_dir` examines between each non-blocking check of the
 closing signal (`WorkspaceFileIndex._closing_event.is_set()`), on top of the check it always
-makes on every recursive descent into a subdirectory -- see `_scan_dir`."""
+makes on every recursive descent into a subdirectory."""
 
 
 class _ScanAborted(Exception):
@@ -48,7 +48,7 @@ def _scan_workspace_files(workspace_root: Path, should_abort: Callable[[], bool]
 
     `should_abort` is polled periodically (`_scan_dir`) so a caller can cancel a scan already in
     flight; raises `_ScanAborted` the moment it returns `True`, leaving the caller's own `files`
-    list (if any) irrelevant -- `WorkspaceFileIndex._rescan()` never applies a partial result.
+    list (if any) irrelevant.
     """
     files: list[str] = []
     _scan_dir(
@@ -80,8 +80,7 @@ def _scan_dir(
         if len(files) >= MAX_INDEXED_FILES:
             return
         if entry.is_symlink():
-            # A symlinked directory is skipped outright (no cycle risk), mirroring
-            # klorb.tools.util.dir_walk's own followlinks=False convention; a symlinked file is
+            # A symlinked directory is skipped outright (no cycle risk); a symlinked file is
             # indexed like any other.
             if not entry.is_dir() and not gitignore.is_ignored(entry, is_dir=False):
                 files.append(entry.relative_to(root).as_posix())
@@ -99,9 +98,8 @@ class _ChangeHandler(FileSystemEventHandler):
 
     A plain file's own creation or deletion is applied as a single incremental add/remove; a
     directory event or any change to a `.gitignore` file forces a full rescan instead, since
-    either can affect more paths than the one the event names -- a removed directory deletes
-    every file beneath it in one event, and a `.gitignore` edit changes which paths the filter
-    itself excludes. Ordinary file content edits are not watched at all: they can't change
+    either can affect more paths than the one the event names. Ordinary file content
+    edits are not watched at all: they can't change
     which paths exist, and the finder only ever shows paths.
     """
 
@@ -134,8 +132,7 @@ class WorkspaceFileIndex:
     `start()` runs an initial synchronous scan and then watches the tree; `files` reads back a
     thread-safe snapshot at any time. `on_changed` is invoked -- from a background thread, the
     watchdog observer's or a debounce timer's -- every time `files` actually changes, so a
-    caller driving a UI must marshal back onto its own thread (e.g. Textual's
-    `App.call_from_thread`) before touching widgets from it.
+    caller driving a UI must marshal back onto its own thread before touching widgets from it.
 
     A rescan (the initial one in `start()`, or a later one `_flush()` triggers) can run on
     whatever thread invokes it and can take a while against a large tree, during which watchdog
@@ -143,15 +140,14 @@ class WorkspaceFileIndex:
     (guarded by `_lock`, like every other piece of mutable state here) makes that safe:
     `_queue_created`/`_queue_deleted`/`_queue_rescan` still record what happened, but skip
     scheduling a debounce timer while a rescan is running, and `_flush()` itself is a no-op if
-    it fires anyway (e.g. a timer already in flight when a rescan started). Once a rescan
+    it fires anyway. Once a rescan
     completes, it calls `_flush()` immediately -- bypassing the debounce entirely -- to apply
     whatever queued up while it ran, so no event is ever lost to the race.
 
-    `close()` signals `_closing_event`, which `_scan_dir` polls periodically (see
-    `_ABORT_CHECK_INTERVAL`) so an in-flight scan aborts promptly instead of running to
+    `close()` signals `_closing_event`, which `_scan_dir` polls periodically so an in-flight
+    scan aborts promptly instead of running to
     completion (or worse, restarting) after the index is supposed to be dead; it also cancels
-    any pending debounce timer and stops the observer thread. See
-    docs/adrs/00168-use-watchdog-for-tui-file-finder-index.md.
+    any pending debounce timer and stops the observer thread.
     """
 
     def __init__(self, workspace_root: Path, on_changed: Callable[[], None]) -> None:
@@ -194,7 +190,7 @@ class WorkspaceFileIndex:
 
     def close(self) -> None:
         """Signal shutdown (notifying `_closing_event`, which an in-flight `_rescan()` polls to
-        abort its walk promptly -- see `_scan_dir`), cancel any pending debounced flush, and stop
+        abort its walk promptly), cancel any pending debounced flush, and stop
         the background observer thread. Safe to call more than once, or when never started.
         """
         self._closing_event.set()
@@ -210,10 +206,7 @@ class WorkspaceFileIndex:
 
     def _rescan(self) -> None:
         """Perform a full, gitignore-aware rescan, replacing `files` with the result and
-        notifying `on_changed` -- unless another rescan is already running or `close()` has
-        already been called, in which case this is a no-op, or the scan is aborted partway
-        through by a concurrent `close()` (`_ScanAborted`), in which case `files` is left
-        untouched. Once complete, immediately (bypassing the debounce timer) calls `_flush()` to
+        notifying `on_changed`. Once complete, immediately (bypassing the debounce timer) calls `_flush()` to
         apply any create/delete/rescan requests that queued up while this scan was running.
         """
         with self._lock:
@@ -295,9 +288,7 @@ class WorkspaceFileIndex:
             timer.start()
 
     def _flush(self) -> None:
-        """Apply whatever create/delete/rescan requests are currently pending -- either as the
-        debounce timer's own callback, or called directly by `_rescan()` right after it
-        completes, to process anything that queued up mid-scan. A no-op if a rescan is already
+        """Apply whatever create/delete/rescan requests are currently pending. A no-op if a rescan is already
         running (guards the race where a timer scheduled just before one started fires while it
         is still in flight) or `close()` has already been called; either way, whatever's pending
         stays pending for a later, still-relevant call to pick up."""

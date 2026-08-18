@@ -1,9 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Loads `klorb/resources/agents.json` once into an immutable in-process catalog of
-`AgentDefinition`s -- see docs/specs/subagents.md: "agents.json is parsed once, at
-process start, into an immutable in-memory registry. A running process never re-reads it, so
-editing the file on disk cannot retroactively loosen the restrictions already computed for
-sessions that are live in that process."""
+`AgentDefinition`s."""
 
 import importlib.resources
 from importlib.resources.abc import Traversable
@@ -18,17 +15,15 @@ AGENTS_RESOURCE_NAME = "agents.json"
 class AgentRegistry:
     """Read-only catalog of every subagent role's `AgentDefinition`, keyed by name. Reads
     `agents.json` at most once, on first use, and caches it for the rest of this instance's
-    lifetime -- nothing outside this class touches its parsed state directly. Reach the
-    process-wide instance via `get_agent_registry()` rather than constructing one directly,
-    so `agents.json` is parsed at most once per process.
+    lifetime. Reach the process-wide instance via `get_agent_registry()` rather than
+    constructing one directly, so `agents.json` is parsed at most once per process.
     """
 
     def __init__(self, agents_resource: Traversable | None = None) -> None:
         self._agents_resource = agents_resource or (
             importlib.resources.files(AGENTS_RESOURCE_PACKAGE).joinpath(AGENTS_RESOURCE_NAME)
         )
-        """Which file `_ensure_loaded` reads -- overridable so tests can point this at a
-        fixture file instead of the packaged `agents.json`."""
+        """Which file `_ensure_loaded` reads."""
         self._by_name: dict[str, AgentDefinition] | None = None
 
     def _ensure_loaded(self) -> None:
@@ -59,17 +54,12 @@ _registry = AgentRegistry()
 
 
 def get_agent_registry() -> AgentRegistry:
-    """Return the process-wide `AgentRegistry` singleton -- see `AgentRegistry`'s own
-    docstring for why callers should reach it through here rather than constructing their
-    own (tests aside, which may construct a standalone `AgentRegistry` to isolate from
-    whatever this process-wide instance has already cached)."""
+    """Return the process-wide `AgentRegistry` singleton."""
     return _registry
 
 
 def get_agent_capabilities(role_name: str) -> AgentCapabilities:
     """Return `role_name`'s `AgentCapabilities` from the process-wide registry, or an
-    all-`False` default if `role_name` names no defined role -- the same "undefined means most
-    restrictive" fallback `plan_subagent_creation`/`compute_root_session_grants` already apply
-    to `AgentRestrictions`/`allow_subagents` for an undefined role."""
+    all-`False` default if `role_name` names no defined role."""
     definition = get_agent_registry().get(role_name)
     return definition.agent_capabilities if definition is not None else AgentCapabilities()

@@ -22,19 +22,17 @@ DEFAULT_TOP_K = 25
 
 
 class SemanticSearchTool(Tool):
-    """Searches the workspace's local hybrid (BM25 + vector KNN) search index (see
-    `docs/specs/local-search-index.md`) for chunks related to any of `queries` by meaning rather
-    than exact wording, merging each query's hits (deduplicated by chunk, keeping the highest
-    score) and ranking the union by fused relevance score.
+    """Searches the workspace's local hybrid (BM25 + vector KNN) search index for chunks related
+    to any of `queries` by meaning rather than exact wording, merging each query's hits
+    (deduplicated by chunk, keeping the highest score) and ranking the union by fused relevance
+    score.
 
     Each matched chunk is reported under its source file in `result["files"]` as
-    `{"filename", "lines", "score"}`, `lines` a dense-format list (see
-    `klorb.tools.util.search_core`) with every line of the chunk's span marked `*` — the whole
-    chunk is the unit of semantic relevance, not one exact matching line. A file with hits from
-    more than one chunk gets one merged entry whose `score` is its best chunk's score.
+    `{"filename", "lines", "score"}`, `lines` a dense-format list with every line of the chunk's
+    span marked `*`. A file with hits from more than one chunk gets one merged entry whose
+    `score` is its best chunk's score.
 
-    Raises `ToolCallError` if the workspace search index isn't available (untrusted workspace,
-    feature disabled, or `klorb init` never run) rather than returning an empty result.
+    Raises `ToolCallError` if the workspace search index isn't available.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -115,8 +113,7 @@ class SemanticSearchTool(Tool):
         }
 
     def _redact_strings(self, values: list[str]) -> list[str]:
-        """Mask likely credentials out of each of `values` before it's returned -- see
-        docs/specs/secret-redaction.md."""
+        """Mask likely credentials out of each of `values` before it's returned."""
         return list(map(lambda value: self._secret_redactor.redact(self.context.session, value), values))
 
     def apply(self, args: dict[str, Any]) -> Any:

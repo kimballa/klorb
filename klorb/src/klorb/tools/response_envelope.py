@@ -1,11 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """`ToolResponseEnvelope`: the structured JSON object every `role="tool_response"`
-`Message.content` is serialized from, in place of the bare result-or-`"Error: ..."` string
-`klorb.session.mixins.tool_execution._run_tool_calls` used to build. Gives the model a uniform
-set of fields to reason about a failed call with (`is_error`/`is_retryable`/`error_category`/
-`error_message`) instead of guessing from prose, and a `system_interjections` slot for harness
-advisories to ride along with a tool result instead of only a user-turn prompt. See
-docs/specs/session-and-turns.md and docs/adrs/00150-wrap-tool-responses-in-a-structured-json-envelope.md.
+`Message.content` is serialized from, giving the model a uniform set of fields
+(`is_error`/`is_retryable`/`error_category`/`error_message`) and a `system_interjections` slot
+for harness advisories. See docs/specs/session-and-turns.md.
 """
 
 from typing import Any
@@ -19,11 +16,8 @@ _RETRYABLE_CATEGORIES: frozenset[ErrorCategory] = frozenset({"transient", "synta
 
 class SystemInterjectionPayload(BaseModel):
     """One standing-interjection provider's advisory, attached to a `ToolResponseEnvelope`'s
-    `system_interjections` -- the JSON-delivered counterpart to the XML `<SystemInterjection
-    subject="...">` block a user-turn prompt carries (see
-    `klorb.session.mixins.turns.wrap_system_interjection`). `subject` mirrors the provider's
-    registration key (`Session.register_standing_interjection`); `body` is the message it
-    returned."""
+    `system_interjections`. `subject` is the provider's registration key; `body` is the message
+    it returned."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -33,8 +27,8 @@ class SystemInterjectionPayload(BaseModel):
 
 class ToolResponseEnvelope(BaseModel):
     """The JSON object every `tool_response` `Message.content` is serialized from (via
-    `to_wire_dict()`). Construct via `success()`/`error()`, never directly, so `is_retryable`
-    always stays derived from `error_category` rather than being set independently."""
+    `to_wire_dict()`). Construct via `success()`/`error()` so `is_retryable` always stays
+    derived from `error_category`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -52,9 +46,7 @@ class ToolResponseEnvelope(BaseModel):
         *,
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
-        """Build a successful call's envelope. `is_retryable` is unconditionally `False` --
-        a successful call (even one whose `response_body` is empty, e.g. a Grep with no
-        matches) is never something to retry."""
+        """Build a successful call's envelope. `is_retryable` is unconditionally `False`."""
         return cls(
             is_error=False, is_retryable=False, response_body=response_body,
             system_interjections=list(system_interjections))
@@ -69,11 +61,8 @@ class ToolResponseEnvelope(BaseModel):
         system_interjections: "tuple[SystemInterjectionPayload, ...]" = (),
     ) -> "ToolResponseEnvelope":
         """Build a failed call's envelope. `is_retryable` is derived from `category` via
-        `_RETRYABLE_CATEGORIES`, `False` when `category` is `None` (an unclassified failure
-        defaults to "don't retry blindly"). `message` is `None` for the one case where the
-        failure detail already lives inside `response_body` (a `BashTool` command that ran but
-        exited non-zero — see `SessionToolExecutionMixin._run_tool_calls`'s `is_success()`
-        check) — duplicating it into `error_message` too would carry the same detail twice."""
+        `_RETRYABLE_CATEGORIES`, `False` when `category` is `None`. `message` is `None` when
+        failure detail already lives inside `response_body`."""
         return cls(
             is_error=True, is_retryable=category in _RETRYABLE_CATEGORIES,
             error_category=category, error_message=message, response_body=response_body,
@@ -82,9 +71,7 @@ class ToolResponseEnvelope(BaseModel):
     def to_wire_dict(self) -> dict[str, Any]:
         """Serialize to the dict that becomes a `tool_response` `Message.content`'s JSON body:
         `model_dump(exclude_none=True)`, additionally dropping `system_interjections` entirely
-        (not just as an empty `[]`) when empty -- every `tool_response` pays this envelope's
-        overhead now, so the dominant (no-interjection) case shouldn't carry an empty-array key
-        on every single call."""
+        when empty."""
         wire = self.model_dump(exclude_none=True)
         if not self.system_interjections:
             wire.pop("system_interjections", None)
@@ -92,10 +79,8 @@ class ToolResponseEnvelope(BaseModel):
 
 
 def classify_exception(exc: Exception) -> tuple[str, ErrorCategory | None, Any]:
-    """Return `(message, category, response_body)` for a tool-call exception, shared by every
-    `except Exception` site in `klorb.session.mixins.tool_execution` and
-    `klorb.session.mixins.permissions` (including retried-call exceptions) so categorization is
-    never duplicated or missed on a retry path.
+    """Return `(message, category, response_body)` for a tool-call exception so categorization
+    is never duplicated or missed on a retry path.
 
     `PermissionError` classification covers both `klorb.permissions.table.
     raise_if_not_allowed`'s explicit `raise PermissionError(...)` for a `"deny"` verdict, and a

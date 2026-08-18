@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Runtime diagnostics helpers, kept UI-agnostic so both the CLI/TUI and any other embedder can
-use them. Today: an all-thread stack dump written when klorb force-exits from a hang, so a later
-investigation can see exactly where every thread — especially a wedged worker thread — was
-parked. See docs/specs/interrupt-and-liveness-watchdog.md.
+use them. See docs/specs/interrupt-and-liveness-watchdog.md.
 """
 
 import faulthandler
@@ -19,8 +17,7 @@ _HANG_DUMP_PREFIX = "klorb-hang-"
 def thread_dump_path(workspace_root: Path) -> Path:
     """Build the path an all-thread stack dump for `workspace_root` is written to:
     `<tempdir>/klorb-hang-<workspace basename>-<timestamp>.log`, timestamped to the second at
-    call time so repeated dumps in the same workspace don't collide — mirroring
-    `klorb.logging_config.crash_log_path`'s naming for the (distinct) Textual crash case."""
+    call time so repeated dumps in the same workspace don't collide."""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     basename = workspace_root.name or "workspace"
     return Path(tempfile.gettempdir()) / f"{_HANG_DUMP_PREFIX}{basename}-{timestamp}.log"
@@ -34,8 +31,7 @@ def dump_all_thread_stacks(path: Path) -> Path | None:
     level and so works even when the interpreter is otherwise wedged — as the primary dump, and
     also appends a `traceback`-rendered copy built from `sys._current_frames()` for the readable
     thread-name labels `faulthandler` omits. Best-effort throughout: this only ever runs on the
-    way out of a hung process (see `klorb.watchdog.force_exit`), so any failure here must be
-    swallowed rather than raised — losing the dump is strictly better than blocking the exit.
+    way out of a hung process, so any failure here must be swallowed rather than raised.
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,8 +9,7 @@ from klorb.klorb_init import InitError, InitScope, default_scope, run_init
 
 
 def build_init_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb init`'s own flags (`--system`/`--user`/`--force`)
-    — see `run_init_cli()`.
+    """Build the argument parser for `klorb init`'s own flags (`--system`/`--user`/`--force`).
     """
     parser = argparse.ArgumentParser(
         prog=f"klorb {INIT_SUBCOMMAND}",
@@ -32,7 +31,7 @@ def run_init_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb init`) and run `klorb.klorb_init.run_init`,
     printing its progress messages to stderr as it goes. Returns the process exit status: `0`
     if every step ran (including a step that was skipped because its target already exists),
-    `1` if `run_init` raised `InitError` partway through — see `docs/specs/klorb-init.md`.
+    `1` if `run_init` raised `InitError` partway through.
     """
     parser = build_init_parser()
     args = parser.parse_args(argv)

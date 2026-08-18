@@ -28,34 +28,28 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_SESSION_LOG_FILES = 12
 """Default hard cap on how many `*.log` files `prune_session_logs()` leaves in the session-logs
-directory once a new session log is opened (counting the new one). See
-docs/specs/paths-and-logging.md and
-docs/adrs/00097-prune-session-logs-to-newest-within-count-and-byte-caps.md."""
+directory once a new session log is opened (counting the new one)."""
 
 DEFAULT_MAX_SESSION_LOG_BYTES = 32 * 1024 * 1024
 """Default hard cap on the combined size of the `*.log` files `prune_session_logs()` retains.
-The newly-opened session's own file is not yet counted against this (it starts empty and grows
-over the session); this bounds the accumulated *older* logs. The single newest existing log is
-always retained even when it alone exceeds this, so a big log is never deleted merely for being
-big — see `prune_session_logs()`."""
+The newly-opened session's own file is not yet counted against this; this bounds the
+accumulated *older* logs. The single newest existing log is always retained even when it
+alone exceeds this, so a big log is never deleted merely for being big."""
 
 klorb_log_level: int = logging.INFO
 """Default level for klorb's root logger, set by `configure_logging()`. Overridable via the
-`KLORB_LOG_LEVEL` environment variable (e.g. `KLORB_LOG_LEVEL=ERROR`); an unset or unrecognized
-value falls back to this default. Also the floor `_THIRD_PARTY_LOG_LEVELS` entries get raised
-to when this level is more terse than their own default — see `_resolve_klorb_log_level()` and
-docs/specs/paths-and-logging.md."""
+`KLORB_LOG_LEVEL` environment variable; an unset or unrecognized value falls back to this
+default. Also the floor `_THIRD_PARTY_LOG_LEVELS` entries get raised to when this level is
+more terse than their own default."""
 
 KLORB_LOG_LEVEL_ENV_VAR = "KLORB_LOG_LEVEL"
 
 TEXT_LOG_FORMAT = "%(asctime)s - %(levelname)s:%(name)s:%(message)s"
-"""`%`-style format string shared by every human-readable (non-JSON) log handler: the
-`TuiHistoryLogHandler` mounted into the TUI conversation history, and the console handler
-(`TextualHandler`/`StreamHandler`) `configure_logging()` attaches for stderr output. Defined once
-here so the two stay identical rather than drifting if edited separately."""
+"""`%`-style format string for human-readable log output. Defined once here so the handlers
+stay identical rather than drifting if edited separately."""
 
 TEXT_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
-"""`datefmt` paired with `TEXT_LOG_FORMAT`, and also used by `JsonLogFormatter`'s `ts` field."""
+"""`datefmt` paired with `TEXT_LOG_FORMAT`."""
 
 _THIRD_PARTY_LOG_LEVELS: dict[str, int] = {
     "httpcore": logging.WARNING,
@@ -65,15 +59,14 @@ _THIRD_PARTY_LOG_LEVELS: dict[str, int] = {
     "markdown_it": logging.INFO,
 }
 """Default levels for chatty third-party loggers, applied by `configure_logging()`. Each is
-raised to `klorb_log_level` (env-overridden) instead when that level is more terse (a higher
-numeric value) than the default listed here."""
+raised to `klorb_log_level` instead when that level is more terse (a higher numeric value)
+than the default listed here."""
 
 
 def _resolve_klorb_log_level() -> int:
     """Resolve the effective root log level: the `KLORB_LOG_LEVEL` env var if set to a
-    recognized level name (e.g. `DEBUG`, `INFO`, `WARNING`), else `klorb_log_level`. Resolved
-    lazily (at call time, not import time) so a value supplied via a `.env` file — loaded by
-    `klorb.cli.main()`'s `load_dotenv()` call before `configure_logging()` runs — is actually
+    recognized level name, else `klorb_log_level`. Resolved
+    lazily (at call time, not import time) so a value supplied via a `.env` file is actually
     honored, unlike a module-level constant computed from `os.environ` at import time.
     """
     override = os.environ.get(KLORB_LOG_LEVEL_ENV_VAR)
@@ -150,12 +143,8 @@ def prune_session_logs(
 
 
 class TuiHistoryNotice(Message):
-    """Posted to the active Textual `App` by `TuiHistoryLogHandler` for one `WARNING`+ log
-    record. `ReplApp.on_tui_history_notice()` handles it by mounting the record into the
-    conversation history via `show_notice()`. A `Message` rather than a direct widget mount from
-    `emit()`, because a logging call (and so `Handler.emit()`) can run on any thread while
-    Textual widgets are not thread-safe -- `App.post_message()` is Textual's documented
-    thread-safe hand-off into the app's own event loop, regardless of which thread posts it.
+    """A `Message` for one `WARNING`+ log record, created because a logging call can run on
+    any thread while Textual widgets are not thread-safe.
     """
 
     def __init__(self, text: str, *, error: bool) -> None:
@@ -169,10 +158,7 @@ class TuiHistoryLogHandler(logging.Handler):
     Textual `App` is currently running, so an interactive user sees a `WARNING`+ record in-band
     in the conversation history, not only in the session log file / `TextualHandler` console.
 
-    A no-op when no Textual `App` is currently running (e.g. before `App.run()` during startup,
-    or a one-shot headless prompt) -- `configure_logging()` installs this as a second handler,
-    alongside the primary one, only in `repl_mode`, and callers are expected to `setLevel()` it
-    to `WARNING` so ordinary INFO/DEBUG traffic never reaches the history.
+    A no-op when no Textual `App` is currently running.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -187,7 +173,7 @@ class TuiHistoryLogHandler(logging.Handler):
 class JsonLogFormatter(logging.Formatter):
     """Formats each `LogRecord` as one JSON object (`ts`/`level`/`log`/`msg`) via `json.dumps()`,
     so a `msg` containing quotes, newlines, or other control characters is escaped per the JSON
-    spec instead of corrupting the surrounding structure the way a `%`-style format string would.
+    spec instead of corrupting the surrounding structure.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -215,12 +201,9 @@ class AcpBackgroundTaskErrorFilter(logging.Filter):
 
     `acp.connection.Connection._run_request` re-raises every caught `RequestError` after sending
     its JSON-RPC error reply on the wire, and the SDK's `TaskSupervisor` logs that re-raise via
-    `logging.exception("Background task failed", ...)` against the root logger -- so an expected,
-    already-handled client-facing error (an unknown `sessionId`, a second concurrent prompt, an
-    unsupported content block, ...) prints a full traceback exactly like a genuine bug would.
+    `logging.exception("Background task failed", ...)` against the root logger.
     `acp.run_agent()` builds its `Connection` internally with no seam to swap in a different
-    task-error handler, so this filter matches the SDK's own hardcoded message instead. See
-    docs/adrs/00164-quiet-acp-request-error-tracebacks-with-a-logging-filter.md.
+    task-error handler, so this filter matches the SDK's own hardcoded message instead.
 
     `RequestError.internal_error()` is left alone (the record passes through unfiltered): the SDK
     raises that specific code when it caught some other, non-`RequestError` exception, so it does
@@ -251,8 +234,8 @@ class AcpBackgroundTaskErrorFilter(logging.Filter):
 class SecretRedactionFilter(logging.Filter):
     """Scans each formatted log message with `detect-secrets` and replaces detected credentials
     with `[REDACTED]`, using the same plugin set as `SecretRedactor`. Installed on every handler
-    in the `handlers` list so credentials that pass through `logger.log()` never reach stderr, the
-    TUI conversation history, or the session log file. See docs/specs/secret-redaction.md."""
+    so credentials that pass through `logger.log()` never reach stderr, the TUI conversation
+    history, or the session log file."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         formatted = record.getMessage()
@@ -275,13 +258,12 @@ def configure_minimal_logging(is_server: bool = False) -> None:
     """Install a bare-bones stderr handler as a stopgap until `configure_logging()` runs.
 
     `klorb.cli.main()` calls this immediately after `load_dotenv()`, before argument parsing or
-    subcommand dispatch, so any log call made in that window (which can be arbitrarily long: it
-    includes `build_parser()`/`parse_args()`, `TrustManager` resolution, `load_process_config()`,
-    etc.) is still visible on stderr instead of silently falling through to `logging`'s built-in
-    `lastResort` handler. `configure_logging()` (`force=True`) replaces these handlers once the
-    caller knows enough about the invocation (subcommand, `repl_mode`, `log_path`) to configure
-    logging properly. `is_server` selects `JsonLogFormatter` instead of `TEXT_LOG_FORMAT`, so a
-    record logged during `klorb server` startup is already valid JSON.
+    subcommand dispatch, so any log call made in that window is still visible on stderr instead
+    of silently falling through to `logging`'s built-in `lastResort` handler.
+    `configure_logging()` (`force=True`) replaces these handlers once the caller knows enough
+    about the invocation to configure logging properly. `is_server` selects `JsonLogFormatter`
+    instead of `TEXT_LOG_FORMAT`, so a record logged during `klorb server` startup is already
+    valid JSON.
     """
     handler = logging.StreamHandler()
     handler.setFormatter(
@@ -317,10 +299,9 @@ def configure_logging(
     stay valid JSON regardless of what a logged message contains, for machine parsing.
 
     The root logger's level is `klorb_log_level`, overridable via the `KLORB_LOG_LEVEL`
-    environment variable (see `_resolve_klorb_log_level()`). The chatty third-party loggers in
-    `_THIRD_PARTY_LOG_LEVELS` (`httpcore`, `httpx`, `openai`) are set to their own default level
-    from that mapping, or to the resolved klorb level when that's more terse (a higher numeric
-    value) than their default.
+    environment variable. The chatty third-party loggers in `_THIRD_PARTY_LOG_LEVELS` are set to
+    their own default level from that mapping, or to the resolved klorb level when that's more
+    terse (a higher numeric value) than their default.
 
     Also installs `AcpBackgroundTaskErrorFilter` on the root logger (idempotent across repeated
     calls) so the ACP SDK's own full-traceback log for an already-handled `RequestError` is
@@ -381,24 +362,20 @@ def crash_log_path(workspace_root: Path) -> Path:
 class CrashLogTee(TextIO):
     """A `typing.TextIO`, suitable as a `rich.console.Console.file` with no cast needed, that
     duplicates every write to a real output stream (`stderr`) and a crash log file, so
-    Textual's `App._print_error_renderables()` — which prints an unhandled exception's
-    traceback to `App.error_console` on its way out — also lands the same text in a file a
+    Textual's `App._print_error_renderables()` also lands the same text in a file a
     user can attach to a bug report.
 
     The log file is opened lazily on the first write rather than eagerly in `__init__`, so a
     session that never crashes never creates a file in `/tmp`: `error_console` is written to
-    only when there's actually a crash to report (see `App._print_error_renderables`). If the
-    file can't be opened (permissions, a full disk), writes silently fall back to `stream`
+    only when there's actually a crash to report. If the
+    file can't be opened, writes silently fall back to `stream`
     alone rather than raising out of Rich's render path; if a write to `stream` itself fails,
     the file write already happened first, so the crash is still captured on disk. Call
     `opened_log_path` after the run to find out whether (and where) anything was actually
     written.
 
     This is a write-only stream: `write`/`flush`/`isatty`/`encoding`/`close` are the only
-    members with real behavior — everything else `typing.IO[str]` requires (`read*`, `seek`,
-    `tell`, `truncate`, `fileno`, iteration) is unsupported and raises `io.UnsupportedOperation`
-    or reports `False`, matching how e.g. a pipe or `io.StringIO` opened write-only behaves for
-    the same operations, since Rich's `Console` never calls them on `.file`.
+    members with real behavior.
     """
 
     def __init__(self, stream: TextIO, log_path: Path) -> None:
@@ -446,8 +423,8 @@ class CrashLogTee(TextIO):
         return getattr(self._stream, "encoding", "utf-8") or "utf-8"
 
     def close(self) -> None:
-        """Close the crash log file, if one was opened. Never closes `stream` (typically
-        `sys.stderr`) — this object doesn't own it, so it's the caller's to close, if anyone's.
+        """Close the crash log file, if one was opened. Never closes `stream`
+        (typically `sys.stderr`) since this object doesn't own it.
         """
         if self._log_file is not None:
             self._log_file.close()

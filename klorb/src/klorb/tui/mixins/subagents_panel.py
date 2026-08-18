@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """SubagentsPanelMixin: the Ctrl+G-toggled subagents panel, (sub)agent selection, the selected
 subagent's transcript view, and the selection-gated ask-attention bookkeeping `InteractionsMixin`
-polls -- see `klorb.tui.widgets.subagents_panel.SubagentsPanel` and docs/specs/subagents.md's
-"Subagents panel" section."""
+polls."""
 
 import asyncio
 
@@ -48,9 +47,7 @@ selected subagent's transcript (new messages, and the trailing status notice's t
 doesn't look frozen mid-turn."""
 
 _ASK_GATE_POLL_INTERVAL_SECONDS = 0.2
-"""How often `_await_session_selected` re-checks whether its target session has become selected
--- mirrors `klorb.agents.runtime.SubagentTracker`'s own poll-with-short-timeout pattern rather
-than a new synchronization primitive."""
+"""How often `_await_session_selected` re-checks whether its target session has become selected."""
 
 _SUBAGENT_STILL_RUNNING_NOTICE = "Subagent is still working…"
 _SUBAGENT_TASK_COMPLETE_NOTICE = "Subagent task complete."
@@ -60,14 +57,11 @@ _SUBAGENT_INTERRUPTED_NOTICE = "Subagent interrupted."
 
 class SubagentsPanelMixin(ReplAppBase):
     """Ctrl+G shows or hides a docked right-hand panel listing every session in the live
-    subagent tree, with click/arrow-key row selection that switches the displayed transcript --
-    see `ReplApp` for how this mixes into the concrete app class."""
+    subagent tree, with click/arrow-key row selection that switches the displayed transcript."""
 
     def action_toggle_subagents_panel(self) -> None:
-        """Ctrl+G: show or hide the subagents panel. Mutually exclusive with the task sidebar --
-        showing this one hides that one (see `TaskSidebarMixin.action_toggle_task_sidebar` for
-        the reverse direction) -- since both dock the same right-hand slot and the plan calls for
-        "either tasks or subagents ... visible at once."."""
+        """Ctrl+G: show or hide the subagents panel. Mutually exclusive with the task sidebar
+        since both dock the same right-hand slot."""
         panel = self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
         if self._active_sidebar == "agents":
             self._active_sidebar = None
@@ -84,17 +78,9 @@ class SubagentsPanelMixin(ReplAppBase):
             self._update_subagent_attention_status_line()
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        """Switch the displayed transcript as soon as a row is highlighted -- by an up/down
-        arrow press or a click -- rather than requiring a separate `Enter` to "select" it, since
-        the plan describes moving focus between agents as the selection gesture itself.
-
-        A no-op when the highlighted row already names the selected session: `show_rows` resets
-        the `OptionList` (`clear_options()` then `add_options()`) on every refresh, which posts a
-        fresh `OptionHighlighted` for whatever index it re-highlights even when that index's
-        session hasn't changed -- without this guard, `_tick_subagents_panel`'s periodic refresh
-        would re-trigger `_select_session` (and its `_refresh_subagents_panel()` call, which
-        triggers another `OptionHighlighted` next tick) forever.
-        """
+        """Switch the displayed transcript as soon as a row is highlighted. A no-op when the
+        highlighted row already names the selected session, preventing `_tick_subagents_panel`'s
+        periodic refresh from re-triggering `_select_session` indefinitely."""
         if event.option_list.id != SUBAGENTS_LIST_ID:
             return
         option = event.option
@@ -105,23 +91,15 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _find_tree_node(self, session_id: str) -> SessionTreeNode | None:
         """Locate `session_id`'s node in the live subagent tree rooted at this process's
-        top-level session, or `None` if it no longer exists (defensive only -- a session id
-        handed back from a panel row or a just-tagged ask always names a node that still exists,
-        since nothing in this tree is ever destroyed until its creator closes, per
-        docs/specs/subagents.md's "Persistence" section)."""
+        top-level session, or `None` if it no longer exists."""
         for node in walk_session_tree(self._session):
             if node.session.id == session_id:
                 return node
         return None
 
     def _select_session(self, session_id: str) -> None:
-        """Make `session_id` the currently displayed (sub)agent: save the outgoing session's
-        prompt-input draft and restore the incoming one's (`_subagent_drafts`, keyed by session
-        id), swap `#history`/`#subagent-history` visibility, update the prompt input's disabled
-        state, refresh the status bar's token tally, the header's model (and thinking-effort)
-        display, and the `#session-name` line for the newly selected session, and refresh the
-        panel's highlight/footer. A no-op if `session_id` doesn't name a live node (see
-        `_find_tree_node`)."""
+        """Make `session_id` the currently displayed (sub)agent. A no-op if `session_id`
+        doesn't name a live node."""
         node = self._find_tree_node(session_id)
         if node is None:
             return
@@ -146,13 +124,8 @@ class SubagentsPanelMixin(ReplAppBase):
         self._refresh_subagents_panel()
 
     def _update_session_name_line_for_selection(self) -> None:
-        """Set the `#session-name` status line to the selected session's own title -- a
-        subagent's `Session.name` is always set at creation (from `CreateSubagent`'s
-        `session_title`, per docs/specs/subagents.md's "Subagent session model" section), so only
-        the root session, before its first-turn naming classifier resolves, can still be `None`;
-        that case falls back to the bare `NEW_SESSION_LABEL`, matching `compose()`'s own initial
-        value (see `_update_session_name_line`'s docstring for why that case skips the
-        `"Session: "` prefix)."""
+        """Set the `#session-name` status line to the selected session's own title. Falls back
+        to `NEW_SESSION_LABEL` when the name is `None`."""
         name = self._selected_session.name
         if name is not None:
             self._update_session_name_line(name)
@@ -160,14 +133,9 @@ class SubagentsPanelMixin(ReplAppBase):
             self.query_one(f"#{SESSION_NAME_ID}", Static).update(NEW_SESSION_LABEL)
 
     def _render_full_subagent_transcript(self, session: Session, handle: SubagentHandle) -> None:
-        """Render a fresh, non-streaming snapshot of every message in `session.messages` into
-        `#subagent-history`, replacing whatever was there before -- called only when `session`
-        is newly selected (see `_select_session`); `_append_new_subagent_messages` handles
-        catching the view up to new messages on later ticks while it stays selected. Always
-        scrolls to the bottom and resets `_subagent_history_pinned_to_bottom` to `True`: a fresh
-        selection should show the latest content regardless of where a *previous* selection's
-        scroll happened to be left.
-        """
+        """Render a fresh snapshot of every message in `session.messages` into
+        `#subagent-history`, replacing whatever was there before. Always scrolls to the
+        bottom and resets `_subagent_history_pinned_to_bottom` to `True`."""
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         container.remove_children()
         self._subagent_transcript_notice = None
@@ -185,17 +153,9 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _append_new_subagent_messages(self, session: Session, handle: SubagentHandle) -> None:
         """Catch `#subagent-history` up to `session.messages`/`handle.state` since the last
-        render: mounts only messages added since then (mirroring how `#history` streams a live
-        turn, rather than `_render_full_subagent_transcript`'s full rebuild) and re-mounts the
-        trailing status notice if `handle.state` changed, so it flips from "still working" to
-        "task complete" (or back, if `MessageSubagent` resumes it) without disturbing the rest of
-        the view. Follows the bottom only if the view was already pinned there
-        (`_subagent_history_pinned_to_bottom`, kept in sync by `_on_subagent_history_scroll_changed`)
-        -- a user who scrolled up to reread earlier output isn't yanked back down. Called by
-        `_tick_subagents_panel` every tick while a subagent is selected; a no-op once neither the
-        message count nor the state has changed since the last call, so a dormant selection does
-        no work between ticks.
-        """
+        render, mounting only new messages and re-mounting the trailing status notice if
+        `handle.state` changed. A no-op when neither the message count nor the state has
+        changed."""
         # `session.messages` returns a fresh copy on every access. Reading it once into `messages`
         # and reusing it for the count check, the mount, and the rendered-count update keeps those
         # three steps from observing different lengths and silently dropping a message appended
@@ -220,21 +180,9 @@ class SubagentsPanelMixin(ReplAppBase):
     def _mount_subagent_messages(
         self, container: VerticalScroll, messages: list[ChatMessage], start_index: int = 0,
     ) -> None:
-        """Mount `messages[start_index:]` into `container`, reusing `RenderingMixin`'s pure
-        `_render_restored_tool_call`/`_render_tool_result` (safe against the root session's own
-        `tool_registry`: a subagent's tool set is always a subset of every ancestor's, including
-        the root's, by the Phase-1 intersection invariant -- see docs/specs/subagents.md's
-        "Security model" section) rather than any of the `_mount_*_widget` helpers, which are
-        hardwired to `#history` and to live streaming/status-bar bookkeeping this read-only view
-        doesn't need. `responses_by_call_id` is built from the *full* `messages` list regardless
-        of `start_index`, since a `tool_use` message in the mounted slice can pair with a
-        `tool_response` message from earlier or later in the same slice. A `tool_use` message's
-        own `content`, if non-empty, is rendered as a response block ahead of its tool calls -- it
-        can carry commentary the model sent alongside those calls, including its final answer if
-        that arrived in the same round as its last tool calls rather than a trailing text-only
-        round (see `klorb.agents.policy._assistant_authored_text`, which relays exactly this text
-        to the subagent's creator).
-        """
+        """Mount `messages[start_index:]` into `container`. `responses_by_call_id` is built
+        from the full `messages` list regardless of `start_index`. A tool_use message's
+        non-empty content is rendered as a response block ahead of its tool calls."""
         responses_by_call_id = {
             message.tool_call_id: message for message in messages
             if message.role == "tool_response" and message.tool_call_id is not None
@@ -277,19 +225,9 @@ class SubagentsPanelMixin(ReplAppBase):
     def _mount_subagent_status_notice(self, container: VerticalScroll, handle: SubagentHandle) -> None:
         """Mount the trailing status `Static` as the last child of `container`, tracking it in
         `_subagent_transcript_notice` so the next render can remove it before mounting anything
-        new (keeping it last). Text depends on `handle.state` plus two finer-grained cases:
-
-        * While `"running"`: "Sending interrupt…" if an abort was just requested for this
-          session (`_subagent_interrupt_pending`, set by `_note_subagent_interrupt_requested`
-          and left in place until the handle actually finishes, so it survives every tick in
-          between), else the ordinary "Subagent is still working…".
-        * Once no longer `"running"`: "Subagent interrupted." if `handle.output` carries
-          `SUBAGENT_ABORTED_MARKER` (`klorb.agents.policy._run_subagent_turn`'s own abort note --
-          checked regardless of `_subagent_interrupt_pending`, so this reads correctly even after
-          switching away and back), else the ordinary "Subagent task complete.". Clears
-          `_subagent_interrupt_pending` for this session once reached, since the interrupt it was
-          tracking has now resolved one way or another.
-        """
+        new. Text depends on `handle.state`: "Sending interrupt…" if an abort was requested,
+        "Subagent interrupted." if the handle carries `SUBAGENT_ABORTED_MARKER`, "Subagent task
+        complete." if it completed normally, or "Subagent is still working…" while running."""
         if handle.state == "running":
             if self._subagent_interrupt_pending == handle.session.id:
                 text = _SUBAGENT_SENDING_INTERRUPT_NOTICE
@@ -314,7 +252,7 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _remove_subagent_transcript_notice(self) -> None:
         """Unmount `_subagent_transcript_notice`, stopping its crawl-animation timer first if
-        it's a `CrawlAnimatedStatic` -- a no-op if nothing is currently mounted."""
+        it's a `CrawlAnimatedStatic`. A no-op if nothing is currently mounted."""
         notice = self._subagent_transcript_notice
         if notice is None:
             return
@@ -325,13 +263,10 @@ class SubagentsPanelMixin(ReplAppBase):
         self._subagent_transcript_notice = None
 
     def _note_subagent_interrupt_requested(self, handle: SubagentHandle) -> None:
-        """Immediately show "Sending interrupt…" in `#subagent-history` when Escape/Ctrl+C aborts
-        the selected subagent's turn (`KeyActionsMixin._interrupt_running_activity`), so the user
-        gets the same prompt confirmation the root session's own `_INTERRUPTING_MESSAGE` gives.
-        The actual abort can take a moment to land (the subagent's background thread only notices
-        `cancel_event` at its next stream/tool-call boundary) -- `_subagent_interrupt_pending`
-        keeps `_mount_subagent_status_notice` showing this same text on every tick in between,
-        rather than reverting to "still working"."""
+        """Immediately show "Sending interrupt…" in `#subagent-history` when Escape/Ctrl+C
+        aborts the selected subagent's turn. `_subagent_interrupt_pending` keeps
+        `_mount_subagent_status_notice` showing this same text on every tick until the abort
+        lands."""
         self._subagent_interrupt_pending = handle.session.id
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         self._remove_subagent_transcript_notice()
@@ -343,14 +278,13 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _on_subagent_history_scroll_changed(self) -> None:
         """Keep `_subagent_history_pinned_to_bottom` in sync with `#subagent-history`'s actual
-        scroll position -- the subagent-transcript analog of `StatusBarMixin.
-        _on_history_scroll_changed`, watched the same way (see `KeyActionsMixin.on_mount`)."""
+        scroll position."""
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         self._subagent_history_pinned_to_bottom = pinned_to_bottom(container)
 
     def _refresh_subagents_panel(self) -> None:
         """Rebuild the panel's rows from the live subagent tree and refresh the status-line
-        fallback -- called after any selection change, panel toggle, or tick."""
+        fallback."""
         panel = self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
         rows = [
             SubagentRowData(
@@ -365,10 +299,8 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _update_subagent_attention_status_line(self) -> None:
         """Show the "Agent <address> needs your input" status-line fallback only while the panel
-        itself is hidden and at least one session has an ask waiting on selection -- the panel's
-        own blinking `(!)` marker already covers the case where it's visible. Picks the oldest
-        (first-added) pending session when several are waiting at once, matching
-        `_attention_needed`'s insertion order."""
+        itself is hidden and at least one session has an ask waiting on selection. Picks the
+        oldest pending session when several are waiting at once."""
         status = self.query_one(f"#{SUBAGENT_ATTENTION_STATUS_ID}", Static)
         if self._active_sidebar == "agents" or not self._attention_needed:
             status.display = False
@@ -380,21 +312,16 @@ class SubagentsPanelMixin(ReplAppBase):
         status.display = True
 
     def _tick_subagents_panel(self) -> None:
-        """`set_interval` callback (started by `_start_subagents_panel_timer`): flips the blink
-        phase and catches the selected subagent's transcript up to any new messages or a state
-        change (`_append_new_subagent_messages`, itself a no-op when neither happened) -- both
-        regardless of whether the panel itself is currently shown, since the transcript view and
-        the status-line attention fallback stay meaningful while it's hidden. Only refreshes the
-        panel's own rows (`_refresh_subagents_panel`) while it's actually visible -- doing so
-        while hidden would just repeatedly reset the `OptionList`'s highlight for no visible
-        effect (see `on_option_list_option_highlighted`'s docstring)."""
+        """`set_interval` callback: flips the blink phase and catches the selected subagent's
+        transcript up to any new messages or a state change. Only refreshes the panel's own
+        rows while it's actually visible."""
         self._blink_phase = not self._blink_phase
         if self._selected_handle is not None:
             # Re-resolve the handle from the tree before using it: `register()` replaces the
             # tracker's entry for this session on every resume (a direct message or
             # MessageSubagent), so a `_selected_handle` cached from selection time can point at
             # an orphaned, permanently-"running" object whose `state` never again matches the
-            # live turn -- see `_select_session`, the only other place this field is set.
+            # live turn.
             node = self._find_tree_node(self._selected_session.id)
             if node is not None and node.handle is not None:
                 self._selected_handle = node.handle
@@ -403,35 +330,22 @@ class SubagentsPanelMixin(ReplAppBase):
             self._refresh_subagents_panel()
 
     def _start_subagents_panel_timer(self) -> None:
-        """Start `_tick_subagents_panel`'s recurring timer -- called once from `on_mount`
-        (`KeyActionsMixin`, where the app's other `set_interval` timers are started)."""
+        """Start `_tick_subagents_panel`'s recurring timer."""
         self.set_interval(_PANEL_TICK_INTERVAL_SECONDS, self._tick_subagents_panel)
 
     def _update_prompt_input_disabled_state(self) -> None:
-        """Recompute the prompt input's `disabled` flag -- enabled for any selection, root or
-        subagent alike (see docs/specs/subagents.md's "Direct user messaging" section: a
-        submission while a subagent is selected routes to it via `dispatch_direct_message`
-        instead of the root session). A no-op while `interaction-active` is set: an open
-        permission/ask-user-questions/escalate-privileges panel
-        (`InteractionsMixin._enter_interaction_mode`/`_exit_interaction_mode`) already owns the
-        flag for its own duration, and by construction only ever shows for the currently-selected
-        session anyway (see `_await_session_selected`), so there's nothing this method would
-        change while it's up.
-        """
+        """Recompute the prompt input's `disabled` flag. A no-op while `interaction-active`
+        is set."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         if prompt_input.has_class("interaction-active"):
             return
         prompt_input.disabled = False
 
     async def _await_session_selected(self, session_id: str) -> None:
-        """Block the calling coroutine until `session_id` is the currently selected session,
-        polling rather than using a new synchronization primitive (see module docstring).
+        """Block the calling coroutine until `session_id` is the currently selected session.
         Registers `session_id` in `_attention_needed` for the duration so the panel can blink a
-        `(!)` marker next to it and the status-line fallback can announce it -- a no-op if
-        `session_id` is already selected. Used by `InteractionsMixin`'s three `_confirm_*`
-        methods, before they acquire `_interaction_lock`, so an ask for a session that isn't
-        selected can't block the lock and starve every other panel (including the root's own).
-        """
+        `(!)` marker and the status-line fallback can announce it. A no-op if `session_id` is
+        already selected."""
         if self._selected_session.id == session_id:
             return
         self._attention_needed.setdefault(session_id, None)

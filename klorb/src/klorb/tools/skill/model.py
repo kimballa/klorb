@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""The `Skill` catalog record built once by `klorb.tools.skill.catalog` from a disk scan. See
-docs/specs/skills.md.
-"""
+"""The `Skill` catalog record. See docs/specs/skills.md."""
 
 from typing import Any
 
@@ -13,16 +11,13 @@ from klorb.permissions.skill_access import Namespace
 class Skill(BaseModel):
     """One discovered skill.
 
-    `namespace` and `name` are the skill's canonical `(namespace, name)` identity -- `name` is
-    the skill directory's basename, lowercased and capped to `klorb.tools.skill.common.
-    MAX_SKILL_NAME_DISPLAY_LENGTH`, never a frontmatter-supplied name, so it's what every
-    `skillRules` rule and approval decision is keyed on, and always what's advertised to the model
-    or a user-facing skill list -- a name once advertised is guaranteed resolvable. `description`
-    is propagated straight from `raw["description"]` (empty string if absent or non-string). `raw`
-    is the skill's full parsed YAML frontmatter, whatever attributes its author wrote. `aliases` is
-    every string a user may type to mean this skill: the full (untruncated) lowercased basename,
-    the canonical (capped) basename, and the frontmatter `name` in both its full and capped forms,
-    when present and valid -- up to four strings, deduped by set semantics when some coincide.
+    `namespace` and `name` are the skill's canonical `(namespace, name)` identity — `name` is
+    the skill directory's basename, lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH`,
+    never a frontmatter-supplied name. `description` is propagated straight from
+    `raw["description"]` (empty string if absent or non-string). `raw` is the skill's full parsed
+    YAML frontmatter. `aliases` is every string a user may type to mean this skill: the full
+    (untruncated) lowercased basename, the canonical (capped) basename, and the frontmatter `name`
+    in both its full and capped forms, when present and valid.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -39,10 +34,7 @@ class Skill(BaseModel):
     disable_model_invocation: bool = False
     """From frontmatter `disable-model-invocation: true`. Such a skill is never added to the
     canonical catalog `ActivateSkill`/`ReadSkillFile` resolve against, only to the typed one a
-    user's own `/name` reference resolves against -- see `klorb.tools.skill.catalog.
-    build_catalogs`."""
+    user's own `/name` reference resolves against."""
     root: Any
-    """The skill directory's `Traversable` root -- a real `Path` for the `workspace`/`user`
-    tiers, or an `importlib.resources` `Traversable` for a zip-installed `internal` tier. `Any`
-    rather than `Traversable` because pydantic can't validate an `importlib.resources` protocol
-    type; `arbitrary_types_allowed` alone isn't enough since `Traversable` itself is a `Protocol`."""
+    """The skill directory's `Traversable` root. `Any` rather than `Traversable` because pydantic
+    can't validate an `importlib.resources` protocol type."""

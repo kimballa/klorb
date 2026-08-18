@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.agents.definition: `AgentDefinition`/`AgentRestrictions` validation,
-particularly the "None means unspecified/inherit-all, [] means explicitly nothing" distinction
-`klorb.agents.intersection` depends on."""
+"""Tests for klorb.agents.definition: `AgentDefinition`/`AgentRestrictions` validation."""
 
 from klorb.agents.definition import AgentCapabilities, AgentDefinition, AgentRestrictions
 

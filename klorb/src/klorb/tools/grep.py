@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that recursively searches a directory tree for lines matching any of several literal
-strings or regular expressions, returning each match with surrounding context lines."""
+"""Recursively searches a directory tree for lines matching literal strings or regular expressions."""
 
 import fnmatch
 import json
@@ -37,54 +36,32 @@ _TRUNCATION_SUFFIX = "[truncated...]"
 
 
 def _truncate_line(line: str, max_length: int) -> str:
-    """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut —
-    guards against a single pathologically long line (a minified sourcemap, a one-line JSON blob)
-    dumping an outsized chunk of text into the model's context."""
+    """Truncate `line` to `max_length` characters, appending `_TRUNCATION_SUFFIX` if it was cut."""
     if len(line) <= max_length:
         return line
     return line[:max_length] + _TRUNCATION_SUFFIX
 
 
 class GrepTool(InterruptibleTool):
-    """Recursively searches a directory tree for lines matching any of `queries` (each matched
-    as a literal substring by default, or as a distinct Python regex when `is_regex` is true —
-    a line matching any one of them counts as a hit, equivalent to `grep -e 'seq1' -e 'seq2'
-    ...`), reusing `klorb.tools.util.walk_readable_tree` so the walk obeys `readDirs` at
-    every directory level, not just at the given path itself — see that function's docstring for how
-    a denied, ask-gated, or symlinked subdirectory is pruned rather than aborting the whole
-    search.
+    """Recursively searches a directory tree for lines matching any of `queries`.
 
-    Each hit is reported with `context.process_config.grep_context_lines` lines of surrounding
-    context on each side (like `grep -C`); overlapping or adjacent context windows within the
-    same file are merged rather than reported as separately-overlapping results. Every matching
-    file appears once in `result["files"]` as `{"filename", "lines"}`, where `lines` is a flat
-    list of dense-format strings (see `klorb.tools.util.search_core`) — a leading `*` marks a
-    line that itself matched, and each line carries its own 1-based number, so a gap between two
-    merged windows shows up as a jump in those numbers with no separator line.
+    Each match is reported with `context.process_config.grep_context_lines` lines of
+    surrounding context; overlapping or adjacent context windows within the same file are
+    merged. Every matching file appears once in `result["files"]` as `{"filename", "lines"}`.
 
-    A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped silently
-    (treated as binary) rather than raising — matches are only ever reported from files
-    readable as text, matching common `grep -I` behavior.
+    A file that can't be decoded as UTF-8 text, or can't be opened at all, is skipped
+    silently. Each reported line is truncated to `context.process_config.grep_max_line_length`
+    characters. If the JSON serialization of the entire `result["files"]` value would exceed
+    `context.process_config.grep_spill_bytes`, it's written to a file in this session's spill
+    tmpdir instead and the result carries `results_data_file` in place of `files`.
 
-    Each reported line is truncated to `context.process_config.grep_max_line_length` characters
-    (with a `"[truncated...]"` suffix) to guard against a single pathologically long line — a
-    minified sourcemap, a one-line JSON blob — dumping an outsized chunk of text into the
-    model's context. If the JSON serialization of the entire `result["files"]` value would
-    exceed `context.process_config.grep_spill_bytes`, it's written to a file in this session's
-    spill tmpdir instead and the result carries `results_data_file` in place of `files` — the
-    same `klorb.tools.util.spill.SpillDir` mechanism `WebFetchTool` uses for its own response
-    bodies, so a session that calls Grep repeatedly reuses one tmpdir rather than accumulating
-    one per call. See `_spill_files_if_needed`.
+    Every returned line is redacted before truncation via `self._secret_redactor`. A `query`
+    may itself be (or contain) a `[[SECRET:...]]` token echoed back from an earlier result:
+    it's resolved to real plaintext before compiling, so matching against a file's real,
+    unredacted content still finds the secret it names, but `result["queries"]` always echoes
+    back the redacted form.
 
-    Every returned line is redacted before truncation (never after — truncating first could slice
-    a credential in half, leaving an undetectable fragment in the output) via
-    `self._secret_redactor` (a `klorb.tools.util.SecretRedactor`, the same type `ReadFileTool`
-    uses) — see docs/specs/secret-redaction.md. A `query` may itself be (or contain) a
-    `[[SECRET:...]]` token echoed back from an earlier `ReadFile`/`Grep` result: it's resolved to
-    real plaintext before compiling, so matching against a file's real, unredacted content still
-    finds the secret it names, but `result["queries"]` always echoes back the redacted form —
-    never the plaintext, whether that plaintext came from detokenizing a query or was typed
-    directly.
+    See docs/specs/secret-redaction.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -199,9 +176,7 @@ class GrepTool(InterruptibleTool):
         }
 
     def _redact_strings(self, values: list[str]) -> list[str]:
-        """Mask likely credentials out of each of `values` before it's returned -- see
-        docs/specs/secret-redaction.md. Used both for dense-format result lines and for the
-        echoed `queries` list, so it takes plain strings rather than anything line-shaped."""
+        """Mask likely credentials out of each of `values`."""
         return list(map(lambda value: self._secret_redactor.redact(self.context.session, value), values))
 
     def apply(self, args: dict[str, Any]) -> Any:
@@ -401,14 +376,10 @@ class GrepTool(InterruptibleTool):
         return result
 
     def _spill_files_if_needed(self, result: dict[str, Any]) -> None:
-        """Replace `result["files"]` with a `results_data_file` path if its JSON serialization
-        exceeds `self._spill_bytes`, so a search matching many files/lines can't dump an
-        outsized payload straight into the model's context. Exactly one of `files`/
-        `results_data_file` is present in the returned result. Writes into this session's
-        shared `Grep` spill tmpdir (`self._spill_dir`), reused across every call in the same
-        session rather than a fresh directory per spill — see `klorb.tools.util.spill.SpillDir`.
-        Raises `ToolCallError` if this `GrepTool` wasn't constructed with a live `Session`
-        (`self.context.session`), since the tmpdir is tracked in `Session.tool_state`.
+        """Replace `result["files"]` with a `results_data_file` path if JSON serialization
+        exceeds `self._spill_bytes`.
+
+        Raises `ToolCallError` if this `GrepTool` wasn't constructed with a live `Session`.
         """
         encoded = json.dumps(result["files"], ensure_ascii=False).encode("utf-8")
         if len(encoded) <= self._spill_bytes:
@@ -440,10 +411,7 @@ class GrepTool(InterruptibleTool):
         return f"Grep: {queries!r} in {root} ({count}{suffix} match{plural}{cancelled})"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["files"]` capped to its
-        first 20 entries — a full grep result can span up to `self._max_results` (100 by
-        default) matching lines across many files, far more than useful to show inline.
-        """
+        """Render the result with `files` capped to its first 20 entries."""
         if error is not None or not isinstance(result, dict) or "files" not in result:
             return super().detail_view(args, result, error)
         files = result["files"]

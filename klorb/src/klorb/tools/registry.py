@@ -63,21 +63,15 @@ class ToolRegistry:
         self._session_config = session_config
         self.session: Session | None = None
         """Back-reference to the `Session` this registry belongs to, so `ToolSetupContext`s it
-        builds carry `session` for `Tool`s that use `session.tool_state` — set post-construction
-        by `Session.__init__`, since a `ToolRegistry` is always built before the `Session` it's
-        passed into (a plain constructor argument would be circular). `None` until that
-        happens, and `None` for a registry built by `discover_tools` before one is passed in
-        (discovery only needs a throwaway `Tool` instance to read its `name()`, never
-        `apply()`)."""
+        builds carry `session` for `Tool`s that use `session.tool_state`. `None` until
+        `Session.__init__` sets it post-construction."""
         self._tool_classes: dict[str, type[Tool]] = dict(tool_classes)
         self._alias_map: dict[str, str] = {}
         """Maps each alias to the canonical tool name, built by scanning every registered
-        tool class's `aliases()`. Used by `instantiate_tool` so the model can invoke a tool
-        by an alternative name without those names appearing in tool definitions."""
+        tool class's `aliases()`."""
         self.extra_visible_tools: frozenset[str] = frozenset()
         """Tool names that should be included in `tool_definitions()` even though their
-        `Tool.default_visible()` returns `False`. Used by the eval harness to advertise
-        hidden tools for specific eval cases."""
+        `Tool.default_visible()` returns `False`."""
 
         self._build_alias_map()
 
@@ -114,14 +108,12 @@ class ToolRegistry:
         package: ModuleType = default_tools_package,
     ) -> "ToolRegistry":
         """Walk `package`'s modules once, collecting every concrete `Tool` subclass defined
-        directly in one, and return a `ToolRegistry` holding the discovered classes — the
-        bootstrap path that produces a registry of all tools the harness offers.
+        directly in one, and return a `ToolRegistry` holding the discovered classes.
 
         The package scan (`pkgutil.walk_packages`) runs only here, not in `__init__`, so a
         session-scoped `ToolRegistry` can be built from an already-discovered
-        `dict[str, type[Tool]]` (e.g. a filtered subset of this registry's classes) without
-        re-scanning the package. `package` defaults to `klorb.tools` itself; pass a different
-        package to discover tools defined elsewhere (e.g. a test fixture package).
+        `dict[str, type[Tool]]` without re-scanning the package. `package` defaults to
+        `klorb.tools` itself.
         """
         logger.debug("Discovering tools in package %s", package.__name__)
         tool_classes: dict[str, type[Tool]] = {}
@@ -170,11 +162,9 @@ class ToolRegistry:
         """Factory method: construct a fresh instance of the named tool from a `ToolSetupContext`
         built from this registry's current `process_config`/`session_config`, raising
         `NoSuchToolException` if no tool with that name is in this registry.
-        `permission_override`, if given, is threaded onto that `ToolSetupContext` — see
-        `ToolSetupContext.permission_override`.
 
         If `name` is not a canonical tool name, it is checked against every registered tool's
-        `aliases()` before raising — see `Tool.aliases`.
+        `aliases()` before raising.
         """
         canonical_name = self._alias_map.get(name, name)
         try:
@@ -188,9 +178,7 @@ class ToolRegistry:
         return [self.instantiate_tool(name) for name in self._tool_classes]
 
     def tool_classes(self) -> dict[str, type[Tool]]:
-        """Return a copy of this registry's name-keyed `Tool` subclass map -- e.g. for
-        `CreateSubagent` to build a subagent's own filtered `ToolRegistry` (via the direct
-        constructor) from a subset of this one's classes, without re-scanning any package."""
+        """Return a copy of this registry's name-keyed `Tool` subclass map."""
         return dict(self._tool_classes)
 
     def _fully_described(self, tool: Tool) -> bool:

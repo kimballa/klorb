@@ -20,12 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReadScratchpadTool(Tool):
-    """Reads up to `max_lines` lines from the active session's scratchpad file (see
-    `klorb.tools.scratchpad.common.Scratchpad`), each prefixed with its 1-indexed line number —
-    delegating that mechanic to `self.read_file_core` (the same `klorb.tools.util.ReadFileCore`
-    `ReadFileTool` uses) -- but pinned to that one file, so there is no `filename` argument and
-    no `readDirs` permission check to perform: the scratchpad is harness-managed session state,
-    not a model-nameable path.
+    """Reads up to `max_lines` lines from the active session's scratchpad file, each prefixed
+    with its 1-indexed line number, pinned to that one file so there is no `filename` argument
+    and no `readDirs` permission check to perform.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -87,10 +84,7 @@ class ReadScratchpadTool(Tool):
         )
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["content"]` capped to 8
-        lines — a full-length `ReadScratchpad` result can be up to `self.read_file_core.max_lines`
-        (200 by default) lines, far more than is useful to show inline.
-        """
+        """Renders pretty JSON with `result["content"]` capped to 8 lines."""
         if error is not None or not isinstance(result, dict) or "content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)
@@ -109,7 +103,6 @@ class ReadScratchpadTool(Tool):
             open_full=lambda: self._open_full_view(result.get("start_line", 1)))
 
     def _open_full_view(self, scroll_to_line: int) -> FullFileView:
-        """Passively re-read the scratchpad in full for the click-to-expand overlay -- no
-        permission check to redo, since the scratchpad has none in the first place."""
+        """Passively re-read the scratchpad in full for the click-to-expand overlay."""
         path = scratchpad_path(self.context)
         return read_full_file_lines(lambda: self.read_file_core.open_resource(path), scroll_to_line)

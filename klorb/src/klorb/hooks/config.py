@@ -23,15 +23,12 @@ EVENT_NAMES: frozenset[str] = frozenset({"FileSystemModified", "Timer", "Workspa
 RESET_SESSION_CAPABLE_HOOKS: frozenset[str] = frozenset({
     "onAgentTurnEnd", "FileSystemModified", "Timer", "WorkspaceTrustChanged",
 })
-"""Every hook/event name whose `HookOutput.reset_session` `HookDispatcher` honors -- dropped
-from every other name's aggregate result, the same way `tool_result` is ignored outside
-`onToolResult`."""
+"""Every hook/event name whose `HookOutput.reset_session` `HookDispatcher` honors."""
 
 MIN_EVENT_DEBOUNCE_SECONDS: float = 10.0
 """The default debounce window `FileSystemModified`'s watcher waits after the most recent
 change before delivering a batch, and the floor `Timer`'s own interval/cron scheduling may not
-go tighter than -- shared so both events settle on the same "not more than once every 10
-seconds" cadence."""
+go tighter."""
 
 HookHandlerType = Literal["bash", "classifier", "chat"]
 
@@ -63,9 +60,7 @@ documented."""
 class HookConfigFilter(BaseModel):
     """One filter clause gating whether a `HookConfig`/event `action` is eligible to run.
     Each present field must hold for the filter to pass; `any`/`all` recurse into nested
-    filters and combine them with OR/AND, `not_` negates a nested filter. See
-    `klorb.hooks.filters.evaluate_filter` for the pure function that interprets an instance of
-    this model against a subject string.
+    filters and combine them with OR/AND, `not_` negates a nested filter.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -105,7 +100,7 @@ class HookConfig(BaseModel):
 
 
 class EventConfig(BaseModel):
-    """Base shape shared by every event-specific config below: the `action` (a `HookConfig`)
+    """Base shape for every event-specific config below: the `action` (a `HookConfig`)
     run when the event fires."""
 
     action: HookConfig
@@ -128,8 +123,7 @@ class TimerEventConfig(EventConfig):
 
 class WorkspaceTrustChangedEventConfig(EventConfig):
     """One `events.WorkspaceTrustChanged` entry: runs `action` whenever a workspace's trust
-    decision changes against an already-live root session. Has no selector field of its own —
-    every entry in the list runs whenever the event fires."""
+    decision changes against an already-live root session. Has no selector field of its own."""
 
 
 EVENT_CONFIG_MODELS: dict[str, type[EventConfig]] = {

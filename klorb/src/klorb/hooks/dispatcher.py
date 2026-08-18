@@ -31,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _handler_args(handler: HookConfig) -> dict[str, Any]:
     """The `HookInput.args` payload for `handler`: its own `shell`, `command`, or `prompt`,
-    whichever it declares -- `{}` if it declares none (a malformed config Phase 1's config-load
-    validation should already have warned about)."""
+    whichever it declares."""
     if handler.shell is not None:
         return {"shell": handler.shell}
     if handler.command is not None:
@@ -43,10 +42,9 @@ def _handler_args(handler: HookConfig) -> dict[str, Any]:
 
 
 def _fold_permission(accumulated: Verdict | None, latest: Verdict | None) -> Verdict | None:
-    """Reduce two handlers' `permission` verdicts the same allow/ask/deny way
-    `klorb.permissions.table.stricter_verdict` reduces any other verdict pair: a handler that
-    left `permission` unset (`None`) contributes no opinion and never moves the aggregate toward
-    `deny`; once two handlers *have* opined, the stricter of the two wins."""
+    """Reduce two handlers' `permission` verdicts: a handler that left `permission` unset
+    (`None`) contributes no opinion and never moves the aggregate toward `deny`; once two
+    handlers *have* opined, the stricter of the two wins."""
     if latest is None:
         return accumulated
     if accumulated is None:
@@ -57,10 +55,9 @@ def _fold_permission(accumulated: Verdict | None, latest: Verdict | None) -> Ver
 def _fold(accumulated: HookOutput, latest: HookOutput) -> HookOutput:
     """Layer `latest` (one handler's result) onto `accumulated` (the chain so far): a field
     `latest` explicitly set wins, one it left at its default carries `accumulated`'s value
-    forward -- `log` folds the same way as `message`. `success` is the strictest outcome seen so
-    far (`False` once any valid handler says `False`); `permission` is the strictest allow/ask/
-    deny verdict any handler that opined expressed (see `_fold_permission`); `interrupt`/
-    `reset_session` are `True` once any valid handler asks for them."""
+    forward. `success` is the strictest outcome seen so far (`False` once any valid handler says
+    `False`); `permission` is the strictest allow/ask/deny verdict any handler that opined
+    expressed; `interrupt`/`reset_session` are `True` once any valid handler asks for them."""
     return HookOutput(
         success=accumulated.success and latest.success,
         tool_args=latest.tool_args if latest.tool_args is not None else accumulated.tool_args,
@@ -76,8 +73,7 @@ class HookDispatcher:
     """Dispatches one hook firing against a `ProcessConfig`'s configured handler chain for that
     hook name: `bash` runs a sandboxed subprocess, `classifier` appeals to a small model for a
     structured judgment, `chat` contributes its own configured `prompt` text as `message`
-    verbatim -- the caller (a `Session` turn/tool hook point) decides what to do with an
-    aggregate `message`, e.g. starting a follow-up turn."""
+    verbatim."""
 
     def __init__(
         self, process_config: "ProcessConfig", *,
@@ -86,13 +82,10 @@ class HookDispatcher:
         self._process_config = process_config
         self._api_provider = api_provider
         """Used only by a `type="classifier"` handler's request. `None` when no live session
-        exists yet to supply one (`onProcessStart`, before `klorb.cli.main()` constructs its
-        `ApiProvider`) -- a classifier handler configured for such a hook simply contributes
-        nothing, logged at `warning`, per hooks' general error-handling contract."""
+        exists yet to supply one."""
         self._model_registry = model_registry
         """Used only by a `type="classifier"` handler to resolve a default model (`ProcessConfig.
-        session_classifier_model` unset) via the same `NANO_CLASSIFIER_CAPABILITY` lookup
-        `klorb.session_naming.default_naming_model` uses. `None` falls back to
+        session_classifier_model` unset). `None` falls back to
         `DEFAULT_SESSION_CLASSIFIER_MODEL` directly, skipping the capability lookup."""
 
     def dispatch(
@@ -102,14 +95,9 @@ class HookDispatcher:
         """Run every eligible handler configured for `hook_name`, in the order
         `klorb.process_config.load_process_config` already resolved, folding each valid
         `HookOutput` into the next handler's `HookInput` (its `message`/`tool_args`) and into
-        the aggregate result returned here. A handler is skipped -- contributing nothing --
-        when its `filter` doesn't match the subject `klorb.hooks.config.
-        HOOK_FILTER_SUBJECT_FIELDS` maps `hook_name` to (`hook_input.reason`/`message`/
-        `tool_name`), or it fails per its own handler function's "Error handling" contract;
-        this method itself never raises. `session_config` sandboxes a `bash` handler with a
-        live session's permission tables when one exists; otherwise falls back to
-        `ProcessConfig.session`, the template every fresh session is copied from (there is no
-        live session yet for `onProcessStart`/`onProcessEnd`).
+        the aggregate result returned here. A handler is skipped. `session_config` sandboxes a
+        `bash` handler with a live session's permission tables when one exists; otherwise falls
+        back to `ProcessConfig.session`, the template every fresh session is copied from.
         """
         handlers = self._process_config.hooks.get(hook_name, [])
         logger.debug("Dispatching hook %r (%d configured handler(s))", hook_name, len(handlers))
@@ -122,11 +110,9 @@ class HookDispatcher:
         self, event_name: str, entries: Sequence[EventConfig], event_input: EventInput, *,
         session_config: SessionConfig | None = None,
     ) -> HookOutput:
-        """Run each of `entries`' own `action` as one ordered chain, under the same
-        filter/fold/error-handling contract `dispatch()` applies to a hook's handler list.
-        `entries` is whatever subset of `ProcessConfig.events[event_name]` the caller has
-        already decided is eligible for this occurrence (e.g. a `FileSystemModified` watcher's
-        own watch-path match)."""
+        """Run each of `entries`' own `action` as one ordered chain. `entries` is whatever
+        subset of `ProcessConfig.events[event_name]` the caller has already decided is eligible
+        for this occurrence."""
         logger.debug("Dispatching event %r (%d configured handler(s))", event_name, len(entries))
         if not entries:
             return HookOutput()

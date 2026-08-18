@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Widget/DOM ids, label strings, and other constants shared by two or more `klorb.tui`
-modules. A constant used by exactly one module lives colocated in that module instead.
-"""
+"""Widget/DOM ids, label strings, and other constants shared by two or more `klorb.tui` modules."""
 
 from klorb.session import PermissionFramework
 
@@ -19,12 +17,7 @@ SUBAGENT_HISTORY_ID = "subagent-history"
 SUBAGENT_ATTENTION_STATUS_ID = "subagent-attention-status"
 
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
-"""The order Shift+Tab cycles `Session.config.permission_framework` through -- see
-`ReplApp.action_cycle_permission_framework`."""
+"""The order Shift+Tab cycles `Session.config.permission_framework` through."""
 
 NEW_SESSION_LABEL = "New session..."
-"""Text shown on the `SESSION_NAME_ID` status line before the first-turn session-naming
-classifier call (`klorb.session_naming`) has resolved for the active `Session` -- the initial
-`compose()` value, and what `clear_session()`/`load_recent_session()` reset the line back to
-whenever they replace the active `Session` with a fresh one (a restored session with an
-already-resolved title sets the line to its title instead -- see `_adopt_restored_session`)."""
+"""Text shown on the session-name status line before the session title is resolved."""

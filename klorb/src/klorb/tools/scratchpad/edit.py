@@ -16,12 +16,8 @@ logger = logging.getLogger(__name__)
 
 class EditScratchpadTool(Tool):
     """Replaces a block of the active session's scratchpad file's current content with
-    `new_text` — delegating that mechanic to `self.edit_file_core` (the same
-    `klorb.tools.util.EditFileCore` `EditFileTool` uses) -- but pinned to the scratchpad file,
-    so there is no `filename` argument and no `writeDirs` permission check to perform: the
-    scratchpad is harness-managed session state, not a model-nameable path. See your system
-    prompt's guidance on `EditFile`/`EditScratchpad` for the `old_text`/`old_text_start`/
-    `old_text_end` conventions and "Ambiguous match" handling.
+    `new_text`, pinned to the scratchpad file so there is no `filename` argument and no
+    `writeDirs` permission check to perform.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -39,8 +35,7 @@ class EditScratchpadTool(Tool):
 
     def is_read_only(self) -> bool:
         """`True` despite writing to disk: the scratchpad is harness-managed shared
-        collaboration state, not a user file or environment `is_read_only()` is meant to
-        protect.
+        collaboration state.
         """
         return True
 
@@ -74,8 +69,7 @@ class EditScratchpadTool(Tool):
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts come from `result`'s
-        `replaced_lines` and the call's `new_text` -- only available on success, since a failed
-        match never resolves a location to count lines removed from."""
+        `replaced_lines` and the call's `new_text`."""
         diff = ""
         new_text = args.get("new_text")
         if isinstance(result, dict) and isinstance(new_text, str):
@@ -87,10 +81,7 @@ class EditScratchpadTool(Tool):
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["post_edit_content"]` (the edited
-        region) capped to 8 lines — a full-scratchpad rewrite via one large `new_text` could
-        otherwise dump hundreds of lines here.
-        """
+        """Renders pretty JSON with `result["post_edit_content"]` capped to 8 lines."""
         if error is not None or not isinstance(result, dict) or "post_edit_content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)

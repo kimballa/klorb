@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""PromptInput: the multi-line prompt box widget used by ReplApp."""
+"""PromptInput: the multi-line prompt box widget."""
 
 import inspect
 from pathlib import Path
@@ -36,33 +36,30 @@ from klorb.workspace.input_history import append_history, load_history
 class PromptInput(TextArea):
     """A multi-line prompt box that soft-wraps long input and grows with it.
 
-    Enter submits the current text, mirroring the single-line `Input` widget this replaces.
-    Ctrl+Enter inserts a literal newline instead. Shift+Enter and Alt+Enter aren't usable for
-    this: Shift+Enter is indistinguishable from plain Enter on terminals without kitty
-    keyboard protocol support (confirmed by testing: both report as plain `"enter"`), and
-    Alt+Enter is claimed by Windows/many terminal emulators for toggling fullscreen before it
-    ever reaches the app. Ctrl+Enter itself commonly arrives as `"ctrl+j"` rather than
-    `"ctrl+enter"`, since terminals typically send the same linefeed control byte for both
-    Ctrl+Enter and Ctrl+J; both spellings are handled here.
+    Enter submits the current text. Ctrl+Enter inserts a literal newline instead. Shift+Enter
+    and Alt+Enter aren't usable for this: Shift+Enter is indistinguishable from plain Enter on
+    terminals without kitty keyboard protocol support (confirmed by testing: both report as plain
+    `"enter"`), and Alt+Enter is claimed by Windows/many terminal emulators for toggling
+    fullscreen before it ever reaches the app. Ctrl+Enter itself commonly arrives as `"ctrl+j"`
+    rather than `"ctrl+enter"`, since terminals typically send the same linefeed control byte for
+    both Ctrl+Enter and Ctrl+J; both spellings are handled here.
 
     Up-arrow at the start of the text and down-arrow at the end of the text walk a per-session
-    history of previously-submitted prompts (see `_recall_history`), loading the recalled entry
-    into the box for editing and resending; once that walk has started, further up/down presses
-    keep walking regardless of where the cursor lands. Walking up from an untouched draft stashes
-    that draft's text so walking back down past the most recent entry restores it rather than
-    clearing the box. Any text-mutating action (typing, deleting, pasting) detaches the box from
-    its current position in that history so the now-edited text is treated as a fresh draft
-    rather than a rooted recall; pure cursor movement (arrow keys, home/end, selection) does not
-    detach. Clearing the session (see `ReplApp.clear_session()`) resets the recall position
-    and the stashed draft while preserving the in-memory history entries.
+    history of previously-submitted prompts, loading the recalled entry into the box for editing
+    and resending; once that walk has started, further up/down presses keep walking regardless of
+    where the cursor lands. Walking up from an untouched draft stashes that draft's text so
+    walking back down past the most recent entry restores it rather than clearing the box. Any
+    text-mutating action (typing, deleting, pasting) detaches the box from its current position
+    in that history so the now-edited text is treated as a fresh draft rather than a rooted
+    recall; pure cursor movement (arrow keys, home/end, selection) does not detach. Clearing the
+    session resets the recall position and the stashed draft while preserving the in-memory
+    history entries.
 
-    Whenever the text starts with `>` (see `klorb.tui.widgets.palette`), up/down/enter instead drive the
-    inline `PromptPalette` popup mounted just above this widget rather than history recall or
-    submission: see `_on_key`'s palette branch and `_refresh_palette`.
+    Whenever the text starts with `>`, up/down/enter instead drive the inline `PromptPalette`
+    popup mounted just above this widget rather than history recall or submission.
 
-    Whenever the cursor sits inside an `@mention` with at least one matching workspace file (see
-    `klorb.tui.widgets.file_finder`), up/down/enter/tab/escape instead drive the inline
-    `FileFinderPanel` popup: see `_on_key`'s finder branch and `refresh_finder`. Checked before
+    Whenever the cursor sits inside an `@mention` with at least one matching workspace file,
+    up/down/enter/tab/escape instead drive the inline `FileFinderPanel` popup. Checked before
     palette mode, so a `@mention` inside a `>`-prefixed palette query still opens the finder.
     """
 
@@ -86,7 +83,7 @@ class PromptInput(TextArea):
         "tab",
     })
 
-    # Binding-driven text mutations (see `_NAVIGATION_KEYS`): each deletes, cuts, pastes, or
+    # Binding-driven text mutations: each deletes, cuts, pastes, or
     # undoes/redoes content. `_on_key` checks membership to detach from history before
     # `TextArea`'s binding dispatches the matching `action_*`.
     _MUTATION_BINDING_KEYS = frozenset({
@@ -112,8 +109,7 @@ class PromptInput(TextArea):
     def on_mount(self) -> None:
         """Initialize the per-instance input-history state.
 
-        Done here rather than in `__init__` (which would need to redeclare `TextArea`'s many
-        keyword parameters just to forward them) so the widget keeps `TextArea`'s own
+        Done here rather than in `__init__` so the widget keeps `TextArea`'s own
         constructor signature untouched. `TextArea` defines `_on_mount`, not `on_mount`, so
         this handler is purely additive and doesn't shadow one of its own.
         """
@@ -128,28 +124,25 @@ class PromptInput(TextArea):
         """The `@mention` (if any) the cursor currently sits inside of, recomputed on every
         text/selection change by `refresh_finder`."""
         self._finder_matches: list[FinderMatch] = []
-        """Workspace files and directories currently matching `_finder_mention`'s query -- empty
-        whenever there's no active mention, or its start position is `_finder_dismissed_at`."""
+        """Workspace files and directories currently matching `_finder_mention`'s query."""
         self._finder_dismissed_at: tuple[int, int] | None = None
         """The `(row, start_column)` of the `@mention` Escape last dismissed the finder popup
-        for -- while `refresh_finder` keeps seeing that same position, the popup stays closed
-        even though matches would otherwise reopen it."""
+        for."""
         self._skill_query: SkillQuery | None = None
         """The `/skill` query (if any) the cursor currently sits inside of, recomputed on every
         text/selection change by `refresh_skill_finder`."""
         self._skill_matches: list[SkillMatch] = []
-        """Skills currently matching `_skill_query`'s query -- empty whenever there's no active
-        skill query, or its start position is `_skill_dismissed_at`."""
+        """Skills currently matching `_skill_query`'s query."""
         self._skill_dismissed_at: tuple[int, int] | None = None
         """The `(row, start_column)` of the `/skill` query Escape last dismissed the skill
         finder popup for."""
         # Reverse-incremental-search state (Ctrl+R). When `_isearch_active` is True, typed
         # printable characters extend `_isearch_query` and each extension re-runs a
         # newest-first, case-insensitive substring search of `self._history`, loading the
-        # match into the box (see `_isearch_step`/`_exit_isearch`). Enter/Escape or any
+        # match into the box. Enter/Escape or any
         # non-printable navigation exits the search, leaving the current match in the box
         # (Enter leaves it as a draft to edit/resend; Escape would restore the pre-search
-        # draft, but for simplicity both just commit the match — see `_on_key`).
+        # draft, but for simplicity both just commit the match).
         self._isearch_active: bool = False
         self._isearch_query: str = ""
         self._isearch_match_index: int | None = None
@@ -158,11 +151,10 @@ class PromptInput(TextArea):
         """Point this widget at the on-disk `history` file for the current project and seed
         `self._history` from it so up/down-arrow recall reaches prompts submitted in earlier
         klorb sessions in the same folder. `path is None` disables file-backed persistence
-        entirely (in-memory recall only, nothing written), which is what a `ReplApp`
+        entirely, which is what a `ReplApp`
         without a resolved workspace wants so tests never touch a real `$KLORB_DATA_DIR`.
 
-        Seeding happens here, exactly once at startup (from
-        `ReplApp._resolve_workspace_trust`'s wake), rather than in `on_mount` because the
+        Seeding happens here, exactly once at startup, rather than in `on_mount` because the
         workspace isn't resolved yet at `on_mount` time. `clear_session` does not re-seed
         because `clear_input_history` preserves the in-memory history; the entries loaded
         here remain available through a session clear.
@@ -176,12 +168,11 @@ class PromptInput(TextArea):
         """Reset the recall position and navigation state while preserving the in-memory
         prompt history.
 
-        Called by `ReplApp.clear_session()` so the recall position, stashed draft, and
+        The recall position, stashed draft, and
         palette/isearch state are reset for a fresh session, while the history entries
         loaded from the on-disk `history` file at startup remain available via up/down-arrow.
         The on-disk `history` file itself is never touched here: it's an append-only shared
-        log that multiple klorb instances may be writing to concurrently (see
-        `klorb.workspace.input_history`).
+        log that multiple klorb instances may be writing to concurrently.
         """
         self._history_index = None
         self._draft = ""
@@ -202,12 +193,8 @@ class PromptInput(TextArea):
     def _palette_mode(self) -> bool:
         """Whether up/down/enter/escape should drive the `PromptPalette` popup rather than
         history recall or submission: the text starts with `>` and hasn't been dismissed out
-        of palette mode for this draft (see `_dismiss_palette`), and the text didn't just get
-        there via history recall (`_suppress_palette_during_recall`) — a recalled entry that
-        happens to start with `>` (recording an earlier palette selection, see
-        `_execute_palette_hit`) is browsed as plain recalled text, not treated as a fresh
-        palette query, until the user actually edits it (`_detach_from_history` clears the
-        suppression).
+        of palette mode for this draft, and the text didn't just get there via history recall
+        (`_suppress_palette_during_recall`).
         """
         return (
             self.text.startswith(PALETTE_PREFIX)
@@ -225,8 +212,7 @@ class PromptInput(TextArea):
         than palette mode, history recall, or submission: the cursor sits inside an `@mention`
         (`_finder_mention`, kept current by `refresh_finder`) that currently has at least one
         matching workspace file. A mention with no matches (including one `_dismiss_finder` has
-        just hidden) doesn't claim these keys, mirroring the VS Code plugin's own file finder --
-        Enter falls through to a plain submit and Escape to whatever it would otherwise do.
+        just hidden) doesn't claim these keys.
         """
         return self._finder_mention is not None and bool(self._finder_matches)
 
@@ -235,20 +221,17 @@ class PromptInput(TextArea):
         return self.screen.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
 
     def _current_mention(self) -> MentionQuery | None:
-        """The `@mention` (if any) the cursor currently sits inside of, on its own line -- see
-        `klorb.tui.widgets.file_finder.detect_mention_query`."""
+        """The `@mention` (if any) the cursor currently sits inside of, on its own line."""
         row, column = self.cursor_location
         return detect_mention_query(self.document[row], column)
 
     def refresh_finder(self) -> None:
         """Recompute the active `@mention` at the cursor and update the finder popup to match.
-        Called (via `call_later`) on every text change and cursor/selection movement, mirroring
-        `_refresh_palette`'s own scheduling.
+        Called (via `call_later`) on every text change and cursor/selection movement.
 
         A mention whose start position is `_finder_dismissed_at` (the user just pressed Escape
         on it) stays closed even if its query would otherwise match, until the cursor moves to a
-        different mention -- `_dismiss_finder` sets that position and this clears it as soon as
-        the current mention's start no longer equals it.
+        different mention.
         """
         mention = self._current_mention()
         self._finder_mention = mention
@@ -272,7 +255,7 @@ class PromptInput(TextArea):
 
     def _workspace_files(self) -> list[str]:
         """The active `ReplApp`'s current `@`-mention file list, or `[]` if this widget isn't
-        mounted under one (e.g. a standalone unit test) or no file index has been started."""
+        mounted under one or no file index has been started."""
         from klorb.tui.app import ReplApp  # breaks a circular import: ReplApp composes PromptInput
 
         if not isinstance(self.app, ReplApp):
@@ -291,8 +274,7 @@ class PromptInput(TextArea):
         return self.screen.query_one(f"#{SKILL_FINDER_ID}", SkillFinderPanel)
 
     def _current_skill_query(self) -> SkillQuery | None:
-        """The `/skill` query (if any) the cursor currently sits inside of, on its own line --
-        see `klorb.tui.widgets.skill_finder.detect_skill_query`."""
+        """The `/skill` query (if any) the cursor currently sits inside of, on its own line."""
         row, column = self.cursor_location
         return detect_skill_query(self.document[row], column)
 
@@ -339,7 +321,7 @@ class PromptInput(TextArea):
     def select_skill_match(self) -> None:
         """Apply the skill finder's currently-highlighted match: replace the `/query` span
         with `/<skill_name> ` and close the popup. A no-op if there's no active query or no
-        highlighted row. Public -- called by `_on_key` and `SkillFinderPanel._select_match`."""
+        highlighted row."""
         query = self._skill_query
         widget = self._skill_finder_widget()
         match = widget.current_match
@@ -372,10 +354,7 @@ class PromptInput(TextArea):
         `klorb.tui.widgets.file_finder.escape_mention_path`) and closes the popup; a directory
         match instead narrows the query to that directory (with a trailing `/`) and leaves the
         popup open so the user can keep drilling in, since a directory isn't a valid mention
-        target on its own. A no-op if there's no active mention or no highlighted row. Public --
-        called both by `_on_key`'s Enter/Tab handling and, via `FileFinderPanel.
-        on_option_list_option_selected`, by a mouse click on a row (which first updates
-        `current_match`'s underlying `highlighted` index itself, per `OptionList._on_click`)."""
+        target on its own. A no-op if there's no active mention or no highlighted row."""
         mention = self._finder_mention
         match = self._finder_widget().current_match
         if mention is None or match is None:
@@ -396,8 +375,7 @@ class PromptInput(TextArea):
     def action_copy(self) -> None:
         """Copy this box's own text selection to the clipboard, same as the base `TextArea.
         action_copy`, but also records the press for `ReplApp.action_interrupt`'s Ctrl+C streak
-        bookkeeping (`ReplApp._note_ctrl_c_copy`) — see that method's docstring for why the
-        bookkeeping has to happen here rather than in `action_interrupt` itself. Raises
+        bookkeeping (`ReplApp._note_ctrl_c_copy`). Raises
         `SkipAction`, exactly like the base implementation, when nothing is selected, so the
         binding chain falls through past this widget unchanged.
         """
@@ -415,16 +393,13 @@ class PromptInput(TextArea):
         up/down at the text boundaries; detach from history on any text mutation; defer
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
-        popup instead of any of the above (see `_refresh_palette` for how a keystroke enters
-        or leaves palette mode). `_file_finder_mode` is checked first, so up/down/enter/tab/
+        popup instead of any of the above. `_file_finder_mode` is checked first, so up/down/enter/tab/
         escape drive the `FileFinderPanel` popup instead whenever the cursor sits inside a
-        matching `@mention` (see `refresh_finder`) -- including one inside a `>`-prefixed
-        palette query.
+        matching `@mention`.
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
-        to read: a mutation-binding key like backspace or delete (see
-        `_MUTATION_BINDING_KEYS`) is applied via a `TextArea` action (e.g.
-        `action_delete_left`) that Textual dispatches once this whole event — bubbling past
+        to read: a mutation-binding key like backspace or delete is applied via a `TextArea`
+        action that Textual dispatches once this whole event — bubbling past
         `_on_key` up to the `App`'s own binding check — has finished, which in practice lands
         even later than a `call_after_refresh`/`call_later` callback scheduled from here would
         run. So `_on_key` can't reliably read the *post*-edit `self.text` for those keys no
@@ -578,9 +553,8 @@ class PromptInput(TextArea):
         """Detach from history before a paste inserts text, since pasting mutates the box.
 
         Deliberately does *not* call `super()._on_paste(event)`. Textual dispatches an event to
-        every `_on_paste` it finds walking the widget's MRO (see `MessagePump._on_message` ->
-        `_get_dispatch_methods`), so `TextArea._on_paste` -- which does the actual insertion --
-        already runs on its own, right after this override, unless a handler calls
+        every `_on_paste` it finds walking the widget's MRO, so `TextArea._on_paste` -- which does the actual
+        insertion -- already runs on its own, right after this override, unless a handler calls
         `event.prevent_default()` to stop the walk. `TextArea._on_paste` never does, so calling
         `super()._on_paste(event)` here would insert the pasted text a second time (the classic
         Ctrl+V-pastes-twice bug). The MRO ordering (subclass first) still guarantees this
@@ -591,14 +565,11 @@ class PromptInput(TextArea):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Refresh palette state whenever the text actually changes, regardless of what
-        changed it — typing, a `_MUTATION_BINDING_KEYS` action (backspace, delete, cut,
-        undo/redo, ...), paste, or `_recall_history`'s own `self.text = ...` assignment.
-        `TextArea` posts this exactly when a mutation actually lands, which sidesteps the
-        ordering problem `_on_key` has for anything applied via a bound action (see its
-        docstring): rather than guessing when that action has run, just react to the signal
-        that says it just did. A recalled entry is the one case that must *not* trigger a
-        palette refresh despite changing the text (see `_suppress_palette_during_recall`), so
-        it's checked first and skipped entirely.
+        changed it. `TextArea` posts this exactly when a mutation actually lands, which sidesteps the
+        ordering problem `_on_key` has for anything applied via a bound action: rather than
+        guessing when that action has run, just react to the signal that says it just did.
+        A recalled entry is the one case that must *not* trigger a palette refresh despite
+        changing the text, so it's checked first and skipped entirely.
         """
         if self._suppress_palette_during_recall:
             return
@@ -620,8 +591,8 @@ class PromptInput(TextArea):
     async def _refresh_palette(self, key: str | None) -> None:
         """Recompute palette mode from the current text and update the popup to match.
 
-        Text that no longer starts with `>` (typically an empty box, e.g. right after a
-        submission) always resets `_palette_dismissed` and hides the popup, so a fresh `>`
+        Text that no longer starts with `>` always resets `_palette_dismissed` and hides the
+        popup, so a fresh `>`
         later starts palette mode again. Otherwise, unless already dismissed for this draft,
         this queries every registered command provider (`gather_palette_hits`) for the text
         after the leading `>` and shows the popup if anything matched. If nothing matched and
@@ -656,11 +627,9 @@ class PromptInput(TextArea):
 
     def _execute_palette_hit(self, hit: Hit | DiscoveryHit) -> None:
         """Clear the box and hide the popup, then run the currently-highlighted palette
-        command once this key event has finished being handled (`call_later`, mirroring
-        Textual's own `CommandPalette._select_or_command`, since a command that itself
-        pushes a modal shouldn't do so mid-keystroke). `_run_palette_command` records the
-        selection into the input history only after `hit.command` has actually run — see its
-        docstring for why that order matters.
+        command once this key event has finished being handled (`call_later`, since a command
+        that itself pushes a modal shouldn't do so mid-keystroke). `_run_palette_command`
+        records the selection into the input history only after `hit.command` has actually run.
         """
         canonical_text = hit.text
         assert canonical_text is not None
@@ -677,8 +646,7 @@ class PromptInput(TextArea):
 
         Recording only happens *after* `command` has run — not before, and not
         unconditionally — because a command can itself mutate the input history: selecting
-        `>Clear session` must still leave `>Clear session` recallable afterward (per
-        `docs/specs/command-palette-from-prompt.md`'s worked example), but `clear_session()`
+        `>Clear session` must still leave `>Clear session` recallable afterward, but `clear_session()`
         resets the history via `PromptInput.clear_input_history()` as part of starting a
         fresh session. Appending here, after that reset has already happened, is what makes
         the entry survive as the new history's first (and, until something else is
@@ -696,7 +664,7 @@ class PromptInput(TextArea):
         """Mark the current text as no longer rooted at a position in the input history, so a
         subsequent up/down at the boundaries resumes recall from the most recent entry rather
         than continuing from a now-stale index. Also lifts a recalled entry's suppression of
-        palette mode (see `_palette_mode`), since editing it turns it into a fresh draft that
+        palette mode, since editing it turns it into a fresh draft that
         a leading `>` should once again be read as a live palette query.
         """
         self._history_index = None
@@ -704,17 +672,15 @@ class PromptInput(TextArea):
         self._exit_isearch()
 
     def _persist_history_entry(self, entry: str) -> None:
-        """Append `entry` to the on-disk `history` file when one has been attached (see
-        `set_history_store`); a no-op otherwise (in-memory-only recall). The file is opened
-        in append mode and never rewritten, so concurrent klorb instances in the same folder
-        each just append their own most-recent message (see `klorb.workspace.input_history`)."""
+        """Append `entry` to the on-disk `history` file when one has been attached; a no-op
+        otherwise. The file is opened in append mode and never rewritten, so concurrent klorb
+        instances in the same folder each just append their own most-recent message."""
         if self._history_path is not None:
             append_history(self._history_path, entry)
 
     def _enter_isearch(self) -> None:
         """Begin a Ctrl+R reverse-incremental-search: stash the current draft (so a later
-        Escape can restore it), reset the query, and search the history for the empty query —
-        which matches the most recent entry, loading it into the box the way readline does."""
+        Escape can restore it), reset the query, and search the history for the empty query."""
         self._isearch_active = True
         self._isearch_query = ""
         self._isearch_match_index = None
@@ -726,8 +692,7 @@ class PromptInput(TextArea):
         """Run one newest-first, case-insensitive substring search of `self._history` for
         `_isearch_query`, beginning just *before* `start_index` (so repeated presses of Ctrl+R
         without changing the query advance to the next-older match), and load the match — if
-        any — into the box. No match leaves the box showing the (partial) query, matching
-        readline's "failing-i-search" behavior of keeping the typed search text visible."""
+        any — into the box. No match leaves the box showing the (partial) query."""
         if not self._history:
             self._isearch_match_index = None
             self.text = self._isearch_query
@@ -753,8 +718,7 @@ class PromptInput(TextArea):
         """Leave reverse-i-search mode, keeping whatever match (or typed query) is currently
         in the box as an ordinary editable draft. Does not restore the pre-search draft: in
         readline, Enter accepts the match while Escape cancels back to the draft, but klorb
-        commits the match in both cases for simplicity — the draft is preserved on the box
-        itself only when the search found nothing (the query text remains)."""
+        commits the match in both cases for simplicity."""
         if not self._isearch_active:
             return
         self._isearch_active = False
@@ -765,10 +729,8 @@ class PromptInput(TextArea):
     def _record_and_submit(self) -> None:
         """Record the current (non-empty) text into the input history and post `Submitted`.
 
-        Mirrors `ReplApp.on_prompt_input_submitted`'s own empty-prompt guard so an empty or
-        whitespace-only submit isn't recorded (and, by not clearing the box here, is left in
-        place for the user to keep typing into). The recall position is reset to a fresh draft
-        so the next up-arrow walks back from the just-appended entry.
+        The recall position is reset to a fresh draft so the next up-arrow walks back from the
+        just-appended entry.
         """
         value = self.text
         if not value.strip():
@@ -787,10 +749,9 @@ class PromptInput(TextArea):
         draft (`_history_index is None`) stashes the draft's current text in `_draft` and jumps
         to the most recent entry, then to older ones; down-arrow from the most recent entry
         restores that stashed draft rather than clearing to empty. Recalling loads the entry's
-        text verbatim and lands the cursor at its end so the user can append to it, matching the
-        common readline behavior of editing a recalled line from its tail. Loading a recalled
+        text verbatim and lands the cursor at its end so the user can append to it. Loading a recalled
         entry also sets `_suppress_palette_during_recall` so a recalled entry starting with `>`
-        (e.g. a previously-executed palette selection) is browsed as plain text rather than
+        is browsed as plain text rather than
         resurfacing the `PromptPalette` popup; restoring the stashed draft clears it again,
         since that's the user's own in-progress text rather than a recalled entry.
         """

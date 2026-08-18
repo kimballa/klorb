@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.intersection: the standalone tool/skill/subagent-role narrowing
 logic `CreateSubagent` uses to compute a subagent's effective capability sets from its
-parent's. See docs/specs/subagents.md's "Security model" section.
+parent's.
 """
 
 from klorb.agents.definition import AgentRestrictions

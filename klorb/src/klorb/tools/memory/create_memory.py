@@ -22,24 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 class CreateMemoryTool(Tool):
-    """Creates a new memory file with the given content. Raises `FileExistsError` if a memory
-    with that `namespace`/`filename` already exists — use `EditMemory` to modify one instead.
-    Delegates the file-creation mechanic to `self.create_file_core` (a
-    `klorb.tools.util.CreateFileCore`), the same one `CreateFileTool` uses; missing parent
-    directories (including the namespace directory itself, on its very first write) are
-    created automatically.
+    """Creates a new memory file with the given content.
 
-    A memory's first line is its topic (see docs/specs/memories.md's file-format rule) and must
-    never be blank, so `content` is validated up front, before any disk I/O -- there is no way
-    to create a memory with no topic and fill it in later via `EditMemory`.
+    Raises `FileExistsError` if a memory with that `namespace`/`filename` already exists.
+    Missing parent directories are created automatically. A memory's first line is its topic
+    and must never be blank. A `workspace`-namespace create is gated by
+    `tools.memory.writePermission`; a `global`-namespace create is always allowed.
 
-    `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
-    I/O; a `workspace`-namespace create is additionally gated by `tools.memory.writePermission`
-    -- a `global`-namespace create is always allowed.
-
-    Creating `MEMORY.md` at 45+ lines attaches a `warning` to the result urging the model to
-    compact it down (see `klorb.tools.memory.common.memory_toc_overflow_warning`).
+    Creating `MEMORY.md` at 45+ lines attaches a `warning` to the result urging compaction.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:

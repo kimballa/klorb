@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that reads a range of lines from a memory file for a model."""
+"""Reads a range of lines from a memory file."""
 
 import logging
 from collections.abc import Sequence
@@ -26,16 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReadMemoryTool(Tool):
-    """Reads up to `max_lines` lines from a memory file, prefixed with 1-indexed line numbers —
-    delegating that mechanic to `self.read_file_core` (a `klorb.tools.util.ReadFileCore`), the
-    same one `ReadFileTool`/`ReadScratchpadTool` use.
+    """Reads up to `max_lines` lines from a memory file, prefixed with 1-indexed line numbers.
 
-    `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
-    I/O; a read is otherwise always allowed, in both namespaces, with no further permission check
-    -- there is no `readDirs` check at all either; see docs/specs/memories.md for why memory tools
-    bypass that table entirely, the same reasoning as
-    docs/adrs/00089-scratchpad-tools-bypass-permission-tables.md.
+    A read is always allowed in both namespaces with no further permission check.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -146,8 +139,7 @@ class ReadMemoryTool(Tool):
             open_full=lambda: self._open_full_view(namespace, filename, result.get("start_line", 1)))
 
     def _open_full_view(self, namespace: Namespace, filename: str, scroll_to_line: int) -> FullFileView:
-        """Passively re-read the memory in full for the click-to-expand overlay -- no permission
-        re-ask, since this only redisplays a memory the model already legitimately read once."""
+        """Re-read the memory in full for the click-to-expand overlay."""
         namespace_dir = memory_namespace_dir(self.context, namespace)
         path = validate_memory_filename(filename, namespace_dir)
         return read_full_file_lines(lambda: self.read_file_core.open_resource(path), scroll_to_line)

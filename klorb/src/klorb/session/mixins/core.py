@@ -43,40 +43,28 @@ from klorb.tools.skill.catalog import SkillCatalogRegistry
 
 if TYPE_CHECKING:
     # isort: off
-    # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
-    # depends on `SessionConfig` from `klorb.session.config` — importing it for real here
-    # would be circular. `Session` only stores and calls methods on a `ToolRegistry` it's
-    # handed, so a type-checking-only import is enough (see
-    # docs/adrs/00022-tool-setup-context-carries-process-and-session-config.md).
+    # `ToolRegistry` depends on `ProcessConfig`, which itself depends on `SessionConfig`
+    # from `klorb.session.config`.
     from klorb.tools.registry import ToolRegistry
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
-    # from `klorb.session`, so importing it for real here would be circular too. `Session`
-    # stores (and reads a couple of fields off) a `ProcessConfig` it's handed, but never
-    # constructs one itself, so a type-checking-only import is enough, same as `ToolRegistry`
-    # above.
+    # from `klorb.session`, so importing it for real here would be circular too.
     from klorb.process_config import ProcessConfig
     from klorb.tools.util.read_file_core import ReadFileCore
-    # `klorb.session` (this package's own `__init__.py`) assembles `Session` from this mixin,
-    # so importing it for real here would be circular; needed only to `cast` `self` to
-    # `Session` below, since `ToolRegistry.session` is typed against the assembled class, not
-    # any one mixin.
+    # `klorb.session` assembles `Session` from this mixin, so importing it for real here
+    # would be circular; needed only to `cast` `self` to `Session` below.
     from klorb.session import Session
-    # `klorb.agents.runtime` imports `klorb.session.mixins.turns` (for `wrap_system_interjection`)
-    # -- a real import here, while `klorb.session`'s own `__init__.py` is still assembling this
-    # very mixin, would be circular. See `_create_subagent_tracker`/`close`'s own deferred
-    # imports, which is where this type is actually used for real.
+    # `klorb.agents.runtime` imports `klorb.session.mixins.turns`, which itself is part of
+    # assembling `Session`.
     from klorb.agents.runtime import SubagentTracker
-    # `klorb.tools.tasks.common` reaches back into `klorb.session` (via `ToolSetupContext`), so
-    # importing it for real here would be circular; needed only to type `ensure_chainlink_client`'s
-    # return value, which is constructed via a deferred import where it's actually used.
+    # `klorb.tools.tasks.common` reaches back into `klorb.session`, so importing it for real
+    # here would be circular; needed only to type `ensure_chainlink_client`'s return value.
     from klorb.tools.tasks.common import ChainlinkClient
-    # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
-    # actually used) depends on `klorb.session.config`, so a real import here would be circular;
-    # needed only to type `_dispatch_hook`'s return value.
+    # `klorb.hooks.dispatcher` depends on `klorb.session.config`, so a real import here
+    # would be circular; needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.config import EventConfig, FileSystemModifiedEventConfig, TimerEventConfig
     from klorb.hooks.hook_api import EventInput, HookOutput
     # `klorb.search_index.indexer` imports `klorb.tools.util.gitignore`, and `klorb.session`
-    # doesn't otherwise import anything from `klorb.tools.util`
+    # doesn't otherwise import anything from `klorb.tools.util`.
     from klorb.search_index.indexer import WorkspaceIndexer
     # isort: on
 
@@ -89,9 +77,8 @@ _INFRASTRUCTURE_TEARDOWN_SUBJECTS = frozenset({
     _FILE_SYSTEM_WATCHER_TEARDOWN_SUBJECT, _TIMER_SCHEDULER_TEARDOWN_SUBJECT,
     _WORKSPACE_INDEXER_TEARDOWN_SUBJECT})
 """Teardown subjects `_reset_state()` must never touch: workspace/process-level resources
-registered once at root-session start (`_start_workspace_event_watchers`) and torn down only by
-a real `close()`, never recreated mid-session -- unlike `Scratchpad`/`Bash`'s persistent shell,
-which `_reset_state()` does tear down and let their owners lazily recreate."""
+registered once at root-session start and torn down only by a real `close()`, never
+recreated mid-session."""
 
 _SESSION_NAMING_TEARDOWN_SUBJECT = "SessionNaming"
 """Teardown subject for `_start_session_naming`'s token-invalidation callback."""
@@ -99,8 +86,7 @@ _SESSION_NAMING_TEARDOWN_SUBJECT = "SessionNaming"
 
 class SessionCoreMixin(SessionBase):
     """`Session.__init__` plus the accessors, loaders, and lifecycle methods that don't belong
-    to prompt/skill setup, permission resolution, tool execution, or turn dispatch -- see the
-    other mixins in `klorb.session.mixins` for those."""
+    to prompt/skill setup, permission resolution, tool execution, or turn dispatch."""
 
     def __init__(
         self,

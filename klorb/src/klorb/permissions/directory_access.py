@@ -1,16 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Directory access control: Concrete `PermissionsTable` resource kind, governing
-which directories klorb's file tools may read from and write to. See
-docs/specs/permissions.md and docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md.
-
-This module deliberately has no dependency on `klorb.tools` or `klorb.session`: `SessionConfig`
-(in `klorb.session`) holds a `DirRules` field, so this module must not import `klorb.session` —
-doing so would create a cycle. The policy functions that combine path resolution with the
-tables defined here (`evaluate_write()`, `resolve_and_evaluate_read()`) live in
-`klorb.permissions.workspace` instead, which needs a `ToolSetupContext` type (defined in
-`klorb.tools.setup_context`, which itself depends on `klorb.session`) and so imports it under
-`TYPE_CHECKING` only, avoiding the same cycle.
-"""
+"""Directory access control: concrete `PermissionsTable` resource kind governing
+which directories klorb's file tools may read from and write to."""
 
 import atexit
 import logging
@@ -26,34 +16,29 @@ from klorb.permissions.table import PermissionsTable
 
 if TYPE_CHECKING:
     # SessionConfig pulls in this module (for DirRules), so the import stays TYPE_CHECKING-only
-    # to avoid a cycle -- create_tempdir_for_session() only ever touches session_config's
-    # attributes, never instantiates a SessionConfig itself.
+    # to avoid a cycle.
     from klorb.session import SessionConfig
 
 logger = logging.getLogger(__name__)
 
 KLORB_PROJECT_DIR_NAME = ".klorb"
 """Name of the directory (immediate child of a workspace root) that holds klorb's own
-per-project config and state. Shared with `klorb.process_config.project_config_path()`,
-which imports this constant rather than duplicating the literal."""
+per-project config and state."""
 
 CLAUDE_PROJECT_DIR_NAME = ".claude"
 """Workspace-root child directory whose `skills/` subtree is discovered as a second
-`workspace`-namespace skill source when `compatibility.claudeSkills` is enabled. Shared with
-`klorb.tools.skill.common`, which imports this constant rather than duplicating it."""
+`workspace`-namespace skill source when `compatibility.claudeSkills` is enabled."""
 
 SKILLS_DIRNAME = "skills"
-"""Directory name holding skill subdirectories within a tier's parent directory. Shared with
-`klorb.tools.skill.common`, which imports this constant rather than duplicating it."""
+"""Directory name holding skill subdirectories within a tier's parent directory."""
 
 
 class DirRules(BaseModel):
-    """One directory-access direction's (`readDirs` or `writeDirs`) `deny`/`ask`/`allow` rule
-    lists, as plain path data — see `PermissionsTable` for the evaluation logic that consumes
-    this. Treated as immutable after construction: nothing in this codebase mutates these lists
-    in place post-construction (unlike `SessionConfig.max_tool_calls_per_turn`), so
-    `SessionConfig.model_copy()`'s shallow copy sharing the underlying list objects across a
-    template and its cloned sessions is harmless.
+    """One directory-access direction's (`readDirs` or `writeDirs`) `deny`/`ask`/`allow`
+    rule lists, as plain path data. Treated as immutable after construction: nothing in
+    this codebase mutates these lists in place post-construction, so
+    `SessionConfig.model_copy()`'s shallow copy sharing the underlying list objects across
+    a template and its cloned sessions is harmless.
     """
 
     deny: list[Path] = Field(default_factory=list)
@@ -62,15 +47,7 @@ class DirRules(BaseModel):
 
 
 def concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
-    """Concatenate `addition`'s deny/ask/allow entries onto `base`'s own, per category —
-    never replacing what's already there. Used by `klorb.tui.mixins.workspace_bootstrap.
-    WorkspaceBootstrapMixin._apply_workspace_config` and its ACP-server counterpart,
-    `klorb.server.klorb_agent.KlorbAcpAgent._apply_workspace_config`, to fold a freshly
-    (re)loaded `Workspace`'s config-file grants into a live `SessionConfig` without discarding
-    any in-session-only grant ("Allow (this session)") already present; duplicate entries
-    across the two are harmless (see docs/specs/permissions.md — evaluation is by category
-    membership, not list position, so redundancy costs nothing but a few extra entries in the
-    list)."""
+    """Concatenate `addition`'s deny/ask/allow entries onto `base`'s own, per category."""
     return DirRules(
         deny=list(base.deny) + list(addition.deny),
         ask=list(base.ask) + list(addition.ask),
@@ -80,24 +57,17 @@ def concat_dir_rules(base: DirRules, addition: DirRules) -> DirRules:
 
 def canonicalize_dir(path: Path, workspace_root: Path) -> Path:
     """Resolve `path` to an absolute, symlink- and `..`-canonicalized form. This is the single
-    canonicalization primitive for every path-shaped value in the permissions system —
-    `DirectoryAccessTable` uses it for `readDirs`/`writeDirs` rule paths below, and
-    `klorb.permissions.workspace.canonicalize_candidate` calls it directly (rather than
-    duplicating the algorithm) so a model-supplied tool-call `filename` is canonicalized
-    identically to a config-file rule path.
+    canonicalization primitive for every path-shaped value in the permissions system.
 
     A leading `~`/`~user` component is expanded first (`Path.expanduser()`), so `"~/.ssh"`
-    means the invoking user's home directory regardless of `workspace_root` — this must happen
-    before the relative-path check below, since an unexpanded `~...` path is not absolute and
-    would otherwise be (wrongly) joined onto `workspace_root` as a literal `~` subdirectory.
+    means the invoking user's home directory regardless of `workspace_root`.
     After that, a still-relative `path` is joined onto `workspace_root` first, so a rule like
     `Allow("..")` means the same thing as `Allow("<workspace_root>/..")`, not whatever the
     process's current working directory happens to be. `workspace_root` itself is resolved
     first, so this is well-defined even if the caller passes it unresolved.
 
     Note (TOCTOU): the returned path is canonical as of this call, not guaranteed to still
-    point at the same target by the time a caller actually performs I/O on it — see
-    `klorb.permissions.workspace.canonicalize_candidate`'s docstring.
+    point at the same target by the time a caller actually performs I/O on it.
     """
     path = path.expanduser()
     if not path.is_absolute():
@@ -113,22 +83,18 @@ def privileged_dirs(
     `get_klorb_config_dir()`/`get_klorb_data_dir()`/`get_klorb_state_dir()` from `klorb.paths`
     (resolved at call time, so an env-var override picked up by `klorb.paths` is honored).
     When `claude_skills_compat` is true, `${workspace_root}/.claude/skills/` joins the workspace
-    `.klorb/` dir — writing skill content into a directory klorb auto-discovers and trusts (see
-    `klorb.tools.skill.common`) deserves the same protection as `.klorb/skills/`.
+    `.klorb/` dir.
 
     This is the single source of truth `klorb.permissions.workspace.evaluate_write` and
     `resolve_and_evaluate_read` both check against, unconditionally, ahead of the
-    `writeDirs`/`readDirs` tables — no `allow` entry in either table can re-enable access to
-    anything this list contains.
+    `writeDirs`/`readDirs` tables.
 
     `approved_scopes` is the set of session-only escalation scopes the user has granted this
-    session (see `SessionConfig.approved_scopes`, populated by the `EscalatePrivileges` tool).
-    A `"workspace"` scope in it omits `${workspace_root}/.klorb/` and (when `claude_skills_compat`)
+    session. A `"workspace"` scope in it omits `${workspace_root}/.klorb/` and (when `claude_skills_compat`)
     `${workspace_root}/.claude/skills/` from the returned list, lifting the privileged-path deny on
-    those directories for the rest of the session — the process-wide `KLORB_*_DIR` locations stay
-    privileged regardless, since `"workspace"` scope only ever covers the workspace's own
-    directories. A `"homedir"` scope in it omits `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and
-    `KLORB_STATE_DIR`, lifting the privileged-path deny on those directories for the rest of the
+    those directories for the rest of the session. A `"homedir"` scope in it omits
+    `KLORB_CONFIG_DIR`, `KLORB_DATA_DIR` and `KLORB_STATE_DIR`, lifting the
+    privileged-path deny on those directories for the rest of the
     session. `None` (or an empty set) preserves the pre-escalation behavior: every privileged dir
     is denied.
     """
@@ -150,49 +116,38 @@ def is_privileged_path(
     claude_skills_compat: bool = False,
 ) -> bool:
     """Return whether `path` (already canonicalized by the caller) is one of, or falls beneath,
-    any directory in `privileged_dirs(workspace_root, approved_scopes, claude_skills_compat=...)`
-    — the same equal-or-descendant containment semantics `DirectoryAccessTable._matches` uses for
-    ordinary rules. See `privileged_dirs` for how `approved_scopes` and `claude_skills_compat`
-    gate which directories are included."""
+    any directory in `privileged_dirs(workspace_root, approved_scopes, claude_skills_compat=...)`."""
     return any(
         path == d or path.is_relative_to(d)
         for d in privileged_dirs(workspace_root, approved_scopes, claude_skills_compat=claude_skills_compat))
 
 
 def workspace_klorb_dir(workspace_root: Path) -> Path:
-    """Return the canonicalized `${workspace_root}/.klorb/` path — the one privileged dir an
-    `EscalatePrivileges(scope="workspace")` grant can unlock. Used by
-    `klorb.permissions.workspace` to distinguish a workspace-`.klorb` deny (which should point the
-    agent at the `EscalatePrivileges` tool) from a process-wide `KLORB_*_DIR` deny (which it can't)."""
+    """Return the canonicalized `${workspace_root}/.klorb/` path."""
     return workspace_root.resolve(strict=False) / KLORB_PROJECT_DIR_NAME
 
 
 def is_under_workspace_klorb_dir(path: Path, workspace_root: Path) -> bool:
-    """Return whether `path` (already canonicalized) is the workspace `.klorb/` dir or beneath it
-    — the subset of `is_privileged_path` an `EscalatePrivileges` \"workspace\" scope grant lifts."""
+    """Return whether `path` (already canonicalized) is the workspace `.klorb/` dir or beneath it."""
     klorb = workspace_klorb_dir(workspace_root)
     return path == klorb or path.is_relative_to(klorb)
 
 
 def workspace_claude_skills_dir(workspace_root: Path) -> Path:
-    """Return the canonicalized `${workspace_root}/.claude/skills/` path — the
-    `compatibility.claudeSkills`-only privileged dir an `EscalatePrivileges(scope="workspace")`
-    grant also unlocks, alongside the workspace `.klorb/` dir itself."""
+    """Return the canonicalized `${workspace_root}/.claude/skills/` path."""
     return workspace_root.resolve(strict=False) / CLAUDE_PROJECT_DIR_NAME / SKILLS_DIRNAME
 
 
 def is_under_workspace_claude_skills_dir(path: Path, workspace_root: Path) -> bool:
     """Return whether `path` (already canonicalized) is the workspace `.claude/skills/` dir or
-    beneath it — the `claude_skills_compat` subset of `is_privileged_path` an
-    `EscalatePrivileges` \"workspace\" scope grant lifts."""
+    beneath it."""
     claude_skills = workspace_claude_skills_dir(workspace_root)
     return path == claude_skills or path.is_relative_to(claude_skills)
 
 
 def is_under_homedir_klorb_dir(path: Path) -> bool:
     """Return whether `path` (already canonicalized) is get_klorb_data_dir(), get_klorb_state_dir(),
-    or get_klorb_config_dir() (or beneath them) — the subset of `is_privileged_path` an
-    `EscalatePrivileges` \"homedir\" scope grant lifts."""
+    or get_klorb_config_dir() (or beneath them)."""
     return (
         path == get_klorb_data_dir().resolve(strict=False)
         or path.is_relative_to(get_klorb_data_dir().resolve(strict=False))
@@ -222,7 +177,7 @@ def find_workspace_root(cwd: Path) -> Path:
     """Search `cwd` and its ancestors for the nearest directory containing an immediate-child
     `.klorb` directory that is not itself a symlink, returning it as the workspace root. A
     disqualified candidate (a symlinked `.klorb`, or a `.klorb` that's a plain file rather than
-    a directory) does not stop the search — it keeps walking upward. Falls back to `cwd` itself
+    a directory) does not stop the search. Falls back to `cwd` itself
     (canonicalized) if no ancestor qualifies.
     """
     current = cwd.resolve(strict=False)
@@ -235,8 +190,7 @@ def find_workspace_root(cwd: Path) -> Path:
 
 _tempdirs_to_remove_on_exit: list[Path] = []
 """Directories `create_tempdir_for_session(..., remove_on_exit=True)` has registered for
-`atexit` cleanup -- module-global since the `atexit` handler itself is registered once, the
-first time any caller opts in, and needs a single shared list to sweep."""
+`atexit` cleanup."""
 
 
 def _remove_registered_tempdirs() -> None:
@@ -251,22 +205,15 @@ def create_tempdir_for_session(
     session_config: "SessionConfig", *, mode: Literal["r", "w"] = "r", remove_on_exit: bool = False,
 ) -> Path:
     """Create a fresh `tempfile.mkdtemp()` directory, grant `session_config` `readDirs` access
-    to it (a new `DirRules` with the directory's canonicalized path appended to `allow`,
-    replacing `session_config.read_dirs` rather than mutating its `allow` list in place -- see
-    `DirRules`'s immutable-after-construction contract), and return the canonicalized path.
-    General directory/permissions plumbing for "mint a scratch location for an agent session" —
-    e.g. `klorb.evals.run_evals`'s `--self-review` review session, which needs to read a copy of
-    the eval log.
+    to it, and return the canonicalized path.
+    General directory/permissions plumbing for "mint a scratch location for an agent session".
 
     `mode="w"` also grants `writeDirs` access to the same directory (a matching new `DirRules`
-    replacing `session_config.write_dirs`) — `"w"` implies read access too, since a directory a
-    session can write to but not read back is rarely useful. The default, `"r"`, grants read
+    replacing `session_config.write_dirs`). The default, `"r"`, grants read
     access only.
 
     `remove_on_exit`, when `True`, registers the directory for automatic `shutil.rmtree()`
-    cleanup at process exit (an `atexit` handler is registered once, the first time any caller
-    opts in) instead of leaving cleanup to the caller — the default, `False`, matches every
-    existing inline `DirRules(allow=[...])` grant site, which owns its own cleanup.
+    cleanup at process exit instead of leaving cleanup to the caller.
     """
     workspace_root = session_config.workspace.path
     directory = canonicalize_dir(Path(tempfile.mkdtemp()), workspace_root)

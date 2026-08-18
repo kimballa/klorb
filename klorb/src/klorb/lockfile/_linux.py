@@ -1,13 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`OfdLockfile`: the Linux/WSL `klorb.lockfile.Lockfile` implementation, using a non-blocking
-Open File Description lock (`F_OFD_SETLK`) rather than a classic PID-associated `fcntl` lock --
-an OFD lock is tied to the open file description (this process's file descriptor), not the
-process itself, so it behaves correctly even if this process later forks or the descriptor is
-duplicated. `F_OFD_SETLK`/`F_OFD_GETLK` (37/36) aren't exposed as named constants by Python's
-`fcntl` module (a Linux-specific extension not present in every libc's `<fcntl.h>` binding), so
-they're defined here as raw command numbers, matching the standard glibc/Linux kernel UAPI
-values. Imported lazily by `klorb.lockfile.create_lockfile` only on `sys.platform == "linux"`
-(which also covers WSL) -- never imported on a platform where these commands don't exist.
+"""`OfdLockfile`: the Linux/WSL `klorb.lockfile.Lockfile` implementation using a non-blocking
+Open File Description lock.
 """
 
 import logging
@@ -22,19 +15,16 @@ F_OFD_SETLK = 37
 F_RDLCK = 0
 F_WRLCK = 1
 F_UNLCK = 2
-"""`l_type` values for a `struct flock` -- not exposed by Python's `fcntl` module (unlike
-`F_GETLK`/`F_SETLK` themselves), so defined here as the standard Linux/glibc `<fcntl.h>`
-values."""
+"""`l_type` values for a `struct flock`."""
 
 _FLOCK_STRUCT_FORMAT = "hhqqi"
 """`struct flock` on 64-bit Linux: `short l_type, short l_whence, off_t l_start, off_t l_len,
-pid_t l_pid` -- `off_t` is 8 bytes on every 64-bit Linux target klorb runs on."""
+pid_t l_pid`."""
 
 
 class OfdLockfile:
     """Linux/WSL `Lockfile`: a non-blocking, whole-file exclusive OFD lock via
-    `fcntl.fcntl(fd, F_OFD_SETLK, ...)`. See `klorb.lockfile.Lockfile` for the interface
-    contract."""
+    `fcntl.fcntl(fd, F_OFD_SETLK, ...)`."""
 
     def __init__(self, path: Path) -> None:
         self._path = path

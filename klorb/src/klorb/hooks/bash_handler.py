@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """The `type=bash` hook handler: runs a `HookConfig`'s `shell`/`command` as a one-off
-subprocess, sandboxed the same way `BashTool` sandboxes an agent-issued command
-(`klorb.sandbox.build_bwrap_argv`) -- `HookInput` json on stdin, a `HookOutput` json parsed
-from stdout.
+subprocess.
 """
 
 import dataclasses
@@ -25,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 def _handler_label(handler: HookConfig) -> str:
     """A human-readable label for `handler` in a log message: its own `name` if set, else the
-    program name from `command`, else the whole `shell` string -- `name` is optional, so a
-    handler that omits it would otherwise log as `None`."""
+    program name from `command`, else the whole `shell` string."""
     if handler.name is not None:
         return handler.name
     if handler.command:
@@ -38,7 +35,7 @@ def _handler_label(handler: HookConfig) -> str:
 
 def _log_handler_stderr(handler: HookConfig, hook_input: HookInput, stderr: str) -> None:
     """Logs `stderr` verbatim at `warning` level, preceded by which hook/handler produced it.
-    No-op if `stderr` is empty -- a handler that wrote nothing to it logs nothing."""
+    No-op if `stderr` is empty."""
     if not stderr:
         return
     logger.warning(
@@ -48,9 +45,8 @@ def _log_handler_stderr(handler: HookConfig, hook_input: HookInput, stderr: str)
 def _build_env(session_config: SessionConfig, env_file: Path | None) -> dict[str, str]:
     """The environment a `bash` hook handler's subprocess runs with: `HOME`/`USER` shared from
     the klorb process's own environment, `WORKSPACE_ROOT` set to the resolved workspace root,
-    followed by `session_config.share_env`/`set_env`'s passthrough (same precedence as
-    `klorb.tools.bash.build_bash_env`), plus `KLORB_ENV_FILE_VAR` when `env_file` is known (no
-    live session yet, e.g. `onProcessStart`/`onProcessEnd`, leaves it unset)."""
+    followed by `session_config.share_env`/`set_env`'s passthrough, plus `KLORB_ENV_FILE_VAR`
+    when `env_file` is known."""
     env: dict[str, str] = {}
     for name in ("HOME", "USER"):
         if name in os.environ:
@@ -83,10 +79,10 @@ def run_bash_handler(
     session_config: SessionConfig, bash_command: str, timeout_seconds: float,
 ) -> HookOutput | None:
     """Run `handler` (a `type="bash"` `HookConfig`) as a sandboxed one-off subprocess: writes
-    `hook_input` to its stdin as json and parses its stdout as a `HookOutput`. Returns `None` --
-    logged at `warning` -- if `handler` has neither `shell` nor `command` set, a `command`
-    element's macro reference is malformed, the process times out, exits non-zero, or its
-    stdout isn't valid `HookOutput` json; never raises.
+    `hook_input` to its stdin as json and parses its stdout as a `HookOutput`. Returns `None`
+    if `handler` has neither `shell` nor `command` set, a `command` element's macro reference
+    is malformed, the process times out, exits non-zero, or its stdout isn't valid `HookOutput`
+    json; never raises.
     """
     workspace_root = session_config.workspace.path.resolve(strict=False)
     try:

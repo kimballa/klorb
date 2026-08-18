@@ -1,9 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`TimerScheduler`: the runtime counterpart to `klorb.hooks.config.TimerEventConfig` -- fires
-each configured entry's `action` on its own `interval_minutes`/`cron` schedule, best-effort only:
-a fire time that elapses while no klorb process for this workspace is running is simply missed,
-never queued or caught up on restart. Also home to `clamp_timer_intervals`, the config-load-time
-floor enforcement for `interval_minutes` (see `klorb.hooks.config.MIN_EVENT_DEBOUNCE_SECONDS`).
+"""`TimerScheduler`: the runtime counterpart to `klorb.hooks.config.TimerEventConfig`.
 """
 
 import logging
@@ -24,12 +20,9 @@ def clamp_timer_intervals(
     entries: list[TimerEventConfig], *, source_label: str, warnings: list[str],
 ) -> None:
     """Clamp each of `entries`' `interval_minutes` up to `MIN_EVENT_DEBOUNCE_SECONDS`, in
-    place, when it requests a tighter cadence -- collecting a message into `warnings` (see
-    `ProcessConfig.config_warnings`) for each one clamped rather than crashing config load. A
+    place, when it requests a tighter cadence. A
     `cron`-scheduled entry needs no such clamp: standard five-field cron grammar can't express
-    anything tighter than once a minute, already above the floor. Idempotent -- safe to call
-    again over an already-clamped entry, which is how `load_process_config` re-applies it across
-    every config layer without tracking which entries a given layer newly contributed.
+    anything tighter than once a minute, already above the floor. Idempotent.
     """
     floor_minutes = MIN_EVENT_DEBOUNCE_SECONDS / 60.0
     for entry in entries:
@@ -45,10 +38,10 @@ def clamp_timer_intervals(
 
 def compute_next_fire(entry: TimerEventConfig, after: datetime) -> datetime:
     """The next moment `entry`'s `action` should fire, strictly after `after`: `after +
-    interval_minutes` for an interval entry, or `cron`'s next scheduled moment (via `croniter`)
+    interval_minutes` for an interval entry, or `cron`'s next scheduled moment
     for a cron entry. A pure function, deliberately kept apart from `TimerScheduler`'s own
     background-thread bookkeeping, so cron/interval math is unit-testable without waiting on a
-    real clock. Raises `ValueError` for a malformed `cron` string (via `croniter`), or an entry
+    real clock. Raises `ValueError` for a malformed `cron` string, or an entry
     with neither `cron` nor `interval_minutes` set."""
     if entry.cron is not None:
         return croniter(entry.cron, after).get_next(datetime)
@@ -59,10 +52,8 @@ def compute_next_fire(entry: TimerEventConfig, after: datetime) -> datetime:
 
 class TimerScheduler:
     """Runs each of `entries`' own `action` on its own independent `interval_minutes`/`cron`
-    schedule, via one self-rescheduling `threading.Timer` per entry -- unlike
-    `klorb.hooks.fs_events.FileSystemWatcher`, entries here have no shared debounce window to
-    batch behind, so `dispatch` is called once per entry, each time it fires, as a single-entry
-    list. `start()`/`close()` are idempotent.
+    schedule, via one self-rescheduling `threading.Timer` per entry. `start()`/`close()` are
+    idempotent.
     """
 
     def __init__(
@@ -119,10 +110,7 @@ class TimerScheduler:
             self._dispatch(
                 [entry], EventInput(hook="Timer", workspace_root=str(self._workspace_root)))
         except Exception:
-            # `_schedule_next` below is what re-arms this entry's next fire -- an uncaught
-            # exception here (a hook handler failure, or `Session.deliver_event_message` raising
-            # `ChainedHookMessageUndeliverableError` when the session is idle) would otherwise
-            # skip it and silently stop this entry from ever firing again.
+            # `_schedule_next` below is what re-arms this entry's next fire.
             logger.error(
                 "Timer entry %r raised while dispatching; still rescheduling.",
                 entry.action.name, exc_info=True)

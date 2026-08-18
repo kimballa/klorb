@@ -38,32 +38,22 @@ from klorb.tui.widgets.tool_call_widgets import ToolCallLimitScreen
 INTERACTION_RECORD_LABEL = "<Approval>"
 
 _COMMAND_PREVIEW_WIDTH_PADDING = 4
-"""Horizontal space `PermissionAskPanel`'s own `padding: 1 2` (2 columns each side) consumes
-around its command preview — subtracted from the app's terminal width to estimate the preview's
-actual rendered width for `PermissionAskPanel`'s `preview_wrap_width` (see
-`InteractionsMixin._confirm_permission_ask` and
-`klorb.tui.panels.permission_ask_panel._command_preview`)."""
+"""Horizontal space `PermissionAskPanel`'s own `padding: 1 2` consumes around its command
+preview."""
 _MIN_COMMAND_PREVIEW_WRAP_WIDTH = 20
-"""Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable
-(if aggressively wrapped) preview rather than a degenerate near-zero width."""
+"""Floor for the wrap-width estimate above, so a very narrow terminal still gets a usable preview
+rather than a degenerate near-zero width."""
 
 _InteractionResult = TypeVar("_InteractionResult")
-"""The decision/answer type an interaction panel resolves its future with — see
-`InteractionsMixin._register_interaction_future`."""
+"""The decision/answer type an interaction panel resolves its future with."""
 
 
 class InteractionsMixin(ReplAppBase):
     """Permission-ask/ask-user-questions/escalate-privileges confirm flows, plus the
-    tool-call-limit confirmation and shared interaction-panel lifecycle helpers -- see
-    `ReplApp` for how this mixes into the concrete app class."""
+    tool-call-limit confirmation and shared interaction-panel lifecycle helpers."""
 
     async def _confirm_tool_call_limit(self, message: str) -> bool:
-        """Show `ToolCallLimitScreen` with `message` and wait for the user's yes/no answer.
-
-        Must be run on the app's own event loop, since it awaits the screen's dismissal —
-        `_on_tool_call_limit_reached` is what the worker thread actually calls, via
-        `call_from_thread`, to get here.
-        """
+        """Show `ToolCallLimitScreen` with `message` and wait for the user's yes/no answer."""
         return await self.push_screen_wait(ToolCallLimitScreen(message))
 
     def _on_tool_call_limit_reached(self, message: str) -> bool:
@@ -80,16 +70,9 @@ class InteractionsMixin(ReplAppBase):
         return confirmed
 
     def _enter_interaction_mode(self) -> Vertical:
-        """Disable and visually mute/collapse the prompt input while an interaction panel (a
-        permission ask or an ask-user-questions prompt) is active, returning the
-        `#interaction-panel` container for the caller to mount that panel's content into.
-
-        Collapsing to `height: 1` (via the `interaction-active` CSS class — see `ReplApp.CSS`)
-        shrinks any in-progress multi-line draft back down to its default single-row size
-        rather than leaving it competing with the panel for vertical space; the draft text
-        itself is untouched underneath, so `_exit_interaction_mode` restoring `height: auto`
-        brings it back exactly as the user left it.
-        """
+        """Disable and visually mute/collapse the prompt input while an interaction panel is
+        active, returning the `#interaction-panel` container for the caller to mount that
+        panel's content into."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.disabled = True
         prompt_input.add_class("interaction-active")
@@ -97,18 +80,7 @@ class InteractionsMixin(ReplAppBase):
 
     def _exit_interaction_mode(self) -> None:
         """Un-mute and un-collapse the prompt input once an interaction panel is dismissed and
-        re-enable it so the user can queue messages while the turn continues.
-
-        An interaction panel only ever appears part-way through a turn that is still running
-        (a permission ask, ask-user-questions, or escalate-privileges callback fired from
-        inside `Session.send_turn`). Re-enabling the input here is safe because queued
-        submissions no longer launch a second `_send_prompt` worker — they are queued via
-        `_queue_prompt` instead (see `on_prompt_input_submitted`), and `_turn_in_flight`
-        still prevents a second turn from starting. The removed panel's focus is reassigned
-        by Textual on its own; focus is moved explicitly onto the input here so the user can
-        immediately start typing -- unless a subagent is currently selected, in which case
-        `_update_prompt_input_disabled_state` leaves it disabled (see
-        `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin`)."""
+        re-enable it so the user can queue messages while the turn continues."""
         prompt_input = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
         prompt_input.remove_class("interaction-active")
         self._update_prompt_input_disabled_state()
@@ -117,21 +89,7 @@ class InteractionsMixin(ReplAppBase):
 
     def _record_interaction_history(self, header_text: str, body: str, decision_text: str) -> None:
         """Leave a permanent record of a just-finished permission ask or ask-user-questions
-        exchange in the history scroll: `header_text` (e.g. `"Permission requested: Run
-        command"` or the question's own `"Question 2 of 3 · Auth"` header), `body` (the
-        command/path/detail or question text the panel showed), and `decision_text` (the user's
-        rendered choice) — so scrolling back through the session shows not just that an
-        approval happened, but what was asked and what was decided. Constructed with
-        `markup=False`: `body` can be arbitrary command text or file paths, which must render
-        verbatim.
-
-        The record is floated *above* the `<Tool use>` block of the tool call that triggered
-        the ask (see `_running_tool_call_anchor`), rather than appended below its `Running…`
-        indicator: an ask is raised from inside a call's `apply()`, so the running-tool widget
-        is already mounted by the time we get here, and reading top-to-bottom the decision
-        belongs before the call it authorized, not after it. When no tool call is running (no
-        anchor), the record is simply appended at the end as usual.
-        """
+        exchange in the history scroll."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         was_pinned = self._history_pinned_to_bottom
         records = (
@@ -151,15 +109,7 @@ class InteractionsMixin(ReplAppBase):
         self, future: "asyncio.Future[_InteractionResult]", teardown_default: _InteractionResult,
     ) -> Callable[[_InteractionResult], None]:
         """Wire a just-created interaction panel's decision `future` for safe resolution, returning
-        the guarded `on_dismiss` callback the panel reports its result through.
-
-        The returned resolver is idempotent: a second dismiss (e.g. a stray keypress landing
-        between the panel resolving and `_confirm_*` unmounting it), or a teardown resolving the
-        future first, is a no-op rather than an `asyncio.InvalidStateError`. It also registers
-        `_release_pending_interaction` so a teardown/abort path can resolve this same future with
-        `teardown_default` (deny / cancelled), unblocking the worker thread parked in
-        `App.call_from_thread` awaiting the decision and freeing `_interaction_lock`. The caller
-        must clear `_release_pending_interaction` in its own `finally` once the await completes."""
+        the guarded `on_dismiss` callback the panel reports its result through."""
         def resolve(result: _InteractionResult) -> None:
             if not future.done():
                 future.set_result(result)
@@ -183,43 +133,16 @@ class InteractionsMixin(ReplAppBase):
 
     async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """Mount a `PermissionAskPanel` for `ask_ctx` into `#interaction-panel` and wait for the
-        user's choice.
-
-        Must be run on the app's own event loop, since it awaits the panel's dismissal —
-        `_on_permission_ask` is what the worker thread actually calls, via `call_from_thread`,
-        to get here. `ask_ctx.resource.grant_preview()` is recomputed here (rather than threaded
-        in from wherever `ask_ctx` was built) purely so the panel can show the directory/command
-        pattern a persistent grant would actually cover; it's pure and read-only, so calling it
-        again inside `PermissionResource.apply_grant()` afterwards (via `Session.
-        _retry_after_multi_permission_decisions`) is safe and cheap. A `CommandResource` ask is
-        the one exception: when the risk classifier offers its own `suggested_pattern`, that's
-        shown (and threaded through as `grant_patterns`, so the eventual persist step uses this
-        exact pattern rather than recomputing) in place of `grant_preview()`'s own deterministic
-        result.
-        Seeds the panel's grid cursor from `_last_permission_action`/`_last_permission_scope`
-        and updates both from the returned decision, so a run of several asks for one compound
-        tool call starts each next prompt where the previous one left off — unless
-        `klorb.permissions.risk_classifier.resolve_item_risk_assessment` rates this item at or
-        above `tools.bash.riskClassifier.tooRiskyThreshold`, which pre-selects `Deny, once`
-        instead (still just a starting cursor position; every cell stays reachable and
-        confirmable regardless). `ReplApp` itself never constructs an `ItemRiskAssessment` or
-        talks to the classifier directly — `resolve_item_risk_assessment` owns the gating,
-        batching (across a compound command's several serially-asked items), and caching, so
-        this same call would work identically from any other UI layer driving `Session`. Once the
-        user's own `PermissionDecision` comes back, `klorb.permissions.risk_classifier.
-        record_decision_history` records it (command text plus decision) into this `session`'s
-        bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
-        calibration context — see that function's own docstring.
-        """
+        user's choice."""
         session_id = ask_ctx.origin_session_id or self._session.id
         await self._await_session_selected(session_id)
 
         # Offload to a worker thread: `resolve_item_risk_assessment` makes a blocking, potentially
         # multi-second HTTP call to the risk-classifier model. Running it inline here would freeze
         # this event-loop thread for the duration, which both hangs the UI and starves the
-        # main-thread timer that snoozes the liveness watchdog -- a slow (but not wedged) classifier
+        # main-thread timer that snoozes the liveness watchdog; a slow (but not wedged) classifier
         # response would then trip a false force-exit. Awaiting it off-thread keeps the loop
-        # servicing its snooze timer throughout. See docs/specs/interrupt-and-liveness-watchdog.md.
+        # servicing its snooze timer throughout.
         risk_assessment = await asyncio.to_thread(
             resolve_item_risk_assessment,
             ask_ctx, session=self._session, process_config=self._process_config)
@@ -276,15 +199,8 @@ class InteractionsMixin(ReplAppBase):
         return decision
 
     def _on_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
-        """`Session`'s `on_permission_ask` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `PermissionAskPanel`, then return that
-        choice as-is. Applying (and, for "workspace"/"homedir", persisting to disk) any grant
-        the choice implies is `Session`'s own responsibility —
-        `Session._retry_after_permission_decision`, via
-        `klorb.permissions.grant.apply_permission_grant` — using the `ProcessConfig` reference
-        `ReplApp` gave it at construction time; this callback only needs to surface the user's
-        decision, not act on it.
-        """
+        """Block the worker thread running `Session.send_turn()` until the user answers
+        `PermissionAskPanel`, then return the decision as-is."""
         # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
         callback = self._confirm_permission_ask
         decision: PermissionDecision = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
@@ -294,12 +210,7 @@ class InteractionsMixin(ReplAppBase):
         self, ask_ctx: AskUserQuestionsItemContext,
     ) -> AskUserQuestionsAnswer:
         """Mount an `AskUserQuestionsPanel` for one question into `#interaction-panel` and wait
-        for the user's answer.
-
-        Must be run on the app's own event loop, since it awaits the panel's dismissal —
-        `_on_ask_user_questions` is what the worker thread actually calls, via
-        `call_from_thread`, to get here.
-        """
+        for the user's answer."""
         session_id = ask_ctx.origin_session_id or self._session.id
         await self._await_session_selected(session_id)
 
@@ -323,12 +234,8 @@ class InteractionsMixin(ReplAppBase):
         return answer
 
     def _on_ask_user_questions(self, ask_ctx: AskUserQuestionsItemContext) -> AskUserQuestionsAnswer:
-        """`Session`'s `on_ask_user_questions` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `AskUserQuestionsPanel` for this one
-        question, then return that answer as-is — `Session._resolve_ask_user_questions` calls
-        this once per question in an `AskUserQuestionsRequired` batch and assembles the
-        results itself.
-        """
+        """Block the worker thread running `Session.send_turn()` until the user answers
+        `AskUserQuestionsPanel` for this one question, then return the answer as-is."""
         # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
         callback = self._confirm_ask_user_questions
         answer: AskUserQuestionsAnswer = self.call_from_thread(callback, ask_ctx)  # type: ignore[arg-type]
@@ -338,12 +245,7 @@ class InteractionsMixin(ReplAppBase):
         self, escalate_ctx: EscalatePrivilegesContext,
     ) -> EscalatePrivilegesDecision:
         """Mount an `EscalatePrivilegesPanel` for `escalate_ctx` into `#interaction-panel` and
-        wait for the user's choice.
-
-        Must be run on the app's own event loop, since it awaits the panel's dismissal \u2014
-        `_on_escalate_privileges` is what the worker thread actually calls, via
-        `call_from_thread`, to get here.
-        """
+        wait for the user's choice."""
         session_id = escalate_ctx.origin_session_id or self._session.id
         await self._await_session_selected(session_id)
 
@@ -371,12 +273,8 @@ class InteractionsMixin(ReplAppBase):
     def _on_escalate_privileges(
         self, escalate_ctx: EscalatePrivilegesContext,
     ) -> EscalatePrivilegesDecision:
-        """`Session`'s `on_escalate_privileges` callback: block the worker thread running
-        `Session.send_turn()` until the user answers `EscalatePrivilegesPanel`, then return
-        that decision as-is — `Session._resolve_escalate_privileges` records the approved
-        scope into `SessionConfig.approved_scopes` itself; this callback only surfaces the
-        user's decision, not act on it.
-        """
+        """Block the worker thread running `Session.send_turn()` until the user answers
+        `EscalatePrivilegesPanel`, then return the decision as-is."""
         # See the type-ignore note on `_on_tool_call_limit_reached` above; same mypy limitation.
         callback = self._confirm_escalate_privileges
         decision: EscalatePrivilegesDecision = self.call_from_thread(

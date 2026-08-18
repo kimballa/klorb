@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`WaitForSubagentTool`: suspends the calling turn until one of its own subagents finishes and
-has something to say.
-"""
+"""Suspends the calling turn until one of its own subagents finishes and has something to say."""
 
 import time
 from collections.abc import Sequence
@@ -19,18 +17,10 @@ polls of the completion queue."""
 
 
 class WaitForSubagentTool(UserInterruptibleTool):
-    """Blocks the calling session's own dispatch thread, polling `context.session.
-    subagent_tracker` until at least one completed-but-undelivered subagent arrives or the turn
-    is cancelled. Once one arrives, every *other* subagent that also finished in the meantime is
-    delivered in the same call (oldest first) rather than forcing a separate `WaitForSubagent`
-    round trip per completion. Fails immediately, without suspending, if the caller has no
-    outstanding subagents.
-
-    An optional `timeout` parameter (seconds) caps how long the wait runs before raising a
-    retryable `ToolInterruptError(reason="timeout")`. The wait is also interrupted immediately
-    if the user cancels (`ToolInterruptError(reason="user_cancel")`, category `"signaled"`) or
-    sends a new message while the tool is blocked (`ToolInterruptError(reason="new_message")`,
-    category `"signaled"`) -- see `UserInterruptibleTool`.
+    """Blocks the calling session's dispatch thread, polling subagent_tracker until completed
+    subagent results arrive. Delivers every finished subagent in one call. Fails immediately
+    if no subagents are outstanding. An optional timeout parameter caps how long the wait
+    runs before raising a retryable ToolInterruptError.
     """
 
     def name(self) -> str:
