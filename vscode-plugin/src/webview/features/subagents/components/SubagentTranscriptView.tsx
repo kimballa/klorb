@@ -23,6 +23,10 @@ export interface SubagentTranscriptViewProps {
 const ELLIPSIS_FRAMES = ['', '.', '..', '...'];
 const ELLIPSIS_INTERVAL_MS = 400;
 
+/** A subagent's transcript never carries a `'serverError'` entry. Module-level so its identity
+ * stays stable across renders, which memoized `Entry` components in `HistoryView` rely on. */
+function noopRestartServer(): void {}
+
 /** Cycles through `ELLIPSIS_FRAMES` every `ELLIPSIS_INTERVAL_MS` while `active`; the empty frame
  * otherwise -- the "still working" status line's spinner. */
 function useEllipsisPhase(active: boolean): string {
@@ -88,11 +92,7 @@ export default function SubagentTranscriptView({
         historyRef={containerRef}
         allThinkingExpanded={allThinkingExpanded}
         onToggleToolCallExpanded={onToggleToolCallExpanded}
-        onRestartServer={() => {
-          /* A subagent's transcript never carries a 'serverError' entry -- its turn always runs
-           * against the same live server connection as the root session's, and a lost server
-           * fails the root's own turn first. */
-        }}
+        onRestartServer={noopRestartServer}
       />
       <div id="subagent-history-status">
         {statusNoticeText(state, aborted, interruptPending, workingEllipsis)}

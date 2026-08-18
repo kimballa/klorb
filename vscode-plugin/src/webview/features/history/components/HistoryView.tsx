@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { Fragment, type JSX, type Ref } from 'react';
+import { Fragment, type JSX, memo, type Ref } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
@@ -69,14 +69,9 @@ function SystemInterjection(props: SystemInterjectionProps): JSX.Element {
   );
 }
 
-/**
- * One entry in the history view.
- *
- * Renders the specific kind of entry (tool call/response; user message; assistant message; thinking...)
- * as-appropriate. Some entries are compound entries (e.g. user messages with preceeding system interjections).
- * This will render all elements of the entire compound entry.
- */
-function Entry({
+/** Renders one history entry, dispatching on `entry.kind`; memoized so appending a streaming
+ * chunk to the trailing entry doesn't re-render every other entry. */
+const Entry = memo(function Entry({
   entry,
   index,
   allThinkingExpanded,
@@ -177,7 +172,7 @@ function Entry({
     case 'sessionStats':
       return <SessionStatsCard entry={entry} key={index} />;
   }
-}
+});
 
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
  * markdown, thinking as a collapsed-by-default disclosure that streams while open, and tool
