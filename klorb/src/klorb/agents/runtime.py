@@ -109,6 +109,7 @@ class SubagentTracker:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._handles: dict[str, SubagentHandle] = {}
         self._completion_queue: "queue.Queue[SubagentHandle]" = queue.Queue()
 
@@ -122,6 +123,20 @@ class SubagentTracker:
         """Every subagent this session has ever directly created, in creation order."""
         with self._lock:
             return list(self._handles.values())
+
+    def current_handle(self, child_id: str) -> SubagentHandle | None:
+        """The tracker's live entry for `child_id` right now, or `None` if it's never registered
+        one. `dispatch_subagent_turn` replaces a resumed subagent's entry with a new
+        `SubagentHandle` object rather than mutating the old one in place, so a handle obtained
+        earlier can go stale the moment it's released back to the caller."""
+        with self._lock:
+            return self._handles.get(child_id)
+
+    def dispatch_guard(self) -> threading.Lock:
+        """The lock guarding this session's "check a subagent's current state, then dispatch or
+        enqueue into its turn" decisions, so two concurrent callers can't both see the same
+        dormant subagent as free to resume."""
+        return self._dispatch_lock
 
     def mark_finished(self, child_id: str, output: str) -> None:
         """Record `child_id`'s background turn as done -- called by the background thread

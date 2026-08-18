@@ -9,6 +9,7 @@ docs/specs/subagents.md.
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +22,7 @@ from klorb.agents.policy import (
     plan_subagent_creation,
 )
 from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle
+from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
@@ -340,6 +342,71 @@ def test_dispatch_direct_message_starts_a_fresh_uninterested_turn_on_a_dormant_s
     assert new_handle.state == "finished"
     assert new_handle.output == "direct reply"
     assert parent.subagent_tracker.has_undelivered() is False  # uninterested -- never queued
+
+
+def test_dispatch_direct_message_is_atomic_under_concurrent_calls_for_the_same_dormant_subagent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two overlapping `dispatch_direct_message` calls for the same dormant subagent must not
+    both see it as free to resume."""
+
+    class _BlockingProvider(_FakeProvider):
+        def __init__(self, release: threading.Event) -> None:
+            super().__init__(reply_text="direct reply")
+            self._release = release
+
+        def send_prompt(self, *args: Any, **kwargs: Any) -> ProviderResponse:
+            self._release.wait(timeout=5.0)
+            return super().send_prompt(*args, **kwargs)
+
+    release = threading.Event()
+    provider = _BlockingProvider(release)
+    process_config = ProcessConfig()
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
+    dormant_handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task", state="finished", output="earlier output")
+    parent.subagent_tracker.register(dormant_handle)
+
+    dispatch_count = 0
+    dispatch_count_lock = threading.Lock()
+    real_dispatch_subagent_turn = dispatch_subagent_turn
+
+    def counting_dispatch_subagent_turn(*args: Any, **kwargs: Any) -> SubagentHandle:
+        nonlocal dispatch_count
+        with dispatch_count_lock:
+            dispatch_count += 1
+        return real_dispatch_subagent_turn(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "klorb.agents.policy.dispatch_subagent_turn", counting_dispatch_subagent_turn)
+
+    barrier = threading.Barrier(2)
+    results: list[Literal["queued", "started"]] = []
+    results_lock = threading.Lock()
+
+    def call_direct_message() -> None:
+        barrier.wait(timeout=5.0)
+        mode = dispatch_direct_message(process_config, child, dormant_handle, "poking in directly")
+        with results_lock:
+            results.append(mode)
+
+    callers = [threading.Thread(target=call_direct_message) for _ in range(2)]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(timeout=5.0)
+    release.set()
+
+    assert sorted(results) == ["queued", "started"]
+    assert dispatch_count == 1  # only the winner started a fresh turn -- the loser just enqueued
+    new_handle = parent.subagent_tracker.handles()[0]
+    new_handle.thread.join(timeout=5.0)
+    assert new_handle.output is not None
+    assert "direct reply" in new_handle.output
 
 
 def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the_concurrent_limit(

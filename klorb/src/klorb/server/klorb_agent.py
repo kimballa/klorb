@@ -563,9 +563,9 @@ class KlorbAcpAgent(acp.Agent):
     def _ext_subagent_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
         """Send `params["text"]` from a human user directly to a subagent -- see
         `_klorb/subagentPrompt` in docs/specs/klorb-server.md and docs/specs/subagents.md's
-        "Direct user messaging" section. `mode` is read from `handle.state` *before* dispatching:
-        `dispatch_direct_message` may replace the tracker's entry for `subagent_id`, so a
-        post-call read would be stale."""
+        "Direct user messaging" section. `mode` comes back from `dispatch_direct_message`, which
+        resolves it under the tracker's dispatch guard rather than this handler guessing from a
+        possibly-stale `handle.state` read."""
         self._require_session_id(params)
         subagent_id = params.get("subagentId")
         if not isinstance(subagent_id, str):
@@ -578,9 +578,8 @@ class KlorbAcpAgent(acp.Agent):
             raise acp.RequestError.invalid_params(
                 {"subagentId": subagent_id, "reason": "unknown subagent"})
         child, handle = found
-        mode = "queued" if handle.state == "running" else "started"
         try:
-            dispatch_direct_message(self._process_config, child, handle, text)
+            mode = dispatch_direct_message(self._process_config, child, handle, text)
         except ToolCallError as exc:
             raise acp.RequestError(-32000, str(exc)) from exc
         logger.debug("_klorb/subagentPrompt %s a message for subagent %s", mode, subagent_id)

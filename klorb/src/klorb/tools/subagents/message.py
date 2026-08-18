@@ -47,19 +47,19 @@ class MessageSubagentTool(Tool):
         context: ToolSetupContext = self.context
         assert context.session is not None
         tracker = context.session.subagent_tracker
-        handle = next(
-            (h for h in tracker.handles() if h.session.id == args["id"]), None)
-        if handle is None:
-            raise ToolCallError(f"No such subagent: {args['id']!r}", category="validation")
-        if handle.state != "finished":
-            raise ToolCallError(
-                "That subagent is not done its turn yet -- call WaitForSubagent to wait for "
-                "it to finish first.", category="validation")
-        # Resuming a dormant (finished) subagent turns it back into a running one, so it costs
-        # a concurrency slot exactly like CreateSubagent starting a new one does.
-        check_concurrency_limits(context.process_config, context.session)
-        dispatch_subagent_turn(
-            context.session, handle.session, handle.role, handle.title, args["message"])
+        with tracker.dispatch_guard():
+            handle = tracker.current_handle(args["id"])
+            if handle is None:
+                raise ToolCallError(f"No such subagent: {args['id']!r}", category="validation")
+            if handle.state != "finished":
+                raise ToolCallError(
+                    "That subagent is not done its turn yet -- call WaitForSubagent to wait for "
+                    "it to finish first.", category="validation")
+            # Resuming a dormant (finished) subagent turns it back into a running one, so it
+            # costs a concurrency slot exactly like CreateSubagent starting a new one does.
+            check_concurrency_limits(context.process_config, context.session)
+            dispatch_subagent_turn(
+                context.session, handle.session, handle.role, handle.title, args["message"])
         return {
             "subagent_id": handle.session.id,
             "note": (
