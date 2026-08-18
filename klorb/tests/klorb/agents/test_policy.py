@@ -402,7 +402,7 @@ def test_dispatch_direct_message_is_atomic_under_concurrent_calls_for_the_same_d
     release.set()
 
     assert sorted(results) == ["queued", "started"]
-    assert dispatch_count == 1  # only the winner started a fresh turn -- the loser just enqueued
+    assert dispatch_count == 1  # only the winner started a fresh turn
     new_handle = parent.subagent_tracker.handles()[0]
     new_handle.thread.join(timeout=5.0)
     assert new_handle.output is not None

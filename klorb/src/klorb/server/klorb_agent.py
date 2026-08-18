@@ -561,11 +561,9 @@ class KlorbAcpAgent(acp.Agent):
         return {"cancelled": True}
 
     def _ext_subagent_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Send `params["text"]` from a human user directly to a subagent -- see
-        `_klorb/subagentPrompt` in docs/specs/klorb-server.md and docs/specs/subagents.md's
-        "Direct user messaging" section. `mode` comes back from `dispatch_direct_message`, which
-        resolves it under the tracker's dispatch guard rather than this handler guessing from a
-        possibly-stale `handle.state` read."""
+        """Send `params["text"]` from a human user directly to a subagent. `mode` comes back
+        from `dispatch_direct_message`, which resolves it under the tracker's dispatch guard
+        rather than this handler guessing from a possibly-stale `handle.state` read."""
         self._require_session_id(params)
         subagent_id = params.get("subagentId")
         if not isinstance(subagent_id, str):
