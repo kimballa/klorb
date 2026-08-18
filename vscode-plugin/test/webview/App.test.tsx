@@ -1,7 +1,14 @@
 /** @vitest-environment jsdom */
 // © Copyright 2026 Aaron Kimball
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { act } from 'react';
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  type RenderResult,
+} from '@testing-library/react';
+import { act, type ReactElement } from 'react';
+import { VirtuosoMockContext } from 'react-virtuoso';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from 'webview/App';
@@ -14,6 +21,33 @@ vi.mock('@chenglou/pretext', () => ({
     height: lineHeight,
   })),
 }));
+
+const mockVirtuosoRef = vi.fn();
+const mockHandleAtBottomStateChange = vi.fn();
+const mockScrollToBottomIfPinned = vi.fn();
+const mockScrollToBottom = vi.fn();
+
+vi.mock('webview/hooks/usePinnedScroll', () => ({
+  default: () => ({
+    virtuosoRef: mockVirtuosoRef,
+    handleAtBottomStateChange: mockHandleAtBottomStateChange,
+    scrollToBottomIfPinned: mockScrollToBottomIfPinned,
+    scrollToBottom: mockScrollToBottom,
+  }),
+}));
+
+/** `@testing-library/react`'s own `render`, wrapped in a `VirtuosoMockContext.Provider` with a
+ * viewport large enough to always fit every entry these tests construct -- jsdom has no real
+ * layout, so `HistoryView`'s `react-virtuoso` list would otherwise render nothing (see
+ * `react-virtuoso`'s own `VirtuosoMockContext` doc comment). Shadows the RTL import so every
+ * `render(<App .../>)` call site below gets this for free. */
+function render(ui: ReactElement): RenderResult {
+  return rtlRender(
+    <VirtuosoMockContext.Provider value={{ viewportHeight: 100000, itemHeight: 30 }}>
+      {ui}
+    </VirtuosoMockContext.Provider>
+  );
+}
 
 interface FakeVsCode {
   vscode: VsCodeApi;
@@ -76,7 +110,8 @@ function typeAndSubmit(container: HTMLElement, text: string): void {
 const scrollIntoView = vi.fn();
 
 beforeAll(() => {
-  // jsdom doesn't implement scrollIntoView, which App calls after each entries change.
+  // jsdom doesn't implement scrollIntoView, which the file/skill finder panels call to keep
+  // their active row in view.
   window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
   // Tells React this environment supports act(), silencing its warning when state updates
   // (like the message-event handler below) happen outside a render/event call React tracks.
@@ -85,6 +120,10 @@ beforeAll(() => {
 
 beforeEach(() => {
   scrollIntoView.mockClear();
+  mockVirtuosoRef.mockClear();
+  mockHandleAtBottomStateChange.mockClear();
+  mockScrollToBottomIfPinned.mockClear();
+  mockScrollToBottom.mockClear();
 });
 
 afterEach(cleanup);
@@ -552,7 +591,7 @@ describe('App', () => {
 
   it('does not scroll the history on a taskListUpdate that leaves entries unchanged', () => {
     // Regression test: taskListUpdate/toggleTaskPanel used to share one useEffect with the
-    // scrollIntoView call, so a taskListUpdate (which can arrive several times per turn, once
+    // scroll-to-bottom call, so a taskListUpdate (which can arrive several times per turn, once
     // per TodoCreate/TodoUpdate/TodoNext call) re-scrolled the history on every one of them --
     // fighting the browser's own attempt to keep a focused element elsewhere on the page (e.g.
     // the task panel's own <summary>) in view, which visibly read as the history freezing until
@@ -560,7 +599,7 @@ describe('App', () => {
     // change now.
     const { vscode } = makeVsCode();
     render(<App vscode={vscode} initialEntries={[]} />);
-    scrollIntoView.mockClear();
+    mockScrollToBottomIfPinned.mockClear();
 
     postHostMessage({
       type: 'taskListUpdate',
@@ -576,13 +615,13 @@ describe('App', () => {
         },
       ],
     });
-    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(mockScrollToBottomIfPinned).not.toHaveBeenCalled();
 
     postHostMessage({ type: 'toggleTaskPanel' });
-    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(mockScrollToBottomIfPinned).not.toHaveBeenCalled();
 
     postHostMessage({ type: 'agentChunk', text: 'hi' });
-    expect(scrollIntoView).toHaveBeenCalledOnce();
+    expect(mockScrollToBottomIfPinned).toHaveBeenCalledOnce();
   });
 
   it('clears the history on sessionReset', () => {
@@ -590,7 +629,7 @@ describe('App', () => {
     render(
       <App
         vscode={vscode}
-        initialEntries={[{ kind: 'prompt', text: 'old prompt', streaming: false }]}
+        initialEntries={[{ kind: 'prompt', text: 'old prompt', streaming: false, id: 'p1' }]}
       />
     );
 

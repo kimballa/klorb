@@ -9,6 +9,7 @@ afterEach(cleanup);
 
 const ENTRY: SessionStatsHistoryEntry = {
   kind: 'sessionStats',
+  id: 'stats-1',
   messageCounts: {
     'User messages': 3,
     'Response messages': 3,

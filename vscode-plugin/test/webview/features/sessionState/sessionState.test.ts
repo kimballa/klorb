@@ -22,16 +22,30 @@ describe('readPersistedState', () => {
   });
 
   it('passes through a well-formed entries array unchanged', () => {
-    const entries = [{ kind: 'prompt', text: 'hi', streaming: false }];
+    const entries = [{ kind: 'prompt', text: 'hi', streaming: false, id: 'entry-1' }];
     expect(readPersistedState(fakeVsCode({ entries }))).toEqual({ entries });
   });
 
   it('drops a bare non-object entry left over from a stale/incompatible build', () => {
     const result = readPersistedState(
-      fakeVsCode({ entries: ['test?', { kind: 'prompt', text: 'hi', streaming: false }] })
+      fakeVsCode({
+        entries: ['test?', { kind: 'prompt', text: 'hi', streaming: false, id: 'entry-1' }],
+      })
     );
 
-    expect(result.entries).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
+    expect(result.entries).toEqual([
+      { kind: 'prompt', text: 'hi', streaming: false, id: 'entry-1' },
+    ]);
+  });
+
+  it('backfills an id onto an entry persisted before HistoryEntry grew that field', () => {
+    const result = readPersistedState(
+      fakeVsCode({ entries: [{ kind: 'prompt', text: 'hi', streaming: false }] })
+    );
+
+    expect(result.entries).toHaveLength(1);
+    expect(typeof result.entries[0]?.id).toBe('string');
+    expect(result.entries[0]?.id.length).toBeGreaterThan(0);
   });
 
   it('falls back to an empty array when entries itself is not an array', () => {

@@ -328,13 +328,6 @@ body {
   min-height: 0;
 }
 
-/* #history is normally a direct child of body's own flex column, where its default min-height
-   works out; nested one level deeper inside #subagent-history-wrapper's own flex column, it
-   needs the same min-height: 0 override that wrapper already has, for the same reason. */
-#subagent-history-wrapper #history {
-  min-height: 0;
-}
-
 #subagent-history-status {
   flex: 0 0 auto;
   padding: 4px 12px;
@@ -349,11 +342,24 @@ body {
 
 #history {
   flex: 1 1 auto;
-  overflow-y: auto;
+  /* Without this, the flex item's default min-height: auto would grow to fit its unwindowed
+     content instead of letting its own overflow-y: auto (set by Virtuoso itself) actually
+     scroll. */
+  min-height: 0;
   padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+}
+
+/* One windowed history item's wrapper (`react-virtuoso`'s `components.Item` override, see
+   HistoryView.tsx) -- margins would escape Virtuoso's own content-height measurement, so
+   inter-entry spacing is padding here rather than the flex `gap` the unwindowed layout used. */
+.history-item {
+  padding-bottom: 8px;
+}
+
+/* A `'prompt'`/`'queuedMessage'` entry's system-interjection notices and its bubble share one
+   item wrapper; space them apart the same way `.history-item` spaces separate entries. */
+.history-item > * + * {
+  margin-top: 8px;
 }
 
 /* The user's submitted prompts keep the raised-bubble look, clinging to the right edge so
@@ -370,7 +376,7 @@ body {
 }
 
 .bubble-prompt {
-  align-self: flex-end;
+  margin-left: auto;
 }
 
 /* Highlights an @mention within a submitted prompt (see MentionHighlightedText.tsx) so it reads
@@ -388,7 +394,6 @@ body {
 /* Agent-produced entries (markdown responses, thinking, errors, notices) render full-width
    with no bubble chrome. */
 .entry {
-  align-self: stretch;
   word-break: break-word;
 }
 

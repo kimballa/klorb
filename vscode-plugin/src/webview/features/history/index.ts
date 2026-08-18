@@ -28,8 +28,9 @@ import {
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  ensureEntryId,
   isHistoryEntry,
-  isScrollPinnedToBottom,
+  makeEntryId,
 } from './historyModel';
 import {
   type ParsedPromptWithInterjections,
@@ -66,8 +67,9 @@ export {
   applyTaskListUpdate,
   applyToolCallExpandedToggle,
   applyTurnFlag,
+  ensureEntryId,
   isHistoryEntry,
-  isScrollPinnedToBottom,
+  makeEntryId,
   parseSkillActivationIdentity,
   parseSystemInterjections,
   renderDiffLines,

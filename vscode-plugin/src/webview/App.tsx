@@ -123,10 +123,11 @@ export default function App({
   // instances, one per scrolling transcript view (root and subagent), since a reader can scroll
   // either one away from its own bottom independently of the other.
   const {
-    containerRef: historyRef,
+    virtuosoRef: historyRef,
+    handleAtBottomStateChange: handleHistoryAtBottomStateChange,
     scrollToBottomIfPinned: scrollHistoryIfPinned,
     scrollToBottom: scrollHistoryToBottom,
-  } = usePinnedScroll<HTMLDivElement>();
+  } = usePinnedScroll(entries.length);
 
   /** Flips the subagents panel's shown/hidden state and tells the host, so its `SubagentPoller`
    * starts/stops the tree poll accordingly -- unlike `toggleTaskPanelVisible()` further down,
@@ -586,6 +587,7 @@ export default function App({
           allThinkingExpanded={allThinkingExpanded}
           onToggleToolCallExpanded={toggleToolCallExpanded}
           onRestartServer={restartServer}
+          onAtBottomStateChange={handleHistoryAtBottomStateChange}
         />
       )}
       <div id="interaction-area">

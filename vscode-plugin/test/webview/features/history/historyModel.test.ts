@@ -17,7 +17,6 @@ import {
   applyToolCallExpandedToggle,
   applyTurnFlag,
   isHistoryEntry,
-  isScrollPinnedToBottom,
   type HistoryEntry,
   type ToolCallHistoryEntry,
 } from 'webview/features/history';
@@ -25,13 +24,23 @@ import {
 describe('appendPrompt', () => {
   it('appends a finished prompt entry', () => {
     const entries = appendPrompt([], 'do the thing');
-    expect(entries).toEqual([{ kind: 'prompt', text: 'do the thing', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'prompt', text: 'do the thing', streaming: false, id: expect.any(String) },
+    ]);
   });
 
   it('carries attached images onto the prompt entry', () => {
     const images = [{ mimeType: 'image/png', dataBase64: 'abcd', name: 'shot.png' }];
     const entries = appendPrompt([], 'what is this?', images);
-    expect(entries).toEqual([{ kind: 'prompt', text: 'what is this?', streaming: false, images }]);
+    expect(entries).toEqual([
+      {
+        kind: 'prompt',
+        text: 'what is this?',
+        streaming: false,
+        id: expect.any(String),
+        images,
+      },
+    ]);
   });
 
   it('omits the images field entirely when none were attached', () => {
@@ -44,9 +53,13 @@ describe('applyHostMessage', () => {
   it('creates a streaming response entry on the first chunk and extends it on later ones', () => {
     let entries: HistoryEntry[] = [];
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'Hello' });
-    expect(entries).toEqual([{ kind: 'response', text: 'Hello', streaming: true }]);
+    expect(entries).toEqual([
+      { kind: 'response', text: 'Hello', streaming: true, id: expect.any(String) },
+    ]);
     entries = applyHostMessage(entries, { type: 'agentChunk', text: ' world' });
-    expect(entries).toEqual([{ kind: 'response', text: 'Hello world', streaming: true }]);
+    expect(entries).toEqual([
+      { kind: 'response', text: 'Hello world', streaming: true, id: expect.any(String) },
+    ]);
   });
 
   it('keeps thinking and response chunks in separate entries', () => {
@@ -55,9 +68,9 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'Answer' });
     entries = applyHostMessage(entries, { type: 'thoughtChunk', text: 'more pondering' });
     expect(entries).toEqual([
-      { kind: 'thinking', text: 'pondering', streaming: true },
-      { kind: 'response', text: 'Answer', streaming: true },
-      { kind: 'thinking', text: 'more pondering', streaming: true },
+      { kind: 'thinking', text: 'pondering', streaming: true, id: expect.any(String) },
+      { kind: 'response', text: 'Answer', streaming: true, id: expect.any(String) },
+      { kind: 'thinking', text: 'more pondering', streaming: true, id: expect.any(String) },
     ]);
   });
 
@@ -65,14 +78,21 @@ describe('applyHostMessage', () => {
     let entries = appendPrompt([], 'question');
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'answer' });
     expect(entries).toHaveLength(2);
-    expect(entries[1]).toEqual({ kind: 'response', text: 'answer', streaming: true });
+    expect(entries[1]).toEqual({
+      kind: 'response',
+      text: 'answer',
+      streaming: true,
+      id: expect.any(String),
+    });
   });
 
   it('finalizes streaming flags on turnEnded', () => {
     let entries: HistoryEntry[] = [];
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'end_turn' });
-    expect(entries).toEqual([{ kind: 'response', text: 'partial', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'response', text: 'partial', streaming: false, id: expect.any(String) },
+    ]);
   });
 
   it('does not throw on turnEnded when a malformed non-object entry is present', () => {
@@ -95,8 +115,8 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'refusal' });
     expect(entries).toEqual([
-      { kind: 'response', text: 'partial', streaming: false },
-      { kind: 'notice', text: 'Turn ended: refusal', streaming: false },
+      { kind: 'response', text: 'partial', streaming: false, id: expect.any(String) },
+      { kind: 'notice', text: 'Turn ended: refusal', streaming: false, id: expect.any(String) },
     ]);
   });
 
@@ -105,7 +125,12 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'cancelled' });
     expect(entries).toEqual([
-      { kind: 'response', text: 'partial\n\n*(interrupted)*', streaming: false },
+      {
+        kind: 'response',
+        text: 'partial\n\n*(interrupted)*',
+        streaming: false,
+        id: expect.any(String),
+      },
     ]);
   });
 
@@ -115,8 +140,8 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'turnEnded', stopReason: 'end_turn' });
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'second turn' });
     expect(entries).toEqual([
-      { kind: 'response', text: 'first turn', streaming: false },
-      { kind: 'response', text: 'second turn', streaming: true },
+      { kind: 'response', text: 'first turn', streaming: false, id: expect.any(String) },
+      { kind: 'response', text: 'second turn', streaming: true, id: expect.any(String) },
     ]);
   });
 
@@ -125,8 +150,8 @@ describe('applyHostMessage', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'partial' });
     entries = applyHostMessage(entries, { type: 'turnError', message: 'server exploded' });
     expect(entries).toEqual([
-      { kind: 'response', text: 'partial', streaming: false },
-      { kind: 'error', text: 'server exploded', streaming: false },
+      { kind: 'response', text: 'partial', streaming: false, id: expect.any(String) },
+      { kind: 'error', text: 'server exploded', streaming: false, id: expect.any(String) },
     ]);
   });
 
@@ -167,6 +192,7 @@ describe('applyHostMessage', () => {
     expect(entries).toEqual([
       {
         kind: 'sessionStats',
+        id: expect.any(String),
         messageCounts: { 'User messages': 1 },
         toolBreakdown: [{ name: 'Bash', succeeded: 1, failed: 0 }],
         tokenUsage: { 'Input tokens': 100 },
@@ -190,6 +216,7 @@ describe('applyHostMessage tool calls', () => {
     expect(entries).toEqual([
       {
         kind: 'toolCall',
+        id: 'call-1',
         callId: 'call-1',
         status: 'in_progress',
         title: 'Read foo.py',
@@ -221,6 +248,7 @@ describe('applyHostMessage tool calls', () => {
     expect(entries).toHaveLength(3);
     expect(entries[1]).toEqual({
       kind: 'toolCall',
+      id: 'call-1',
       callId: 'call-1',
       status: 'completed',
       title: 'Edit foo.py',
@@ -242,6 +270,7 @@ describe('applyHostMessage tool calls', () => {
     expect(entries).toEqual([
       {
         kind: 'toolCall',
+        id: 'call-orphan',
         callId: 'call-orphan',
         status: 'failed',
         title: 'Tool call',
@@ -314,6 +343,7 @@ describe('appendInteraction', () => {
         kind: 'interaction',
         text: 'Permission requested: Run command\nrun shell command: ls\nls\nDecision: Allow once',
         streaming: false,
+        id: expect.any(String),
       },
     ]);
   });
@@ -329,6 +359,7 @@ describe('appendInteraction', () => {
         kind: 'interaction',
         text: 'Privilege escalation\nDecision: Deny',
         streaming: false,
+        id: expect.any(String),
       },
     ]);
   });
@@ -352,6 +383,7 @@ describe('appendQuestionInteraction', () => {
         kind: 'interaction',
         text: 'Question 1 of 2 · Format\nWhich format?\nAnswer: JSON',
         streaming: false,
+        id: expect.any(String),
       },
     ]);
   });
@@ -446,27 +478,32 @@ describe('queued messages', () => {
   it('appendQueuedMessage appends a queuedMessage entry', () => {
     const entries = appendQueuedMessage([], 'also check the tests');
     expect(entries).toEqual([
-      { kind: 'queuedMessage', text: 'also check the tests', streaming: false },
+      {
+        kind: 'queuedMessage',
+        text: 'also check the tests',
+        streaming: false,
+        id: expect.any(String),
+      },
     ]);
   });
 
   it('applyQueuedMessageSent flips the oldest matching queuedMessage entry to a prompt', () => {
     let entries: HistoryEntry[] = [
-      { kind: 'response', text: 'earlier reply', streaming: false },
-      { kind: 'queuedMessage', text: 'first queued', streaming: false },
-      { kind: 'queuedMessage', text: 'second queued', streaming: false },
+      { kind: 'response', text: 'earlier reply', streaming: false, id: 'r1' },
+      { kind: 'queuedMessage', text: 'first queued', streaming: false, id: 'q1' },
+      { kind: 'queuedMessage', text: 'second queued', streaming: false, id: 'q2' },
     ];
     entries = applyQueuedMessageSent(entries, 'first queued');
     expect(entries).toEqual([
-      { kind: 'response', text: 'earlier reply', streaming: false },
-      { kind: 'prompt', text: 'first queued', streaming: false },
-      { kind: 'queuedMessage', text: 'second queued', streaming: false },
+      { kind: 'response', text: 'earlier reply', streaming: false, id: 'r1' },
+      { kind: 'prompt', text: 'first queued', streaming: false, id: 'q1' },
+      { kind: 'queuedMessage', text: 'second queued', streaming: false, id: 'q2' },
     ]);
   });
 
   it('applyQueuedMessageSent is a no-op when nothing matches (stale/duplicate notification)', () => {
     const entries: HistoryEntry[] = [
-      { kind: 'queuedMessage', text: 'first queued', streaming: false },
+      { kind: 'queuedMessage', text: 'first queued', streaming: false, id: 'q1' },
     ];
     expect(applyQueuedMessageSent(entries, 'never queued')).toEqual(entries);
   });
@@ -474,14 +511,20 @@ describe('queued messages', () => {
   it('applyHostMessage dispatches messageQueued/queuedMessageSent through the same reducers', () => {
     let entries: HistoryEntry[] = [];
     entries = applyHostMessage(entries, { type: 'messageQueued', text: 'hi' });
-    expect(entries).toEqual([{ kind: 'queuedMessage', text: 'hi', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'queuedMessage', text: 'hi', streaming: false, id: expect.any(String) },
+    ]);
     entries = applyHostMessage(entries, { type: 'queuedMessageSent', text: 'hi' });
-    expect(entries).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'prompt', text: 'hi', streaming: false, id: expect.any(String) },
+    ]);
   });
 
   it('applyHostMessage appends a notice entry for a hook log notification', () => {
     const entries = applyHostMessage([], { type: 'notice', text: 'hook fired' });
-    expect(entries).toEqual([{ kind: 'notice', text: 'hook fired', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'notice', text: 'hook fired', streaming: false, id: expect.any(String) },
+    ]);
   });
 
   it('applyHostMessage appends a notice entry for a below-error-level serverLog record', () => {
@@ -490,7 +533,9 @@ describe('queued messages', () => {
       text: 'careful',
       level: WARNING_LEVEL_VALUE,
     });
-    expect(entries).toEqual([{ kind: 'notice', text: 'careful', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'notice', text: 'careful', streaming: false, id: expect.any(String) },
+    ]);
   });
 
   it('applyHostMessage appends an error entry for an ERROR+ serverLog record', () => {
@@ -499,22 +544,28 @@ describe('queued messages', () => {
       text: 'boom',
       level: ERROR_LEVEL_VALUE,
     });
-    expect(entries).toEqual([{ kind: 'error', text: 'boom', streaming: false }]);
+    expect(entries).toEqual([
+      { kind: 'error', text: 'boom', streaming: false, id: expect.any(String) },
+    ]);
   });
 });
 
 describe('applyInterruptedMarker', () => {
   it('appends the marker to a still-streaming response entry and stops it streaming', () => {
-    const entries: HistoryEntry[] = [{ kind: 'response', text: 'partial', streaming: true }];
+    const entries: HistoryEntry[] = [
+      { kind: 'response', text: 'partial', streaming: true, id: 'r1' },
+    ];
     expect(applyInterruptedMarker(entries)).toEqual([
-      { kind: 'response', text: 'partial\n\n*(interrupted)*', streaming: false },
+      { kind: 'response', text: 'partial\n\n*(interrupted)*', streaming: false, id: 'r1' },
     ]);
   });
 
   it('appends the marker to a still-streaming thinking entry and stops it streaming', () => {
-    const entries: HistoryEntry[] = [{ kind: 'thinking', text: 'pondering', streaming: true }];
+    const entries: HistoryEntry[] = [
+      { kind: 'thinking', text: 'pondering', streaming: true, id: 't1' },
+    ];
     expect(applyInterruptedMarker(entries)).toEqual([
-      { kind: 'thinking', text: 'pondering\n\n(interrupted)', streaming: false },
+      { kind: 'thinking', text: 'pondering\n\n(interrupted)', streaming: false, id: 't1' },
     ]);
   });
 
@@ -522,6 +573,7 @@ describe('applyInterruptedMarker', () => {
     const entries: HistoryEntry[] = [
       {
         kind: 'toolCall',
+        id: 'c1',
         callId: 'c1',
         status: 'completed',
         title: 'Read foo.py',
@@ -532,15 +584,17 @@ describe('applyInterruptedMarker', () => {
     ];
     expect(applyInterruptedMarker(entries)).toEqual([
       ...entries,
-      { kind: 'notice', text: '(interrupted)', streaming: false },
+      { kind: 'notice', text: '(interrupted)', streaming: false, id: expect.any(String) },
     ]);
   });
 
   it('appends a standalone notice for an already-finished trailing entry', () => {
-    const entries: HistoryEntry[] = [{ kind: 'response', text: 'done', streaming: false }];
+    const entries: HistoryEntry[] = [
+      { kind: 'response', text: 'done', streaming: false, id: 'r1' },
+    ];
     expect(applyInterruptedMarker(entries)).toEqual([
-      { kind: 'response', text: 'done', streaming: false },
-      { kind: 'notice', text: '(interrupted)', streaming: false },
+      { kind: 'response', text: 'done', streaming: false, id: 'r1' },
+      { kind: 'notice', text: '(interrupted)', streaming: false, id: expect.any(String) },
     ]);
   });
 });
@@ -548,21 +602,9 @@ describe('applyInterruptedMarker', () => {
 describe('serverLost', () => {
   it('applyHostMessage appends a serverError entry', () => {
     const entries = applyHostMessage([], { type: 'serverLost', message: 'child exited' });
-    expect(entries).toEqual([{ kind: 'serverError', text: 'child exited', streaming: false }]);
-  });
-});
-
-describe('isScrollPinnedToBottom', () => {
-  it('is pinned when the viewport shows its bottom edge exactly', () => {
-    expect(isScrollPinnedToBottom(400, 500, 100)).toBe(true);
-  });
-
-  it('is pinned within the default threshold of the bottom edge', () => {
-    expect(isScrollPinnedToBottom(390, 500, 100)).toBe(true);
-  });
-
-  it('is not pinned once scrolled meaningfully away from the bottom edge', () => {
-    expect(isScrollPinnedToBottom(200, 500, 100)).toBe(false);
+    expect(entries).toEqual([
+      { kind: 'serverError', text: 'child exited', streaming: false, id: expect.any(String) },
+    ]);
   });
 });
 
@@ -588,19 +630,21 @@ describe('isHistoryEntry', () => {
 
 describe('applySessionReplay', () => {
   it('replaces the history wholesale with the replayed entries', () => {
-    const existing: HistoryEntry[] = [{ kind: 'notice', text: 'stale cache', streaming: false }];
+    const existing: HistoryEntry[] = [
+      { kind: 'notice', text: 'stale cache', streaming: false, id: 'n1' },
+    ];
     const replayed = applySessionReplay([
       { kind: 'prompt', text: 'hi', streaming: false },
       { kind: 'response', text: 'hello', streaming: false },
     ]);
 
     expect(replayed).toEqual([
-      { kind: 'prompt', text: 'hi', streaming: false },
-      { kind: 'response', text: 'hello', streaming: false },
+      { kind: 'prompt', text: 'hi', streaming: false, id: expect.any(String) },
+      { kind: 'response', text: 'hello', streaming: false, id: expect.any(String) },
     ]);
     // The input `existing` array itself is untouched -- applySessionReplay ignores it entirely
     // and builds a fresh array from the replay payload.
-    expect(existing).toEqual([{ kind: 'notice', text: 'stale cache', streaming: false }]);
+    expect(existing).toEqual([{ kind: 'notice', text: 'stale cache', streaming: false, id: 'n1' }]);
   });
 
   it('converts a null contentText (no matching response) to undefined for a tool-call entry', () => {
@@ -620,6 +664,7 @@ describe('applySessionReplay', () => {
     expect(replayed).toEqual([
       {
         kind: 'toolCall',
+        id: 'call-1',
         callId: 'call-1',
         status: 'completed',
         title: 'ReadFile',
@@ -632,13 +677,17 @@ describe('applySessionReplay', () => {
   });
 
   it('is reachable via applyHostMessage for a sessionReplay message', () => {
-    const existing: HistoryEntry[] = [{ kind: 'notice', text: 'stale cache', streaming: false }];
+    const existing: HistoryEntry[] = [
+      { kind: 'notice', text: 'stale cache', streaming: false, id: 'n1' },
+    ];
 
     const result = applyHostMessage(existing, {
       type: 'sessionReplay',
       entries: [{ kind: 'prompt', text: 'hi', streaming: false }],
     });
 
-    expect(result).toEqual([{ kind: 'prompt', text: 'hi', streaming: false }]);
+    expect(result).toEqual([
+      { kind: 'prompt', text: 'hi', streaming: false, id: expect.any(String) },
+    ]);
   });
 });

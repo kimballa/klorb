@@ -78,7 +78,9 @@ export default function SubagentTranscriptView({
   interruptPending,
   onToggleToolCallExpanded,
 }: SubagentTranscriptViewProps): JSX.Element {
-  const { containerRef, scrollToBottomIfPinned } = usePinnedScroll<HTMLDivElement>();
+  const { virtuosoRef, handleAtBottomStateChange, scrollToBottomIfPinned } = usePinnedScroll(
+    entries.length
+  );
   const workingEllipsis = useEllipsisPhase(state === 'running' && !interruptPending);
 
   useEffect(() => {
@@ -89,10 +91,11 @@ export default function SubagentTranscriptView({
     <div id="subagent-history-wrapper">
       <HistoryView
         entries={entries}
-        historyRef={containerRef}
+        historyRef={virtuosoRef}
         allThinkingExpanded={allThinkingExpanded}
         onToggleToolCallExpanded={onToggleToolCallExpanded}
         onRestartServer={noopRestartServer}
+        onAtBottomStateChange={handleAtBottomStateChange}
       />
       <div id="subagent-history-status">
         {statusNoticeText(state, aborted, interruptPending, workingEllipsis)}

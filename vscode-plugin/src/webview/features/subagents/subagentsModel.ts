@@ -4,7 +4,7 @@ import type {
   SubagentNodeInfo,
   SubagentTranscriptUpdateMessage,
 } from 'shared/webviewMessages';
-import { applySessionReplay, type HistoryEntry } from 'webview/features/history';
+import { applySessionReplay, makeEntryId, type HistoryEntry } from 'webview/features/history';
 
 /** The subagents panel's transcript snapshot, without the message envelope's `type`
  * discriminant -- mirrors `webview/App.tsx`'s own `StatusSnapshot`/`TaskListSnapshot`
@@ -87,6 +87,7 @@ export function subagentTranscriptEntries(
     kind: 'queuedMessage',
     text,
     streaming: false,
+    id: makeEntryId(),
   }));
   return [...entries, ...queuedEntries];
 }
