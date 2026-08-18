@@ -339,7 +339,10 @@ export default function App({
     selectSubagentRow(attentionSessionId);
   }
 
-  function toggleSubagentToolCallExpanded(callId: string): void {
+  /** `useCallback`'d (stable identity) so memoized `Entry` components in the subagent
+   * transcript's `HistoryView` don't lose their memoization on every unrelated `App`
+   * re-render. */
+  const toggleSubagentToolCallExpanded = useCallback((callId: string): void => {
     setSubagentExpandedCallIds((prev) => {
       const next = new Set(prev);
       if (next.has(callId)) {
@@ -349,7 +352,7 @@ export default function App({
       }
       return next;
     });
-  }
+  }, []);
 
   function pickModel(): void {
     vscode.postMessage({ type: 'pickModel' });
@@ -427,13 +430,15 @@ export default function App({
     vscode.postMessage({ type: 'cancelTurn' });
   }
 
-  function restartServer(): void {
+  /** `useCallback`'d for the same reason as `toggleSubagentToolCallExpanded` above. */
+  const restartServer = useCallback((): void => {
     vscode.postMessage({ type: 'restartServer' });
-  }
+  }, [vscode]);
 
-  function toggleToolCallExpanded(callId: string): void {
+  /** `useCallback`'d for the same reason as `toggleSubagentToolCallExpanded` above. */
+  const toggleToolCallExpanded = useCallback((callId: string): void => {
     setEntries((prev) => applyToolCallExpandedToggle(prev, callId));
-  }
+  }, []);
 
   function onToggleAllThinkingExpanded() {
     setAllThinkingExpanded((curAllThinkingExpanded) => !curAllThinkingExpanded);

@@ -26,7 +26,7 @@
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point. See
     `docs/plans/drafting/023-tui-history-virtualization.md` (and its VSCode-side counterpart,
-    `docs/plans/drafting/024-vscode-history-virtualization.md`).
+    `docs/plans/ready/024-vscode-history-virtualization.md`).
   * The "runaway threads" half may have been explained by `dispatch_direct_message`'s TOCTOU race
     (now fixed via `SubagentTracker.dispatch_guard()`) rather than being a separate cause -- worth
     re-checking against a long-running session before assuming a third mechanism is also needed.
