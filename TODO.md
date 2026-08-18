@@ -28,8 +28,6 @@
     `docs/plans/drafting/023-tui-history-virtualization.md` (and its VSCode-side counterpart,
     `docs/plans/ready/024-vscode-history-virtualization.md`).
 
-* BUG: Even with a history of only modest length, switching between agents in the TUI agents tab feels risky; it seems like this sometimes causes a thread to detach from the main UI or otherwise cause some form of desynchronization. The more subagents have accrued to the session, even if a few are already done with their tasks and thus are inert, the more likely this is to slow down to a crawl or have the UI just "lock up". When I eventually kill it with repeated ^C, something then continues to (slowly) output a lot of numbers (tty control signal?) as if I typed them into bash, line after line of input with eg "28: command not found" response, until eventually I have control over stdin myself again and I can 'reset' the terminal and use it again myself.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
