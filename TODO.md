@@ -20,6 +20,9 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
+* the chunk encoder GPU subsystem prints a bright yellow warning log error to stderr when we start. It's benign but gets in the way of the TUI. Can we mute this? It's in a lower level compiled lib, not python logging.
+
+
 ### Feature backlog
 
 * BUG: In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
