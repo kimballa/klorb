@@ -18,6 +18,7 @@ gets against its parent, just with "parent" being "everything" for this one case
 import logging
 import threading
 from dataclasses import dataclass
+from typing import Literal
 
 from klorb.agents.definition import AgentDefinition, AgentRestrictions
 from klorb.agents.intersection import (
@@ -436,14 +437,16 @@ def dispatch_subagent_turn(
 
 def dispatch_direct_message(
     process_config: ProcessConfig, child: Session, handle: SubagentHandle, message: str,
-) -> None:
+) -> Literal["queued", "started"]:
     """Send `message` from a human user directly to `child`, an existing subagent anywhere in the
     session tree -- never from the parent agent. If `child`'s turn is already running, enqueues
     into it (`Session.enqueue_queued_message`) without touching `handle.parent_interested`: that
     turn was dispatched by whoever started it (usually the parent), and a human steering it
     mid-turn doesn't change who's expecting the outcome. If `child` is dormant, starts a fresh turn
     (`dispatch_subagent_turn`, `parent_interested=False`): this turn belongs to the human alone,
-    and the parent must not have its output rolled into its own context.
+    and the parent must not have its output rolled into its own context. Returns which of the two
+    happened, decided under `child.parent.subagent_tracker.dispatch_guard()` against the
+    tracker's current handle for `child` rather than the possibly-stale `handle` argument.
 
     Raises `ToolCallError` (category `"transient"`, see `check_concurrency_limits`) if `child` is
     dormant and resuming it would exceed `tools.subagents.maxConcurrentPerParent`/
@@ -451,9 +454,13 @@ def dispatch_direct_message(
     tool-driven `MessageSubagent` resume does, and is bound by the same limit.
     """
     assert child.parent is not None
-    if handle.state == "running":
-        child.enqueue_queued_message(QueuedMessage(message_text=message))
-        return
-    check_concurrency_limits(process_config, child.parent)
-    dispatch_subagent_turn(
-        child.parent, child, handle.role, handle.title, message, parent_interested=False)
+    tracker = child.parent.subagent_tracker
+    with tracker.dispatch_guard():
+        current = tracker.current_handle(child.id) or handle
+        if current.state == "running":
+            child.enqueue_queued_message(QueuedMessage(message_text=message))
+            return "queued"
+        check_concurrency_limits(process_config, child.parent)
+        dispatch_subagent_turn(
+            child.parent, child, current.role, current.title, message, parent_interested=False)
+        return "started"

@@ -306,15 +306,20 @@ dormant subagent costs a concurrency slot exactly like `CreateSubagent` starting
 `dispatch_subagent_turn()` again on the same child `Session`, exactly like `CreateSubagent` ran
 its first turn — always with `parent_interested=True` (the default), since `MessageSubagent` is
 only ever called by the parent agent itself, even when resuming a subagent a human most recently
-addressed directly (see "Direct user messaging").
+addressed directly (see "Direct user messaging"). The state check, `check_concurrency_limits()`,
+and dispatch all run under `context.session.subagent_tracker.dispatch_guard()`, re-resolving the
+handle via `SubagentTracker.current_handle()` rather than trusting one looked up earlier — the
+same guard `dispatch_direct_message` uses, since the two can race for the same dormant subagent.
 
 ## Direct user messaging
 
 A human using the TUI or vscode-plugin addresses a subagent directly through
 `klorb.agents.policy.dispatch_direct_message(process_config, child, handle, message)` — never
 through a tool call, so never subject to `SUBAGENT_MGMT_TOOL_NAMES`'s role-based restrictions.
-Which of the two branches runs is chosen from `handle.state`, mirroring the same duality the root
-session's own prompt input already has:
+Which of the two branches runs is chosen from `child.parent.subagent_tracker.current_handle(child.
+id)`'s `state` — re-resolved fresh rather than trusting the `handle` argument, which may have gone
+stale since the caller looked it up — mirroring the same duality the root session's own prompt
+input already has:
 
 * **Running**: `message` is enqueued into the live turn (`Session.enqueue_queued_message()`),
   exactly like a human queuing a message into their own root session mid-turn. `parent_interested`
@@ -330,6 +335,18 @@ The subagent itself never distinguishes a message that arrived this way from one
 both simply become the next user turn (or mid-turn interjection) in the child `Session`'s own
 conversation. Only `parent_interested` differs, and only that flag decides whether the eventual
 completion is ever handed to the parent (see "Communicating back to the parent").
+
+The whole read-then-act sequence runs under `child.parent.subagent_tracker.dispatch_guard()`
+(distinct from the tracker's own internal bookkeeping lock), closing the window between reading a
+dormant subagent's state and dispatching a fresh turn for it — without it, two callers racing for
+the same subagent (e.g. a debounced `_klorb/subagentPrompt` double-fire from the ACP server, which
+handles requests concurrently unlike the TUI's single-threaded direct-messaging path) could both
+see it as free to resume and both call `dispatch_subagent_turn`, leaving one of the two spawned
+threads silently dropped from the tracker (`SubagentTracker.register()` replaces the dict entry
+for a child id rather than merging into it) and never joined, cancelled, or delivered.
+`dispatch_direct_message` returns which branch ran (`"queued"` or `"started"`), resolved inside
+the guard rather than guessed beforehand from a `handle.state` read a concurrent call could make
+stale.
 
 ## Communicating back to the parent
 
