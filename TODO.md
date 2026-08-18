@@ -22,14 +22,13 @@
 
 ### Feature backlog
 
-* In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
+* BUG: In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
   * Definitely need to start pruning the rendered history in the DOM at a certain point. See
     `docs/plans/drafting/023-tui-history-virtualization.md` (and its VSCode-side counterpart,
     `docs/plans/ready/024-vscode-history-virtualization.md`).
-  * The "runaway threads" half may have been explained by `dispatch_direct_message`'s TOCTOU race
-    (now fixed via `SubagentTracker.dispatch_guard()`) rather than being a separate cause -- worth
-    re-checking against a long-running session before assuming a third mechanism is also needed.
+
+* BUG: Even with a history of only modest length, switching between agents in the TUI agents tab feels risky; it seems like this sometimes causes a thread to detach from the main UI or otherwise cause some form of desynchronization. The more subagents have accrued to the session, even if a few are already done with their tasks and thus are inert, the more likely this is to slow down to a crawl or have the UI just "lock up". When I eventually kill it with repeated ^C, something then continues to (slowly) output a lot of numbers (tty control signal?) as if I typed them into bash, line after line of input with eg "28: command not found" response, until eventually I have control over stdin myself again and I can 'reset' the terminal and use it again myself.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
