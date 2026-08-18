@@ -498,7 +498,12 @@ reusing `RenderingMixin`'s pure `_render_restored_tool_call`/`_render_tool_resul
 every ancestor's, including the root's, by the Phase-1 intersection invariant. While it stays
 selected, the tick timer catches the view up incrementally (`_append_new_subagent_messages`, mounting
 only messages added since the last render, mirroring how `#history` streams a live turn) rather than
-rebuilding it from scratch, and follows the bottom only if the view was already pinned there
+rebuilding it from scratch. `Session.messages` returns a fresh copy on every access, so both methods
+read it exactly once into a local variable and reuse that same snapshot for the mount and for the
+rendered-count bookkeeping that follows — a second, later read could observe a longer list than what
+was actually mounted (the subagent's own background turn thread keeps appending to it concurrently),
+silently stranding whatever arrived in between as never-rendered. It follows the bottom only if the
+view was already pinned there
 (`_subagent_history_pinned_to_bottom`, kept in sync by `_on_subagent_history_scroll_changed` the same
 way `_history_pinned_to_bottom` is) — a user who scrolled up to reread earlier output isn't yanked
 back down by new content. A trailing status `Static` (`_mount_subagent_status_notice`) always

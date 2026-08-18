@@ -171,8 +171,13 @@ class SubagentsPanelMixin(ReplAppBase):
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         container.remove_children()
         self._subagent_transcript_notice = None
-        self._mount_subagent_messages(container, session.messages)
-        self._subagent_history_rendered_count = len(session.messages)
+        # `session.messages` returns a fresh copy on every access. Reading it once here into
+        # `messages`, then reusing that copy for the mount and the rendered-count update below,
+        # keeps a message appended by the background turn thread mid-render from being silently
+        # skipped forever.
+        messages = session.messages
+        self._mount_subagent_messages(container, messages)
+        self._subagent_history_rendered_count = len(messages)
         self._mount_subagent_status_notice(container, handle)
         self._subagent_history_rendered_state = handle.state
         self._subagent_history_pinned_to_bottom = True
@@ -191,7 +196,12 @@ class SubagentsPanelMixin(ReplAppBase):
         message count nor the state has changed since the last call, so a dormant selection does
         no work between ticks.
         """
-        new_message_count = len(session.messages) - self._subagent_history_rendered_count
+        # `session.messages` returns a fresh copy on every access. Reading it once into `messages`
+        # and reusing it for the count check, the mount, and the rendered-count update keeps those
+        # three steps from observing different lengths and silently dropping a message appended
+        # in between.
+        messages = session.messages
+        new_message_count = len(messages) - self._subagent_history_rendered_count
         state_changed = handle.state != self._subagent_history_rendered_state
         if new_message_count <= 0 and not state_changed:
             return
@@ -200,8 +210,8 @@ class SubagentsPanelMixin(ReplAppBase):
         self._remove_subagent_transcript_notice()
         if new_message_count > 0:
             self._mount_subagent_messages(
-                container, session.messages, start_index=self._subagent_history_rendered_count)
-            self._subagent_history_rendered_count = len(session.messages)
+                container, messages, start_index=self._subagent_history_rendered_count)
+            self._subagent_history_rendered_count = len(messages)
         self._mount_subagent_status_notice(container, handle)
         self._subagent_history_rendered_state = handle.state
         self._scroll_if_pinned(container, was_pinned)

@@ -212,6 +212,42 @@ async def test_tick_refreshes_a_stale_selected_handle_after_a_resume(
         assert app._selected_handle is new_handle
 
 
+async def test_selecting_a_subagent_does_not_lose_a_message_appended_mid_render(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`Session.messages` returns a fresh copy on every access. If the background turn thread
+    appends a message between `_mount_subagent_messages` mounting a snapshot and the
+    rendered-count bookkeeping that follows it, that bookkeeping must reflect only what was
+    actually mounted -- reading `session.messages` again at that point could observe the new
+    length and permanently strand the appended message as never-rendered."""
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
+    handle.session.load_messages([_message("first")])
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        original_mount = ReplApp._mount_subagent_messages
+
+        def mount_then_append(
+            self: ReplApp, container: VerticalScroll, messages: list[Message], start_index: int = 0,
+        ) -> None:
+            original_mount(self, container, messages, start_index=start_index)
+            handle.session.load_messages([*handle.session.messages, _message("appended mid-render")])
+
+        with patch.object(ReplApp, "_mount_subagent_messages", mount_then_append):
+            app._select_session(handle.session.id)
+        await pilot.pause()
+
+        assert app._subagent_history_rendered_count == 1
+
+        app._tick_subagents_panel()
+        await pilot.pause()
+
+        container = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+        responses = list(container.query(Markdown))
+        assert any(widget.source == "appended mid-render" for widget in responses)
+
+
 async def test_selecting_a_row_via_the_option_list_switches_selection(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
