@@ -17,6 +17,28 @@
   approval panel waiting for permission to run a bash cmd, but also there's a different bash command
   also just running right above it in the historyview.)
 
+* Found a concrete TOCTOU race that can spawn a duplicate, untracked subagent worker thread:
+  `dispatch_direct_message` (`klorb/src/klorb/agents/policy.py`) reads `handle.state` and, if it's
+  not `"running"`, calls `dispatch_subagent_turn` to start a fresh turn -- but nothing locks
+  between that read and the dispatch. The ACP handler `_ext_subagent_prompt`
+  (`klorb/src/klorb/server/klorb_agent.py`) calls this per-request; if two `_klorb/subagentPrompt`
+  requests for the same dormant subagent are in flight concurrently (e.g. a debounced UI double-fire
+  from the VSCode plugin, or a client retry), both can read the same stale `"finished"` state before
+  either updates it, and both call `dispatch_subagent_turn`, spawning two threads that both call
+  `child.send_turn()` against the same shared `Session` concurrently. `SubagentTracker.register()`
+  replaces the tracker's dict entry for that child id with whichever handle registers last, so the
+  *other* thread's handle is silently dropped from tracking -- its thread is never joined by
+  `cascade_close_subagents` (it's not in `handles()` anymore), never cancellable, and keeps mutating
+  `child.messages` and pushing UI updates via `call_from_thread` indefinitely. This is a strong
+  candidate mechanism for the "two threads both appending to history" symptom above, and for
+  session instability/degradation that gets worse the longer a session runs with many subagents.
+  Needs a lock (or a per-handle dispatch guard) around the check-and-dispatch in
+  `dispatch_direct_message`, plus confirmation that a leaked thread from this path is what was
+  actually observed (not yet reproduced live -- found by code inspection). The TUI's own direct
+  subagent-messaging path (`_submit_subagent_prompt`) isn't vulnerable to this specific race since
+  it's called synchronously on the single-threaded UI event loop, but the ACP path used by the
+  VSCode plugin is.
+
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
@@ -24,7 +46,13 @@
 
 * In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
-  * Definitely need to start pruning the rendered history in the DOM at a certain point.
+  * Definitely need to start pruning the rendered history in the DOM at a certain point. See
+    `docs/plans/drafting/023-tui-history-virtualization.md` (and its VSCode-side counterpart,
+    `docs/plans/drafting/024-vscode-history-virtualization.md`).
+  * The "runaway threads" half may be explained by the leaked-subagent-thread mechanism documented
+    under "Bugs" above (`dispatch_direct_message`'s TOCTOU race) rather than being a separate,
+    unrelated cause -- worth re-checking once that's fixed before assuming a third mechanism is
+    also needed.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
