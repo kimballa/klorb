@@ -10,8 +10,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks import common as tasks_common
-from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, chainlink_available, \
-    open_blocker_count
+from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, chainlink_available, open_blocker_count
 from klorb.workspace import Workspace
 
 requires_chainlink = pytest.mark.skipif(
