@@ -46,8 +46,7 @@ export type HistoryEntryKind =
  * entry. */
 export interface TextHistoryEntry {
   kind: HistoryEntryKind;
-  /** Stable identity for this entry, generated once at construction time -- used as the
-   * windowed history list's React key so it survives the trailing entry's own chunk updates. */
+  /** Stable identity for this entry. */
   id: string;
   text: string;
   streaming: boolean;
@@ -64,8 +63,7 @@ export interface TextHistoryEntry {
  * (its own chevron). */
 export interface ToolCallHistoryEntry {
   kind: 'toolCall';
-  /** Stable identity for this entry -- `callId` itself, since it's already a unique, meaningful
-   * id rather than an arbitrary one. */
+  /** Stable identity for this entry. */
   id: string;
   callId: string;
   status: 'in_progress' | 'completed' | 'failed';
@@ -95,14 +93,12 @@ export interface SessionStatsHistoryEntry {
 /** One entry in the panel's history scroll. */
 export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry | SessionStatsHistoryEntry;
 
-/** Generates a client-side-only id for a new `HistoryEntry` -- unique enough to key the
- * windowed history list's React elements, never round-tripped to the server. */
+/** Generates a client-side-only id for a new `HistoryEntry`. */
 export function makeEntryId(): string {
   return crypto.randomUUID();
 }
 
-/** Backfills an `id` onto an entry restored from a `vscode.getState()` snapshot saved before
- * `HistoryEntry` grew this field -- returns `entry` unchanged if it already carries one. */
+/** Returns `entry` unchanged, or with an id generated for it if it doesn't already have one. */
 export function ensureEntryId(entry: HistoryEntry): HistoryEntry {
   return typeof entry.id === 'string' && entry.id.length > 0
     ? entry
@@ -476,8 +472,7 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
 }
 
 /** Converts one wire-format `SessionReplayEntry` (`shared/webviewMessages.ts`) into this
- * feature's own `HistoryEntry`, assigning it a stable `id` -- `callId` for a tool call, a fresh
- * one otherwise, since a replay entry doesn't carry one over the wire. */
+ * feature's own `HistoryEntry`, assigning it a stable `id`. */
 function sessionReplayEntryToHistoryEntry(entry: SessionReplayEntry): HistoryEntry {
   if (entry.kind === 'toolCall') {
     return { ...entry, id: entry.callId, contentText: entry.contentText ?? undefined };

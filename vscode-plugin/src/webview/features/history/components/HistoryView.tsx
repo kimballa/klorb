@@ -188,9 +188,7 @@ const Entry = memo(function Entry({
   }
 });
 
-/** Wraps one windowed item in a `.history-item` div (CSS spacing/alignment hook, see
- * `media/main.css`) -- defined outside `HistoryView` so its identity stays stable across
- * renders, which `react-virtuoso`'s own `components` prop requires. */
+/** Wraps one windowed item in a `.history-item` div. */
 function HistoryItem({
   item: _item,
   context: _context,

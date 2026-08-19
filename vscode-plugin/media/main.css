@@ -349,15 +349,13 @@ body {
   padding: 8px 12px;
 }
 
-/* One windowed history item's wrapper (`react-virtuoso`'s `components.Item` override, see
-   HistoryView.tsx) -- margins would escape Virtuoso's own content-height measurement, so
-   inter-entry spacing is padding here rather than the flex `gap` the unwindowed layout used. */
+/* One windowed history item's wrapper. */
 .history-item {
   padding-bottom: 8px;
 }
 
-/* A `'prompt'`/`'queuedMessage'` entry's system-interjection notices and its bubble share one
-   item wrapper; space them apart the same way `.history-item` spaces separate entries. */
+/* Spaces apart a `'prompt'`/`'queuedMessage'` entry's system-interjection notices from its
+   bubble, since they share one item wrapper. */
 .history-item > * + * {
   margin-top: 8px;
 }
