@@ -2,6 +2,7 @@
 import type { StatusSnapshot } from 'webview/App';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import {
+  ensureEntryId,
   isHistoryEntry,
   type HistoryEntry,
   type PendingInteraction,
@@ -44,6 +45,8 @@ export function readPersistedState(vscode: VsCodeApi): SessionState {
   const state = raw as Partial<SessionState>;
   return {
     ...state,
-    entries: Array.isArray(state.entries) ? state.entries.filter(isHistoryEntry) : [],
+    entries: Array.isArray(state.entries)
+      ? state.entries.filter(isHistoryEntry).map(ensureEntryId)
+      : [],
   };
 }

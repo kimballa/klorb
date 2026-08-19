@@ -46,6 +46,8 @@ export type HistoryEntryKind =
  * entry. */
 export interface TextHistoryEntry {
   kind: HistoryEntryKind;
+  /** Stable identity for this entry. */
+  id: string;
   text: string;
   streaming: boolean;
   /** Images attached to a `'prompt'` entry -- a live-submitted entry carries the full
@@ -61,6 +63,8 @@ export interface TextHistoryEntry {
  * (its own chevron). */
 export interface ToolCallHistoryEntry {
   kind: 'toolCall';
+  /** Stable identity for this entry. */
+  id: string;
   callId: string;
   status: 'in_progress' | 'completed' | 'failed';
   title: string;
@@ -78,6 +82,7 @@ export interface ToolCallHistoryEntry {
  * `shared/webviewMessages.ts`'s `SessionStatsMessage` for field semantics. */
 export interface SessionStatsHistoryEntry {
   kind: 'sessionStats';
+  id: string;
   messageCounts: SessionStatsCounts;
   toolBreakdown: SessionStatsToolRow[];
   tokenUsage: SessionStatsCounts;
@@ -88,6 +93,18 @@ export interface SessionStatsHistoryEntry {
 /** One entry in the panel's history scroll. */
 export type HistoryEntry = TextHistoryEntry | ToolCallHistoryEntry | SessionStatsHistoryEntry;
 
+/** Generates a client-side-only id for a new `HistoryEntry`. */
+export function makeEntryId(): string {
+  return crypto.randomUUID();
+}
+
+/** Returns `entry` unchanged, or with an id generated for it if it doesn't already have one. */
+export function ensureEntryId(entry: HistoryEntry): HistoryEntry {
+  return typeof entry.id === 'string' && entry.id.length > 0
+    ? entry
+    : { ...entry, id: makeEntryId() };
+}
+
 /** Appends the user's submitted prompt as a finished (non-streaming) entry, with any images
  * attached to it (see `PromptInput`'s attachment tray). */
 export function appendPrompt(
@@ -95,7 +112,10 @@ export function appendPrompt(
   text: string,
   images?: ImageAttachment[]
 ): HistoryEntry[] {
-  return [...entries, { kind: 'prompt', text, streaming: false, ...(images ? { images } : {}) }];
+  return [
+    ...entries,
+    { kind: 'prompt', text, streaming: false, id: makeEntryId(), ...(images ? { images } : {}) },
+  ];
 }
 
 /** Appends a message the server just confirmed queuing into the running turn
@@ -105,7 +125,7 @@ export function appendQueuedMessage(
   entries: readonly HistoryEntry[],
   text: string
 ): HistoryEntry[] {
-  return [...entries, { kind: 'queuedMessage', text, streaming: false }];
+  return [...entries, { kind: 'queuedMessage', text, streaming: false, id: makeEntryId() }];
 }
 
 /** Flips the oldest still-`queuedMessage` entry whose text matches `text` to a regular
@@ -149,7 +169,10 @@ export function applyInterruptedMarker(entries: readonly HistoryEntry[]): Histor
     };
     return [...entries.slice(0, -1), updated];
   }
-  return [...finishStreaming(entries), { kind: 'notice', text: '(interrupted)', streaming: false }];
+  return [
+    ...finishStreaming(entries),
+    { kind: 'notice', text: '(interrupted)', streaming: false, id: makeEntryId() },
+  ];
 }
 
 function metaString(klorbMeta: Record<string, unknown>, key: string): string | undefined {
@@ -181,7 +204,10 @@ export function appendInteraction(
     lines.push(commandText);
   }
   lines.push(`Decision: ${decisionName}`);
-  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
+  return [
+    ...entries,
+    { kind: 'interaction', text: lines.join('\n'), streaming: false, id: makeEntryId() },
+  ];
 }
 
 /** Appends a compact permanent record of an answered `questionAsk` -- the `appendInteraction()`
@@ -197,7 +223,10 @@ export function appendQuestionInteraction(
     ask.question,
     `Answer: ${answerText}`,
   ];
-  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
+  return [
+    ...entries,
+    { kind: 'interaction', text: lines.join('\n'), streaming: false, id: makeEntryId() },
+  ];
 }
 
 /** Appends a compact permanent record of an answered `toolCallLimitAsk` -- the
@@ -209,7 +238,10 @@ export function appendToolCallLimitInteraction(
   answerText: string
 ): HistoryEntry[] {
   const lines = ['Tool call limit reached', ask.message, `Decision: ${answerText}`];
-  return [...entries, { kind: 'interaction', text: lines.join('\n'), streaming: false }];
+  return [
+    ...entries,
+    { kind: 'interaction', text: lines.join('\n'), streaming: false, id: makeEntryId() },
+  ];
 }
 
 function appendChunk(
@@ -221,7 +253,7 @@ function appendChunk(
   if (last !== undefined && last.kind === kind && last.streaming) {
     return [...entries.slice(0, -1), { ...last, text: last.text + text }];
   }
-  return [...entries, { kind, text, streaming: true }];
+  return [...entries, { kind, text, streaming: true, id: makeEntryId() }];
 }
 
 function finishStreaming(entries: readonly HistoryEntry[]): HistoryEntry[] {
@@ -270,6 +302,7 @@ function appendToolCallStarted(
 ): HistoryEntry[] {
   const entry: ToolCallHistoryEntry = {
     kind: 'toolCall',
+    id: message.callId,
     callId: message.callId,
     status: 'in_progress',
     title: message.title,
@@ -295,6 +328,7 @@ function applyToolCallUpdated(
   if (index === -1) {
     const entry: ToolCallHistoryEntry = {
       kind: 'toolCall',
+      id: message.callId,
       callId: message.callId,
       status,
       title: message.title ?? 'Tool call',
@@ -345,25 +379,33 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
       }
       return [
         ...finishStreaming(entries),
-        { kind: 'notice', text: `Turn ended: ${message.stopReason}`, streaming: false },
+        {
+          kind: 'notice',
+          text: `Turn ended: ${message.stopReason}`,
+          streaming: false,
+          id: makeEntryId(),
+        },
       ];
     }
     case 'turnError':
       return [
         ...finishStreaming(entries),
-        { kind: 'error', text: message.message, streaming: false },
+        { kind: 'error', text: message.message, streaming: false, id: makeEntryId() },
       ];
     case 'serverLost':
       return [
         ...finishStreaming(entries),
-        { kind: 'serverError', text: message.message, streaming: false },
+        { kind: 'serverError', text: message.message, streaming: false, id: makeEntryId() },
       ];
     case 'messageQueued':
       return appendQueuedMessage(entries, message.text);
     case 'queuedMessageSent':
       return applyQueuedMessageSent(entries, message.text);
     case 'notice':
-      return [...entries, { kind: 'notice', text: message.text, streaming: false }];
+      return [
+        ...entries,
+        { kind: 'notice', text: message.text, streaming: false, id: makeEntryId() },
+      ];
     case 'serverLog':
       return [
         ...entries,
@@ -371,6 +413,7 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
           kind: message.level >= ERROR_LEVEL_VALUE ? 'error' : 'notice',
           text: message.text,
           streaming: false,
+          id: makeEntryId(),
         },
       ];
     case 'sessionReset':
@@ -396,6 +439,7 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
         ...entries,
         {
           kind: 'sessionStats',
+          id: makeEntryId(),
           messageCounts: message.messageCounts,
           toolBreakdown: message.toolBreakdown,
           tokenUsage: message.tokenUsage,
@@ -428,15 +472,12 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
 }
 
 /** Converts one wire-format `SessionReplayEntry` (`shared/webviewMessages.ts`) into this
- * feature's own `HistoryEntry` -- the two shapes are field-for-field identical except
- * `SessionReplayToolCallEntry.contentText`, which allows `null` (JSON's "no value" — the server
- * sends it when a replayed tool call never got a matching response) where
- * `ToolCallHistoryEntry.contentText` only allows `undefined`. */
+ * feature's own `HistoryEntry`, assigning it a stable `id`. */
 function sessionReplayEntryToHistoryEntry(entry: SessionReplayEntry): HistoryEntry {
   if (entry.kind === 'toolCall') {
-    return { ...entry, contentText: entry.contentText ?? undefined };
+    return { ...entry, id: entry.callId, contentText: entry.contentText ?? undefined };
   }
-  return entry;
+  return { ...entry, id: makeEntryId() };
 }
 
 /** Replaces the history wholesale with a previously saved session's conversation
@@ -529,20 +570,4 @@ export function applyTurnFlag(inFlight: boolean, message: HostMessage): boolean 
     default:
       return inFlight;
   }
-}
-
-/** Whether a scrolling container showing `scrollTop`/`scrollHeight`/`clientHeight` is close
- * enough to its bottom edge to count as "pinned" -- i.e. whether new content arriving should
- * follow the view to the bottom, or leave it alone because the user has scrolled up to reread
- * earlier output. Mirrors `klorb.tui.formatting.pinned_to_bottom`'s TUI-side role: cheap to
- * evaluate on every `scroll` event, read elsewhere (not recomputed) before applying new
- * content. `thresholdPx` tolerates sub-pixel/rounding slop so a viewport that's *visually*
- * at the bottom (but not stored as exactly 0 by the browser) still counts as pinned. */
-export function isScrollPinnedToBottom(
-  scrollTop: number,
-  scrollHeight: number,
-  clientHeight: number,
-  thresholdPx = 24
-): boolean {
-  return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }

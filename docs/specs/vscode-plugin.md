@@ -239,9 +239,10 @@ extension specifically.
   rendered into `#root` by React. `vscode-plugin/media/main.css` styles the rendered DOM by
   id/class against the VS Code theme's CSS custom properties (`--vscode-*`); `#root { display:
   contents }` keeps the mount div itself out of the flex layout so `.title`/`#history`/
-  `.input-row` lay out as if they were direct children of `<body>`. `#history` is a flex column
-  (the only element with `overflow-y: auto`, so a scrollbar appears there once its content
-  overflows the panel). The page's `Content-Security-Policy` meta tag sets `default-src 'none'`
+  `.input-row` lay out as if they were direct children of `<body>`. `#history` is `HistoryView`'s
+  `react-virtuoso` list root (the only element with `overflow-y: auto`, so a scrollbar appears
+  there once its content overflows the panel) -- see "History windowing" below. The page's
+  `Content-Security-Policy` meta tag sets `default-src 'none'`
   (nothing loads unless a more specific directive allows it), `style-src`/`script-src` scoped to
   `webview.cspSource`/the per-load nonce, `connect-src ${webview.cspSource}` (so Chrome DevTools'
   own background fetch of `out/webview/main.js.map` -- when a developer opens **Developer: Open
@@ -413,15 +414,27 @@ extension specifically.
     other message leaves it unchanged. A resolved decision/answer clears `pendingInteraction`
     through `App`'s own `handleApprovalDecision()`/`handleQuestionAnswer()`, not through this
     reducer.
-  * `HistoryView` renders the scrolling `HistoryEntry[]` list: `'prompt'` entries as a
-    right-aligned `.bubble` (index-keyed — safe here specifically because entries only ever
-    append, never reorder or get removed or inserted in the middle, the one case React's own
-    docs call out as fine for index keys); `'response'` entries through `react-markdown`;
-    `'thinking'` entries as a collapsed-by-default `<details>` disclosure (muted/italic styling,
-    matching the TUI's thinking block) that keeps streaming into its body while the reader has
-    it open; `'error'`/`'notice'`/`'interaction'` entries as plain styled text; `'toolCall'`
-    entries as a `ToolCallChip`; `'sessionStats'` entries as a `SessionStatsCard` (see "Status
-    row and session controls" below).
+  * `HistoryView` renders the scrolling `HistoryEntry[]` list, windowed via `react-virtuoso` (see
+    "History windowing" below): `'prompt'` entries as a right-aligned `.bubble`; `'response'`
+    entries through `react-markdown`; `'thinking'` entries as a collapsed-by-default `<details>`
+    disclosure (muted/italic styling, matching the TUI's thinking block) that keeps streaming
+    into its body while the reader has it open; `'error'`/`'notice'`/`'interaction'` entries as
+    plain styled text; `'toolCall'` entries as a `ToolCallChip`; `'sessionStats'` entries as a
+    `SessionStatsCard` (see "Status row and session controls" below).
+
+* **History windowing**: `HistoryView` renders `HistoryEntry[]` through `react-virtuoso`'s
+  `Virtuoso` component rather than an unconditional `.map()`, so a long session keeps only the
+  entries near the viewport mounted in the DOM instead of every message ever received. Each
+  `HistoryEntry` carries a stable `id` (a fresh `crypto.randomUUID()` at construction time, or a
+  `toolCall` entry's own `callId`), keyed via `computeItemKey` -- entries persisted before
+  `HistoryEntry` grew this field are backfilled one at construction time by
+  `sessionState.readPersistedState()`'s `ensureEntryId()`. `Entry` (one entry's own renderer) is
+  `React.memo`'d so appending a streaming chunk to the trailing entry doesn't re-render every
+  earlier one. `usePinnedScroll` (`vscode-plugin/src/webview/hooks/usePinnedScroll.ts`) tracks
+  whether the list is scrolled to its bottom edge through Virtuoso's own `atBottomStateChange`
+  callback and drives "follow new content" via its `scrollToIndex` imperative API, rather than
+  raw `scrollTop`/`scrollHeight` DOM reads -- the same hook backs both the root `#history` view
+  and the subagents panel's `#subagent-history` view (see "Subagents panel" below).
 * `vscode-plugin/src/webview/components/PromptInput.tsx` renders the `<vscode-textarea>` +
   `<vscode-button>` input row: disabled while `inFlight` is true, unless `enqueueMessageCapable`
   (see "Queued messages and interrupt polish" below for that prop and the Send/Stop button

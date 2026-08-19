@@ -16,6 +16,7 @@ afterEach(cleanup);
 function makeEntry(overrides: Partial<ToolCallHistoryEntry> = {}): ToolCallHistoryEntry {
   return {
     kind: 'toolCall',
+    id: 'call-1',
     callId: 'call-1',
     status: 'completed',
     title: 'ReadFile',

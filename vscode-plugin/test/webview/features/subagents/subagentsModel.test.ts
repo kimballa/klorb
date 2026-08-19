@@ -160,9 +160,10 @@ describe('subagentTranscriptEntries', () => {
     };
     const entries = subagentTranscriptEntries(transcript, new Set());
     expect(entries).toEqual([
-      { kind: 'prompt', text: 'look into it', streaming: false },
+      { kind: 'prompt', text: 'look into it', streaming: false, id: expect.any(String) },
       {
         kind: 'toolCall',
+        id: 'call-1',
         callId: 'call-1',
         status: 'completed',
         title: 'Read foo.py',
@@ -206,8 +207,13 @@ describe('subagentTranscriptEntries', () => {
     };
     const entries = subagentTranscriptEntries(transcript, new Set());
     expect(entries).toEqual([
-      { kind: 'response', text: 'working on it', streaming: false },
-      { kind: 'queuedMessage', text: 'also check the tests', streaming: false },
+      { kind: 'response', text: 'working on it', streaming: false, id: expect.any(String) },
+      {
+        kind: 'queuedMessage',
+        text: 'also check the tests',
+        streaming: false,
+        id: expect.any(String),
+      },
     ]);
   });
 });

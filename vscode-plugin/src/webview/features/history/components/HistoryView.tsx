@@ -1,6 +1,13 @@
 // © Copyright 2026 Aaron Kimball
 import { Fragment, type JSX, memo, type Ref } from 'react';
 import ReactMarkdown from 'react-markdown';
+import {
+  Virtuoso,
+  type Components,
+  type ContextProp,
+  type ItemProps,
+  type VirtuosoHandle,
+} from 'react-virtuoso';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 
@@ -21,16 +28,23 @@ import ToolCallChip from './ToolCallChip';
 
 const REMARK_REHYPE_OPTIONS = { handlers: { yaml: renderYamlFrontmatter } };
 
+/** Pixels of extra content Virtuoso keeps mounted outside the visible viewport on each end, so
+ * scrolling by a screenful doesn't show a blank flash before the next batch of items mounts. */
+const OVERSCAN_PX = 600;
+
 export interface HistoryViewProps {
   entries: HistoryEntry[];
-  /** Ref to the scrolling container, so the owner can keep the newest entry in view. */
-  historyRef: Ref<HTMLDivElement>;
+  /** Ref to the windowed list, so the owner can scroll to a given entry. */
+  historyRef: Ref<VirtuosoHandle>;
   /** True if thinking blocks should be expanded by default. */
   allThinkingExpanded: boolean;
   onToggleToolCallExpanded(callId: string): void;
   /** Restarts the `klorb server` child process -- wired to a `'serverError'` entry's "Restart
    * Server" action (see `docs/specs/vscode-plugin.md`'s interrupt-polish section). */
   onRestartServer(): void;
+  /** Forwarded to Virtuoso's own `atBottomStateChange`, so the owner's pin-to-bottom tracking
+   * follows the windowed list's own bottom-edge detection instead of raw scroll math. */
+  onAtBottomStateChange(atBottom: boolean): void;
 }
 
 /** Props for one <Entry/>. */
@@ -174,29 +188,48 @@ const Entry = memo(function Entry({
   }
 });
 
+/** Wraps one windowed item in a `.history-item` div. */
+function HistoryItem({
+  item: _item,
+  context: _context,
+  ...rest
+}: ItemProps<HistoryEntry> & ContextProp<unknown>): JSX.Element {
+  return <div {...rest} className="history-item" />;
+}
+
+const HISTORY_VIEW_COMPONENTS: Components<HistoryEntry> = { Item: HistoryItem };
+
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
  * markdown, thinking as a collapsed-by-default disclosure that streams while open, and tool
- * calls as `ToolCallChip`s. `historyRef` points at the scrolling entries container so the
- * owner's scroll-into-view logic is unaffected. */
+ * calls as `ToolCallChip`s. Windowed via `react-virtuoso` so only entries near the viewport stay
+ * mounted; `historyRef` exposes its imperative scroll API to the owner. */
 export default function HistoryView({
   entries,
   historyRef,
   allThinkingExpanded,
   onToggleToolCallExpanded,
   onRestartServer,
+  onAtBottomStateChange,
 }: HistoryViewProps): JSX.Element {
   return (
-    <div id="history" ref={historyRef}>
-      {entries.map((entry, index) => (
+    <Virtuoso
+      id="history"
+      ref={historyRef}
+      data={entries}
+      computeItemKey={(_index, entry) => entry.id}
+      atBottomStateChange={onAtBottomStateChange}
+      atBottomThreshold={24}
+      increaseViewportBy={OVERSCAN_PX}
+      components={HISTORY_VIEW_COMPONENTS}
+      itemContent={(index, entry) => (
         <Entry
-          key={index}
           entry={entry}
           index={index}
           allThinkingExpanded={allThinkingExpanded}
           onToggleToolCallExpanded={onToggleToolCallExpanded}
           onRestartServer={onRestartServer}
         />
-      ))}
-    </div>
+      )}
+    />
   );
 }
