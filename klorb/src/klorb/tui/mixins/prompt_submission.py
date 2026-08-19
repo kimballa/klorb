@@ -134,7 +134,7 @@ class PromptSubmissionMixin(ReplAppBase):
             self.call_from_thread(self._finish_shell_command, error_message)
         finally:
             try:
-                self.call_from_thread(self._ensure_turn_finished)
+                self.call_from_thread(self._ensure_turn_finished, cancel_event)
             except Exception:
                 pass
 
@@ -449,7 +449,7 @@ class PromptSubmissionMixin(ReplAppBase):
             # without reaching a handler. Guarded because the event loop may already
             # be gone during teardown.
             try:
-                self.call_from_thread(self._ensure_turn_finished)
+                self.call_from_thread(self._ensure_turn_finished, cancel_event)
             except Exception:
                 pass
 

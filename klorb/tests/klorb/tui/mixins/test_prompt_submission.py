@@ -278,6 +278,65 @@ async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost(
         assert prompt_widgets.last(Static).content == "second queued\n\nthird queued"
 
 
+async def test_ensure_turn_finished_backstop_does_not_finish_a_newer_turn_it_did_not_start(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """Interrupting a turn with a message queued behind it drains that message into a fresh turn
+    before the interrupted turn's own worker reaches its `finally` backstop
+    (`_ensure_turn_finished`). Keying that backstop off `_turn_in_flight` alone tore down the new
+    turn's state while its worker was still genuinely running, letting a real submit start a
+    third, truly concurrent worker on top of it."""
+    mock_provider = MagicMock()
+    first_turn_streaming = threading.Event()
+    release_first_turn = threading.Event()
+    second_turn_streaming = threading.Event()
+    release_second_turn = threading.Event()
+    call_count = 0
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            first_turn_streaming.set()
+            release_first_turn.wait(timeout=5)
+            raise ResponseAborted()
+        second_turn_streaming.set()
+        release_second_turn.wait(timeout=5)
+        return _reply()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider, make_session_config))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "first"
+        await pilot.press("enter")
+        await _wait_until(pilot, first_turn_streaming.is_set)
+
+        app._queue_prompt("second")
+        await pilot.pause()
+
+        release_first_turn.set()
+        await _wait_until(pilot, second_turn_streaming.is_set)
+
+        # The queued message's turn is genuinely running now, not reset to idle by the first
+        # turn's own backstop. A real submit here must queue behind it, not dispatch straight to
+        # a third, truly concurrent worker.
+        assert app._turn_in_flight is True
+        app._submit_prompt("third")
+        await pilot.pause()
+        assert mock_provider.send_prompt.call_count == 2
+
+        release_second_turn.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app._turn_in_flight is False
+        assert prompt_input.disabled is False  # type: ignore[unreachable]
+
+    assert mock_provider.send_prompt.call_count == 2  # type: ignore[unreachable]
+
+
 async def test_quit_on_success_exits_after_a_successful_turn(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

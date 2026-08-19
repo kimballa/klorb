@@ -1,6 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """KeyActionsMixin: key handling, actions, quit/exit, and watchdog snoozing for ReplApp."""
 
+import threading
 import time
 from typing import NoReturn
 
@@ -325,9 +326,14 @@ class KeyActionsMixin(ReplAppBase):
             self._interrupt_notice_widget.add_class("interrupted")
             self._interrupt_notice_widget = None
 
-    def _ensure_turn_finished(self) -> None:
-        """Backstop that runs `_finish_turn` iff a turn is still marked in flight."""
+    def _ensure_turn_finished(self, own_cancel_event: threading.Event) -> None:
+        """Backstop that runs `_finish_turn` iff `own_cancel_event` is still the active
+        `_cancel_event`/`_shell_cancel_event` for an in-flight turn. A terminal handler may
+        already have started a newer turn with its own cancel event by the time this runs, and
+        the identity check leaves that newer turn alone."""
         if not self._turn_in_flight:
+            return
+        if self._cancel_event is not own_cancel_event and self._shell_cancel_event is not own_cancel_event:
             return
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self._finish_turn(history, self._history_pinned_to_bottom, agent_turn_succeeded=False)
