@@ -264,12 +264,19 @@ class VirtualizedHistoryContainer:
             if reveal:
                 self._container.scroll_to(y=placeholder_y, animate=False, immediate=True)
             else:
-                # Auto-expand only fires for a placeholder overlapping the viewport, so
-                # compensating unconditionally keeps visible content from jumping when it's replaced.
                 self.force_layout()
                 added_height = sum(widget.virtual_region.height for widget in widgets)
-                delta = added_height - placeholder_height
-                new_y = max(0.0, self._container.scroll_y + delta)
+                scroll_y = self._container.scroll_y
+                if scroll_y <= placeholder_y:
+                    new_y = scroll_y
+                elif scroll_y >= placeholder_y + placeholder_height:
+                    new_y = scroll_y + (added_height - placeholder_height)
+                else:
+                    # scroll_y sits partway into the placeholder's own span, so hold its
+                    # fractional depth steady instead of shifting it by a flat delta.
+                    fraction = (scroll_y - placeholder_y) / placeholder_height
+                    new_y = placeholder_y + fraction * added_height
+                new_y = max(0.0, new_y)
                 self._container.scroll_to(y=new_y, animate=False, immediate=True)
             logger.debug(
                 "Expanded chunk(%d,%d) (%d messages), reveal=%s",

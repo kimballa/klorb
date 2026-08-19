@@ -76,10 +76,13 @@ debounced layout timer next fires. `force_layout()` calls Textual's private `Scr
 rather than the public `Widget.wait_for_refresh()`, since the latter schedules its callback through
 the same queue `refresh_visibility()` is often already running from and empirically does not
 reliably fire again from within that reentrant chain.
-`_expand` applies the resulting delta to `scroll_y` on every auto-triggered (non-`reveal`)
-expansion, since `refresh_visibility()` only auto-expands a placeholder that already overlaps the
-viewport; the same is true of `_collapse`'s delta when the collapsing chunk sits above the
-viewport. Both write the new position via `scroll_to(animate=False, immediate=True)` rather than
+`_expand` compensates `scroll_y` on every auto-triggered (non-`reveal`) expansion, since
+`refresh_visibility()` only auto-expands a placeholder that already overlaps the viewport: a flat
+height delta when `scroll_y` sits entirely above or below the placeholder, or a fractional-depth
+remap when `scroll_y` sits inside the placeholder's own span, which a seeded prefix's inexact
+height estimate makes possible. `_collapse` applies the same flat-delta compensation when the
+collapsing chunk sits above the viewport. Both write the new position via
+`scroll_to(animate=False, immediate=True)` rather than
 assigning `scroll_y` directly, since a mousewheel or scrollbar-drag scroll may still be animating
 when the compensation runs, and a plain attribute write would just get overwritten by the
 animation's next tick. The exception is `_expand` with `reveal=True` (the `Ctrl+E` keybinding and
