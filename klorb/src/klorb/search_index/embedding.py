@@ -3,6 +3,7 @@
 installed to `embedding_model_target_dir()` by `install_embedding_model()`.
 """
 
+import contextlib
 import ctypes
 import importlib.resources
 import logging
@@ -10,6 +11,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 
@@ -54,24 +56,48 @@ def embedding_model_available() -> bool:
     return embedding_model_target_dir().is_dir()
 
 
+@contextlib.contextmanager
+def _suppressed_native_stderr():
+    """Redirects the OS-level stderr fd to `/dev/null` for the block, muting onnxruntime's
+    first-import GPU device-discovery warning, which prints directly to that fd before any
+    Python-level logging control can run."""
+    stderr_fd = sys.stderr.fileno()
+    saved_fd = os.dup(stderr_fd)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, stderr_fd)
+        yield
+    finally:
+        os.dup2(saved_fd, stderr_fd)
+        os.close(devnull_fd)
+        os.close(saved_fd)
+
+
+def _import_onnxruntime() -> ModuleType:
+    """Imports and returns `onnxruntime`, suppressing its first-import GPU device-discovery
+    warning via `_suppressed_native_stderr()`."""
+    with _suppressed_native_stderr():
+        import onnxruntime
+    return onnxruntime
+
+
 def _ensure_onnx_logging_configured() -> None:
     """Configure onnx logger output to errors only."""
-    global _ONNXRUNTIME_LOG_SEVERITY_ERROR
-    import onnxruntime
+    onnxruntime = _import_onnxruntime()
     onnxruntime.set_default_logger_severity(  # type: ignore[attr-defined]
         _ONNXRUNTIME_LOG_SEVERITY_ERROR)
 
 
 def cuda_available() -> bool:
     """Whether the installed `onnxruntime` build was compiled with `CUDAExecutionProvider`."""
-    import onnxruntime
+    onnxruntime = _import_onnxruntime()
     _ensure_onnx_logging_configured()
     return CUDA_PROVIDER in onnxruntime.get_available_providers()
 
 
 def coreml_available() -> bool:
     """Whether the installed `onnxruntime` build was compiled with `CoreMLExecutionProvider`."""
-    import onnxruntime
+    onnxruntime = _import_onnxruntime()
     _ensure_onnx_logging_configured()
     return COREML_PROVIDER in onnxruntime.get_available_providers()
 
@@ -143,7 +169,7 @@ class EmbeddingModel:
                 f"Embedding model not found at {target_dir}; run `klorb init` first.")
         providers: list[str] | None = None
         gpu_provider: str | None = None
-        import onnxruntime
+        onnxruntime = _import_onnxruntime()
         _ensure_onnx_logging_configured()
         if use_gpu:
             gpu_provider = _gpu_provider_for_platform()
