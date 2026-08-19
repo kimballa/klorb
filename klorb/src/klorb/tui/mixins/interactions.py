@@ -169,10 +169,7 @@ class InteractionsMixin(ReplAppBase):
     @asynccontextmanager
     async def _reserved_interaction_slot(self, session_id: str) -> AsyncIterator[None]:
         """Acquire `_interaction_lock` for `session_id`'s interaction panel, re-verifying that
-        `session_id` is still selected once the lock is actually granted rather than trusting the
-        selection check the caller made before queuing behind another panel. If the user switched
-        away in the meantime, releases the lock and waits again instead of mounting a panel for a
-        session that's no longer on screen."""
+        `session_id` is still selected once the lock is actually granted."""
         while True:
             await self._await_session_selected(session_id)
             await self._interaction_lock.acquire()
