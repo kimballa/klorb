@@ -3,7 +3,8 @@
 confirmation flows for ReplApp."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import TypeVar
 
 from textual.containers import Vertical, VerticalScroll
@@ -165,6 +166,21 @@ class InteractionsMixin(ReplAppBase):
         self._release_pending_interaction = lambda: resolve(teardown_default)
         return resolve
 
+    @asynccontextmanager
+    async def _reserved_interaction_slot(self, session_id: str) -> AsyncIterator[None]:
+        """Acquire `_interaction_lock` for `session_id`'s interaction panel, re-verifying that
+        `session_id` is still selected once the lock is actually granted."""
+        while True:
+            await self._await_session_selected(session_id)
+            await self._interaction_lock.acquire()
+            if self._selected_session.id == session_id:
+                break
+            self._interaction_lock.release()
+        try:
+            yield
+        finally:
+            self._interaction_lock.release()
+
     async def _confirm_permission_ask(self, ask_ctx: PermissionAskContext) -> PermissionDecision:
         """Mount a `PermissionAskPanel` for `ask_ctx` into `#interaction-panel` and wait for the
         user's choice.
@@ -195,7 +211,8 @@ class InteractionsMixin(ReplAppBase):
         bounded history, so a later `resolve_item_risk_assessment` call this session can use it as
         calibration context — see that function's own docstring.
         """
-        await self._await_session_selected(ask_ctx.origin_session_id or self._session.id)
+        session_id = ask_ctx.origin_session_id or self._session.id
+        await self._await_session_selected(session_id)
 
         # Offload to a worker thread: `resolve_item_risk_assessment` makes a blocking, potentially
         # multi-second HTTP call to the risk-classifier model. Running it inline here would freeze
@@ -236,7 +253,7 @@ class InteractionsMixin(ReplAppBase):
                 decision_future, PermissionDecision(action="deny", scope="once")))
 
         try:
-            async with self._interaction_lock:
+            async with self._reserved_interaction_slot(session_id):
                 panel_container = self._enter_interaction_mode()
                 await panel_container.mount(panel)
                 decision = await decision_future
@@ -283,7 +300,8 @@ class InteractionsMixin(ReplAppBase):
         `_on_ask_user_questions` is what the worker thread actually calls, via
         `call_from_thread`, to get here.
         """
-        await self._await_session_selected(ask_ctx.origin_session_id or self._session.id)
+        session_id = ask_ctx.origin_session_id or self._session.id
+        await self._await_session_selected(session_id)
 
         answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
         panel = AskUserQuestionsPanel(
@@ -291,7 +309,7 @@ class InteractionsMixin(ReplAppBase):
                 answer_future, AskUserQuestionsAnswer(cancelled=True)))
 
         try:
-            async with self._interaction_lock:
+            async with self._reserved_interaction_slot(session_id):
                 panel_container = self._enter_interaction_mode()
                 await panel_container.mount(panel)
                 answer = await answer_future
@@ -326,7 +344,8 @@ class InteractionsMixin(ReplAppBase):
         `_on_escalate_privileges` is what the worker thread actually calls, via
         `call_from_thread`, to get here.
         """
-        await self._await_session_selected(escalate_ctx.origin_session_id or self._session.id)
+        session_id = escalate_ctx.origin_session_id or self._session.id
+        await self._await_session_selected(session_id)
 
         decision_future: asyncio.Future[EscalatePrivilegesDecision] = (
             asyncio.get_running_loop().create_future())
@@ -335,7 +354,7 @@ class InteractionsMixin(ReplAppBase):
                 decision_future, EscalatePrivilegesDecision(approved=False)))
 
         try:
-            async with self._interaction_lock:
+            async with self._reserved_interaction_slot(session_id):
                 panel_container = self._enter_interaction_mode()
                 await panel_container.mount(panel)
                 decision = await decision_future

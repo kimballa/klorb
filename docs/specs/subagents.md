@@ -471,16 +471,20 @@ session's address and title; the footer shows the selected row's `config.role_na
 **Selection is global, and gates every ask — root included.** `ReplApp._selected_session`
 (default: the root session) and `_selected_handle` (`None` for the root) track which session is
 currently displayed. `InteractionsMixin._confirm_permission_ask`/`_confirm_ask_user_questions`/
-`_confirm_escalate_privileges` each start by calling `SubagentsPanelMixin.
-_await_session_selected(ask_ctx.origin_session_id or self._session.id)`, which polls
-(`asyncio.sleep`, mirroring `SubagentTracker`'s own poll pattern rather than a new
-synchronization primitive) until that session becomes selected, *before* acquiring
-`_interaction_lock` — so an ask for a session that isn't selected can't hold the lock and starve
-every other panel, including the root's own. This makes "the ask only shows once its owner is
+`_confirm_escalate_privileges` each mount their panel inside `InteractionsMixin.
+_reserved_interaction_slot(session_id)`, an async context manager that loops calling
+`SubagentsPanelMixin._await_session_selected(session_id)` (which polls via `asyncio.sleep`,
+mirroring `SubagentTracker`'s own poll pattern rather than a new synchronization primitive) and
+then acquiring `_interaction_lock`, re-checking that `session_id` is *still* selected once the
+lock is actually granted — if the user switched to a different session while queued behind
+another panel (or behind a classifier round trip in `_confirm_permission_ask`'s case), it releases
+the lock and waits again rather than mounting for a session that's no longer on screen. This makes
+"the ask only shows once its owner is selected, and stays hidden the instant it stops being
 selected" the general rule (a strict generalization of the pre-Phase-3 behavior, which was
-equivalent to "root is always selected"), not a subagent-specific special case. While waiting, the
-session's id sits in `_attention_needed` (an insertion-ordered `dict[str, None]`), which
-`SubagentsPanel.show_rows` renders as a blinking `(!)` marker (`_tick_subagents_panel`, a
+equivalent to "root is always selected"), not a subagent-specific special case, and keeps a queued
+ask from ever disabling the prompt input out from under an unrelated session's transcript. While
+waiting, the session's id sits in `_attention_needed` (an insertion-ordered `dict[str, None]`),
+which `SubagentsPanel.show_rows` renders as a blinking `(!)` marker (`_tick_subagents_panel`, a
 `set_interval` timer, flips the blink phase every 0.6s) and which drives the
 `#subagent-attention-status` status-line fallback ("Agent 1.1 needs your input") shown only while
 the panel itself is hidden.
@@ -494,7 +498,12 @@ reusing `RenderingMixin`'s pure `_render_restored_tool_call`/`_render_tool_resul
 every ancestor's, including the root's, by the Phase-1 intersection invariant. While it stays
 selected, the tick timer catches the view up incrementally (`_append_new_subagent_messages`, mounting
 only messages added since the last render, mirroring how `#history` streams a live turn) rather than
-rebuilding it from scratch, and follows the bottom only if the view was already pinned there
+rebuilding it from scratch. `Session.messages` returns a fresh copy on every access, so both methods
+read it exactly once into a local variable and reuse that same snapshot for the mount and for the
+rendered-count bookkeeping that follows — a second, later read could observe a longer list than what
+was actually mounted (the subagent's own background turn thread keeps appending to it concurrently),
+silently stranding whatever arrived in between as never-rendered. It follows the bottom only if the
+view was already pinned there
 (`_subagent_history_pinned_to_bottom`, kept in sync by `_on_subagent_history_scroll_changed` the same
 way `_history_pinned_to_bottom` is) — a user who scrolled up to reread earlier output isn't yanked
 back down by new content. A trailing status `Static` (`_mount_subagent_status_notice`) always

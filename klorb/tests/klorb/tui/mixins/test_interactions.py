@@ -1439,3 +1439,41 @@ async def test_permission_ask_panel_waits_for_its_subagent_to_be_selected(
 
         await pilot.press("escape")
         await task
+
+
+async def test_queued_ask_re_verifies_selection_before_showing_its_panel(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`_reserved_interaction_slot` must not mount a panel for a session that stopped being
+    selected while queued behind another panel's lock."""
+    session = _session(MagicMock(), make_session_config)
+    handle = _subagent_handle(session, make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        app._select_session(handle.session.id)
+        await pilot.pause()
+
+        # Stand in for another already-showing panel occupying the single interaction slot.
+        await app._interaction_lock.acquire()
+
+        ctx = _command_ask_ctx("echo hi").model_copy(update={"origin_session_id": handle.session.id})
+        task = asyncio.ensure_future(app._confirm_permission_ask(ctx))
+        await pilot.pause()
+        assert handle.session.id not in app._attention_needed  # passed the initial check already
+
+        app._select_session(session.id)  # the user wanders off to the root while still queued
+        await pilot.pause()
+
+        app._interaction_lock.release()
+        await pilot.pause()
+
+        assert not app.query(PermissionAskPanel)
+        assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
+        assert handle.session.id in app._attention_needed
+
+        app._select_session(handle.session.id)
+        await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
+
+        await pilot.press("escape")
+        await task
