@@ -1,10 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Out-of-band, file-based audit trail of every tool call a session executes.
 
-Distinct from klorb's ordinary `logging`-based instrumentation (see `klorb.logging_config`):
-when active, this always appends directly to a fixed file, `tool-calls.log` under
-`get_klorb_state_dir()` (default `~/.local/state/klorb/tool-calls.log`), regardless of the active
-logging configuration, handlers, or level.
+When active, this always appends directly to a fixed file, `tool-calls.log` under
+`get_klorb_state_dir()`, regardless of the active logging configuration, handlers, or level.
 """
 
 import json
@@ -22,17 +20,15 @@ TOOL_CALLS_LOG_FILENAME = "tool-calls.log"
 LOG_TOOL_CALLS_ENV_VAR = "LOG_TOOL_CALLS"
 
 LOG_TOOL_CALLS_CONFIG_KEY = "tools.logCalls"
-"""On-disk `klorb-config.json` key for `ProcessConfig.log_tool_calls` — see
-`klorb.process_config.PROCESS_KEY_MAP`."""
+"""On-disk `klorb-config.json` key for `ProcessConfig.log_tool_calls`."""
 
 _io_error_already_logged = False
 """Whether `log_tool_call()` has already reported an `IOError` via `logger.error()` once this
-process — see that function's docstring for why only the first one is ever logged."""
+process."""
 
 
 def _env_var_truthy(value: str | None) -> bool:
-    """Return whether an env var string counts as "set": `"1"` or `"true"` (case-insensitive),
-    exactly the two spellings `LOG_TOOL_CALLS` recognizes — `None`/anything else is not set.
+    """Return whether an env var string counts as "set": `"1"` or `"true"` (case-insensitive).
     """
     return value is not None and value.strip().lower() in ("1", "true")
 
@@ -41,17 +37,15 @@ def tool_call_logging_enabled(config_enabled: bool | None) -> bool:
     """Resolve whether out-of-band tool call logging is active for this process.
 
     `config_enabled` is the value of `ProcessConfig.log_tool_calls`, which is itself
-    resolved (by `klorb.cli.main()`) from the `tools.logCalls` config key and the
-    `--log-tool-calls`/`--no-log-tool-calls` CLI flag pair. When that value is an
-    explicit `True` or `False`, it is authoritative and the `LOG_TOOL_CALLS`
-    environment variable is not consulted. Only when it is still `None` (no config
-    key and no CLI flag set) does the environment variable get a chance to enable
-    logging, so an explicit `--no-log-tool-calls` overrides `LOG_TOOL_CALLS=true`.
+    resolved from the `tools.logCalls` config key and the `--log-tool-calls`/
+    `--no-log-tool-calls` CLI flag pair. When that value is an explicit `True` or `False`,
+    it is authoritative and the `LOG_TOOL_CALLS` environment variable is not consulted.
+    Only when it is still `None` does the environment variable get a chance to enable
+    logging.
 
     The environment variable is read here, at call time, rather than folded into
     `ProcessConfig` when it's loaded, so it's honored even by a caller that
-    constructs a `ProcessConfig`/`Session` directly without going through
-    `klorb.cli.main()` (in which case `config_enabled` will be `None`).
+    constructs a `ProcessConfig`/`Session` directly.
     """
     if config_enabled is not None:
         return config_enabled
@@ -62,18 +56,9 @@ def log_tool_call(name: str, args: dict[str, Any], result: Any, error: str | Non
     """Append one entry recording a finished tool call to `tool-calls.log` under
     `get_klorb_state_dir()`, creating the file and its parent directory if needed.
 
-    Each entry is separated from the file's existing contents (if any) by a blank line,
-    followed by a `---` divider line, an ISO-8601 timestamp line, `"Request:"` and the call's
-    name/arguments as pretty-printed JSON, and `"Response:"` and the call's result (or `error`,
-    on failure — the same success/failure discriminant as `klorb.session.ToolCallEvent`) as
-    pretty-printed JSON.
-
-    Never raises: an `IOError` (e.g. an unwritable state directory, a full disk) is caught and
-    reported via `logger.error()` instead, since this is a best-effort audit trail, not a
-    behavior a tool call's success should depend on. Only the first `IOError` this process
-    encounters is logged (tracked via the module-level `_io_error_already_logged` flag) — a
-    persistently unwritable log file would otherwise re-log the same failure on every single
-    tool call for the rest of the process's life.
+    Never raises: an `IOError` is caught and reported via `logger.error()` instead, since
+    this is a best-effort audit trail. Only the first `IOError` this process encounters is
+    logged.
     """
     global _io_error_already_logged
     try:

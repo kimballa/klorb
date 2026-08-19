@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Panel shown in the history scroll when the `EscalatePrivileges` tool requests a session-only
-privilege grant (see `klorb.session.EscalatePrivilegesContext`/`EscalatePrivilegesDecision` and
-`klorb.tools.escalate_privileges`)."""
+privilege grant."""
 
 from typing import Callable
 
@@ -32,18 +31,9 @@ def format_escalate_privileges_decision(decision: EscalatePrivilegesDecision) ->
 
 
 class EscalatePrivilegesPanel(Vertical):
-    """Presents one `EscalatePrivilegesContext`: a two-row, Up/Down-navigable choice between
-    `Approve` and `Deny`. Confirming `Approve` dismisses with `EscalatePrivilegesDecision(
-    approved=True)`; confirming `Deny` (or pressing Escape) dismisses with
-    `EscalatePrivilegesDecision(approved=False)`.
-
-    `ReplApp` mounts this into its full-width `#interaction-panel` container, below the history
-    scroll and above the (disabled, visually muted) prompt input, rather than as a floating
-    modal \u2014 see `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s docstring for the shared
-    mechanics: `dismiss()` just invokes the `on_dismiss` callback given at construction, and
-    `ReplApp` owns unmounting this panel and recording a permanent record of the exchange
-    afterward.
-    """
+    """Presents one `EscalatePrivilegesContext`: a two-row choice between `Approve` and
+    `Deny`. Confirming `Approve` dismisses with `approved=True`; confirming `Deny` or
+    pressing Escape dismisses with `approved=False`."""
 
     can_focus = True
 
@@ -124,8 +114,7 @@ class EscalatePrivilegesPanel(Vertical):
     def compose(self) -> ComposeResult:
         # `markup=False` on the header and description: the description embeds arbitrary
         # filesystem paths, which are parsed as console markup by default and would crash the
-        # compositor at reflow on a literal `[` (see
-        # docs/adrs/00098-style-arbitrary-text-spans-with-content-not-escaped-markup.md).
+        # compositor at reflow on a literal `[`.
         widgets: list[Widget] = [
             Static(self.header_text(), id=ESCALATE_PRIVILEGES_HEADER_ID, markup=False)]
         widgets.append(Static(
@@ -171,7 +160,6 @@ class EscalatePrivilegesPanel(Vertical):
 
     def dismiss(self, decision: EscalatePrivilegesDecision) -> None:
         """Report `decision` to whoever mounted this panel, via the `on_dismiss` callback given
-        at construction \u2014 see `PermissionAskPanel.dismiss`'s docstring for the same shape.
-        A no-op with no callback given."""
+        at construction. A no-op with no callback given."""
         if self._on_dismiss is not None:
             self._on_dismiss(decision)

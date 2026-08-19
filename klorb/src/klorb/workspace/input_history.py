@@ -1,23 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """File-backed persistence for the prompt-input history (the up/down-arrow recall list),
 keyed per project under `$KLORB_DATA_DIR/projects/<basename>-<id-or-hash>/history`.
-
-Each registered project (`klorb.workspace.Workspace.id` from `projects.json`) gets one
-per-project directory; an unregistered workspace (one the user declined to open as a
-project, or one klorb was launched into before any bootstrap) falls back to a stable hash
-of its canonical path so two klorb instances opened in the *same* folder still share one
-history file even without a `projects.json` entry.
-
-The `history` file is newline-delimited: one previously-submitted prompt per line. Because
-prompts can themselves contain newlines (Ctrl+Enter inserts a literal newline), each entry
-is escaped before it's written (`\\` -> `\\\\`, `\n` -> `\\n`, `\r` -> `\\r`) and unescaped
-on the way back into the input box, so a recalled multi-line prompt round-trips verbatim.
-
-Writes are strictly append-only: every submitted message opens the file in append mode,
-writes its escaped entry plus a trailing `\n`, and closes it. No caller ever rewrites the
-whole file, so two (or more) klorb instances editing in the same folder concurrently each
-just append their own most-recent message and never clobber one another's history — each
-process only ever knows its own in-memory view; the file is the shared, append-only log.
 """
 
 import hashlib
@@ -52,21 +35,20 @@ def project_history_dir(workspace: Workspace) -> Path:
     """The per-project directory holding (at least) that project's `history` file:
     `$KLORB_DATA_DIR/projects/<basename>-<token>`, where `<basename>` is the last path
     element of `workspace.path` and `<token>` is the project uuid (or a stable path-hash for
-    an unregistered workspace) — e.g. a workspace at `/home/aaron/src/foobar` registered
-    with uuid `abcd-1234` maps to `…/projects/foobar-abcd-1234`."""
+    an unregistered workspace)."""
     basename = workspace.path.name or "workspace"
     return get_klorb_data_dir() / PROJECTS_DIR_NAME / f"{basename}-{_project_token(workspace)}"
 
 
 def project_history_path(workspace: Workspace) -> Path:
-    """The `history` file path for `workspace` (see `project_history_dir`)."""
+    """The `history` file path for `workspace`."""
     return project_history_dir(workspace) / HISTORY_FILENAME
 
 
 def _escape_entry(entry: str) -> str:
     """Escape a prompt so it occupies exactly one line in the history file: backslash first
     (so a literal `\\n` in a prompt isn't mistaken for an escaped newline on read), then the
-    CR/LF characters. Reversed verbatim by `_unescape_entry`."""
+    CR/LF characters."""
     return (
         entry.replace("\\", "\\\\")
         .replace("\r", "\\r")
@@ -106,9 +88,8 @@ def _unescape_entry(line: str) -> str:
 def load_history(path: Path) -> list[str]:
     """Read the on-disk history at `path` back into the in-memory recall list, newest entry
     last (the order it was appended). A missing file (no prompts submitted in this project
-    yet) yields `[]`. A trailing newline — always present for files written via
-    `append_history` — is treated as the separator after the last entry, not an empty
-    final entry, so the list never grows a spurious blank tail."""
+    yet) yields `[]`. A trailing newline is treated as the separator after the last entry,
+    not an empty final entry, so the list never grows a spurious blank tail."""
     if not path.is_file():
         return []
     text = path.read_text(encoding="utf-8")
@@ -121,11 +102,9 @@ def load_history(path: Path) -> list[str]:
 
 
 def append_history(path: Path, entry: str) -> None:
-    """Append `entry` to the on-disk history at `path`, escaped to a single line (see
-    `_escape_entry`) and terminated with a `\n`. Creates `path`'s parent directory if it
-    doesn't exist yet. Strictly append-only — the file is opened in `"a"` mode and never
-    rewritten, so concurrent klorb instances in the same folder each just append their own
-    most-recent message without clobbering one another's history."""
+    """Append `entry` to the on-disk history at `path`, escaped to a single line and
+    terminated with a `\n`. Creates `path`'s parent directory if it
+    doesn't exist yet."""
     path.parent.mkdir(parents=True, exist_ok=True)
     line = _escape_entry(entry) + "\n"
     # Open in append mode with encoding so writes on different platforms stay text-stable;

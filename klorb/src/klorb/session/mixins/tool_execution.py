@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`SessionToolExecutionMixin`: dispatches every tool call requested by one model reply,
-resolving whichever ask-style exception (`PermissionAskRequired`,
-`MultiPermissionAskRequired`, `AskUserQuestionsRequired`, `EscalatePrivilegesRequired`) a call
-raises via `klorb.session.mixins.permissions.SessionPermissionsMixin`."""
+"""`SessionToolExecutionMixin`: dispatches every tool call requested by one model reply."""
 
 import json
 import logging
@@ -34,9 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _tool_result_text(envelope: ToolResponseEnvelope) -> str:
-    """The substantive result content `_apply_tool_result_hook` exposes as `onToolResult`'s
-    `tool_result`: `response_body` if set, else `error_message`, else `""` -- serialized to JSON
-    if not already a plain string."""
+    """`response_body` if set, else `error_message`, else empty string."""
     value = envelope.response_body if envelope.response_body is not None else envelope.error_message
     if value is None:
         return ""
@@ -46,83 +41,33 @@ def _tool_result_text(envelope: ToolResponseEnvelope) -> str:
 
 
 class SessionToolExecutionMixin(SessionBase):
-    """The tool-call dispatch loop `_dispatch_turn` runs once per model round trip that
-    requests tool use."""
+    """The tool-call dispatch loop for one model round trip that requests tool use."""
 
     def _run_tool_calls(
         self,
         tool_use_message: Message,
         callbacks: TurnEventHandlers,
     ) -> None:
-        """Execute every tool call requested by `tool_use_message` (see `_send_and_receive`)
-        via `tool_registry.instantiate_tool()`, appending one `role="tool_response"` Message
-        per call — its `content` a JSON-serialized `klorb.tools.response_envelope.
-        ToolResponseEnvelope` carrying that call's result, or a categorized description of the
-        error if the tool was unknown or raised — so the next round can send it back to the
-        model. Also fires `callbacks.on_tool_call`, if given, once per call with a
-        `ToolCallEvent` carrying the same result-or-error outcome as raw data, for a UI to
-        render. When `self._log_tool_calls` is set, also appends the call's name/arguments and
-        result/error to `$KLORB_STATE_DIR/tool-calls.log` via `klorb.tool_call_log.log_tool_call`
-        — an out-of-band record independent of both `callbacks.on_tool_call` and the ordinary
-        `logging` module.
+        """Execute every tool call requested by `tool_use_message`, appending one
+        `role="tool_response"` Message per call carrying the result or a categorized error.
+        Also fires `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent`.
 
-        Every registered `_standing_interjection_providers` entry (see
-        `register_standing_interjection`) is polled once per call to this method — i.e. once per
-        tool-call round, not once per individual call within it — and, for whichever providers
-        returned a message, attached as `system_interjections` on the first envelope built in
-        this round, so a standing reminder stays visible even deep inside a multi-round tool
-        loop that never returns to the user-turn prompt (where the XML `<SystemInterjection>`
-        form is otherwise delivered — see `wrap_system_interjection`).
+        Standing interjection providers are polled once per call to this method, and any
+        non-`None` results are attached as `system_interjections` on the first envelope.
 
-        Before executing each call, checks it against `config.max_tool_calls_per_turn`
-        (`self._tool_calls_this_turn` resets to `0` at the start of every `_dispatch_turn`).
-        Reaching it asks `_confirm_limit_increase()` whether to double it and keep going; if
-        that returns `False` (declined, or `callbacks.on_tool_call_limit_reached` wasn't
-        given), raises `ToolCallLimitExceeded` without executing this call (or any later call
-        in `tool_use_message.tool_calls`).
+        Before executing each call, checks it against `config.max_tool_calls_per_turn`.
+        Reaching it asks `_confirm_limit_increase()` whether to double it and keep going;
+        raising `ToolCallLimitExceeded` if declined.
 
-        If a call raises `PermissionAskRequired` with a `path` or `url`, how it's resolved
-        depends on `config.permission_framework` (see `SessionConfig.permission_framework`):
-        `"deny"` fails closed without invoking any callback; `"auto"` auto-approves via a
-        synthesized `PermissionDecision(action="allow", scope="session")`, also without
-        invoking any callback; `"ask"` asks `callbacks.on_permission_ask`, if given, for a
-        `PermissionDecision` and retries or denies accordingly (see
-        `_retry_after_permission_decision`) — with no callback (e.g. a headless one-shot run
-        left at the `"ask"` default), it fails closed the same as `"deny"`. An exception with
-        no `path`, `skill`, or `url` (a call site that didn't supply one) always fails closed,
-        regardless of `permission_framework`.
+        Permission asks are resolved according to `config.permission_framework`:
+        `"deny"` fails closed; `"auto"` auto-approves; `"ask"` asks
+        `callbacks.on_permission_ask`. `MultiPermissionAskRequired` is resolved
+        item-by-item. `AskUserQuestionsRequired` is resolved via
+        `callbacks.on_ask_user_questions`, with no `permission_framework` branching.
+        Any failure reports the error back to the model as this call's `tool_response`.
 
-        A call that raises `MultiPermissionAskRequired` instead (today, only `BashTool`, whose
-        one parsed command can independently touch several commands/redirection targets) is
-        resolved item-by-item, in order, via the same `on_permission_ask` callback and the same
-        `permission_framework` branching — see `_resolve_multi_permission_ask`. Unlike a plain
-        `PermissionAskRequired`, an item here with no `path` (a bare command-pattern or
-        structural ask) is *not* automatically failed closed: it's asked about (or auto-approved
-        under `"auto"`) exactly like any other item, just persisted through `CommandRules`
-        grant machinery instead of `readDirs`/`writeDirs` when it has a `command`, or not
-        persisted at all when it has neither (see `PermissionAskItem`). The first item answered
-        `action="deny"` (or with `other_text` set) short-circuits: no further items are asked
-        about, and the whole call is denied.
-
-        A call that raises `AskUserQuestionsRequired` (only `AskUserQuestionsTool`) is resolved
-        by `_resolve_ask_user_questions`: each question is asked in turn via
-        `callbacks.on_ask_user_questions`, with no `permission_framework` branching (asking the
-        user isn't a resource-access verdict) and no callback means it fails closed exactly like
-        an unhandled `PermissionAskRequired` would. A `cancelled` answer for any question
-        short-circuits the remaining ones and fails the whole call.
-
-        Failing closed (either exception type) reports the error back to the model as this
-        call's `tool_response`, exactly like any other tool exception.
-
-        `call.arguments` is parsed as JSON before any of the above: a model-generated
-        `arguments` string that fails to parse (`json.JSONDecodeError`) is reported back the
-        same way — as this call's `tool_response`, with `args={}` (no tool ever runs) — rather
-        than propagating out and aborting the whole turn, so a single malformed tool call
-        doesn't take down every other call/round in flight. The `tool_response`'s text comes
-        from `klorb.tools.tool.describe_tool_arg_json_error()`, a teaching message (break-point
-        offset, XML detection, common JSON mistakes, an edit-argument-specific escaping nudge)
-        rather than the bare decode-error string. `ToolCallEvent.raw_arguments` carries the
-        unparsed string in this case, for a UI to display.
+        `call.arguments` is parsed as JSON before any of the above: a parse failure
+        is reported back as this call's `tool_response` rather than aborting the whole turn.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -279,19 +224,12 @@ class SessionToolExecutionMixin(SessionBase):
         )
 
     def _apply_tool_use_hook(self, call_name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """Dispatch `onToolUse` before `call_name` actually runs -- fires for every session in
-        the tree (root or subagent alike), tagged by `_dispatch_hook` with this session's own
-        `role`/`id`. A `tool_args` in the aggregate `HookOutput` replaces `args` (a
-        preprocessing rewrite) before the tool ever sees them; `success=False`, or an
-        allow/ask/deny `permission` verdict that isn't `"allow"`, raises `ToolCallError` instead
-        of letting the call run -- caught by this method's caller's own `except Exception`,
-        which reports it back to the model as this call's failure exactly like any other tool
-        exception.
+        """Dispatch `onToolUse` before `call_name` actually runs. A `tool_args` in the
+        aggregate `HookOutput` replaces `args` before the tool ever sees them;
+        `success=False`, or an allow/ask/deny `permission` verdict that isn't `"allow"`,
+        raises `ToolCallError`.
 
-        `"ask"` is treated the same as `"deny"` here: there is no interactive channel wired from
-        `onToolUse` to a human yet -- that is `onRequestPermission`'s own, still-deferred,
-        design -- so a hook wanting a human in the loop can't get one from this hook point
-        today, only an unconditional veto.
+        `"ask"` is treated the same as `"deny"` here.
         """
         result = self._dispatch_hook("onToolUse", tool_name=call_name, tool_args=args)
         if result.tool_args is not None:
@@ -305,12 +243,9 @@ class SessionToolExecutionMixin(SessionBase):
     def _apply_tool_result_hook(
         self, call_name: str, envelope: ToolResponseEnvelope,
     ) -> ToolResponseEnvelope:
-        """Dispatch `onToolResult` after `call_name`'s `ToolResponseEnvelope` is built -- fires
-        for every session in the tree, same as `onToolUse`. Only the envelope's own substantive
-        result (`_tool_result_text`) is exposed as `tool_result`; `system_interjections` are
-        never visible to, or overridable by, a hook. A `tool_result` in
-        the aggregate `HookOutput` replaces `response_body` (or `error_message`, when the
-        envelope had no `response_body`) in the envelope returned here."""
+        """Dispatch `onToolResult` after `call_name`'s `ToolResponseEnvelope` is built.
+        A `tool_result` in the aggregate `HookOutput` replaces `response_body` in the
+        envelope returned here."""
         tool_result = _tool_result_text(envelope)
         result = self._dispatch_hook("onToolResult", tool_name=call_name, tool_result=tool_result)
         if result.tool_result is None:

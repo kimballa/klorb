@@ -12,7 +12,7 @@ def reciprocal_rank_fusion(
 ) -> list[tuple[str, float]]:
     """Fuse `ranked_lists` -- each a list of chunk ids in descending-relevance order from one
     ranking method -- into a single ranking via RRF: every id's fused score is the sum, across
-    every list it appears in, of `1 / (k + rank)` (`rank` 1-based). Returns `(chunk_id, score)`
+    every list it appears in, of `1 / (k + rank)`. Returns `(chunk_id, score)`
     pairs sorted by descending score, ties broken by first appearance across `ranked_lists`.
     """
     scores: dict[str, float] = {}

@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`AcpHarness`: wires an `AcpServer` to the ACP SDK's client-side connection over an in-memory
-duplex socket pair, so tests exercise real ACP JSON-RPC protocol traffic without a subprocess.
-See docs/specs/klorb-server.md's "Testing strategy" section."""
+duplex socket pair, so tests exercise real ACP JSON-RPC protocol traffic without a subprocess."""
 
 import asyncio
 import socket
@@ -20,7 +19,7 @@ from klorb.workspace import TrustManager
 class RecordedPermissionRequest:
     """One `request_permission()` call `HarnessClient` received, recorded verbatim for a test's
     assertions: `meta` is the `_meta.klorb` payload unpacked back into kwargs by the SDK's own
-    router (see `acp.router.MessageRouter._make_func`), not the raw `_meta` dict."""
+    router, not the raw `_meta` dict."""
 
     def __init__(
         self, options: list[acp.schema.PermissionOption], session_id: str,
@@ -37,14 +36,7 @@ class HarnessClient:
     `session/update` notification the server sends for assertions.
 
     `request_permission()`/`ext_method()` record every call into `permission_requests`/
-    `ext_method_calls` and answer via `on_request_permission`/`on_ext_method` -- settable by a
-    test before driving a turn -- defaulting to `None`, which still raises `NotImplementedError`
-    (a test exercising a path that shouldn't ask must fail loudly, not hang). `ext_notification()`
-    (fire-and-forget, e.g. `_klorb/usage`) just records every call into `ext_notification_calls`
-    -- there's nothing to answer. Every other `Client` method (`read_text_file`, terminal
-    handling, ...) still raises `NotImplementedError` unconditionally: `KlorbAcpAgent` doesn't
-    call any of them yet. They're still implemented (rather than omitted) so this class
-    structurally satisfies `acp.Client`, which `acp.connect_to_agent()` requires.
+    `ext_method_calls` and answer via `on_request_permission`/`on_ext_method`.
     """
 
     def __init__(self) -> None:
@@ -111,8 +103,8 @@ class HarnessClient:
 
 class AcpHarness:
     """Owns one end of the in-memory duplex pair `build_acp_harness()` sets up: `client` drives
-    ACP requests (`initialize`, `new_session`, `prompt`, `cancel`) against the `AcpServer`
-    running as a background task; `harness_client` records what came back.
+    ACP requests against the `AcpServer` running as a background task; `harness_client` records
+    what came back.
     """
 
     def __init__(
@@ -130,8 +122,7 @@ class AcpHarness:
         self._client_writer = client_writer
 
     async def aclose(self) -> int:
-        """Close the client's writer -- EOFs the server's `ServerStreams.reader` -- and wait
-        for `AcpServer.run()` to finish, returning its exit code."""
+        """Close the client's writer."""
         self._client_writer.close()
         return await self.server_task
 
@@ -141,8 +132,7 @@ async def _make_duplex_pair() -> tuple[
     tuple[asyncio.StreamReader, asyncio.StreamWriter],
 ]:
     """Return `((server_reader, server_writer), (client_reader, client_writer))`: two ends of
-    an in-memory, full-duplex byte stream built from a `socket.socketpair()`, the same shape
-    `ServerStreams.from_stdio()` binds to real process stdio."""
+    an in-memory, full-duplex byte stream built from a `socket.socketpair()`."""
     server_sock, client_sock = socket.socketpair()
     server_reader, server_writer = await asyncio.open_connection(sock=server_sock)
     client_reader, client_writer = await asyncio.open_connection(sock=client_sock)
@@ -157,11 +147,6 @@ async def build_acp_harness(
 ) -> AcpHarness:
     """Build an `AcpServer` (running `AcpServer.run()` as a background task) wired to an ACP
     client-side connection over an in-memory duplex socket pair.
-
-    `provider`/`model_registry`/`trust_manager` are forwarded to `AcpServer` -- a test passes a
-    scripted `ApiProvider` (see `tests/klorb/session/test_session.py`'s mock pattern) and a
-    `TrustManager` pointed at an isolated `projects.json`, so no test touches the real
-    `KLORB_DATA_DIR` or makes a real API call.
     """
     (server_reader, server_writer), (client_reader, client_writer) = await _make_duplex_pair()
     streams = ServerStreams(server_reader, server_writer)
@@ -170,9 +155,7 @@ async def build_acp_harness(
         trust_manager=trust_manager)
     server_task = asyncio.create_task(server.run())
     harness_client = HarnessClient()
-    # `use_unstable_protocol=True`: matches `AcpServer.run()`'s own flag (see its docstring) --
-    # `session/list` is still marked unstable in the ACP SDK's router, gated independently on
-    # each side of the connection.
+    # `use_unstable_protocol=True`: matches `AcpServer.run()`'s own flag
     client = acp.connect_to_agent(
         harness_client, client_writer, client_reader, use_unstable_protocol=True)
     return AcpHarness(client, harness_client, server, server_task, client_writer)

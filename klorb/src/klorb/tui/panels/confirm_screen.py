@@ -1,11 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A reusable Yes/No confirmation modal, shared by every workspace-trust prompt
-(`klorb.tui.ReplApp`'s workspace-bootstrap flow and its "Trust workspace" palette
-command — see docs/specs/projects-and-trust.md) so each one isn't its own near-identical
-`ModalScreen` subclass. Distinct from `klorb.tui.widgets.tool_call_widgets.ToolCallLimitScreen`,
-an earlier, narrower yes/no modal this doesn't replace — see
-docs/adrs/00057-reuse-a-generic-confirmscreen-for-workspace-trust-prompts.md.
-"""
+"""A reusable Yes/No confirmation modal for workspace-trust prompts."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -18,11 +12,9 @@ CONFIRM_NO_ID = "confirm-no"
 
 
 class ConfirmScreen(ModalScreen[bool]):
-    """Shows `message` with Yes/No buttons; dismisses `True`/`False` accordingly. Escape (or
-    the "No" button) always dismisses `False`. `yes_label`/`no_label` default to "Yes"/"No"
-    but can be overridden for a more specific affirmative/negative phrasing. Left/Right arrow
-    keys move focus between the two buttons, same as Tab/Shift+Tab. Press `y` to accept or
-    `n` to decline without moving focus.
+    """Shows `message` with Yes/No buttons; dismisses `True`/`False` accordingly. Escape
+    always dismisses `False`. `yes_label`/`no_label` default to "Yes"/"No" but can be
+    overridden. Press `y` to accept or `n` to decline without moving focus.
     """
 
     CSS = """

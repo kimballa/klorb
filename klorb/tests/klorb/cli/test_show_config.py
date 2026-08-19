@@ -19,8 +19,7 @@ from klorb.workspace import Workspace
 def stub_process_config() -> Iterator[MagicMock]:
     """Replace file-backed process config loading with a fresh default for every test in
     this module, so tests don't depend on `/etc`, `$HOME`, or the repo's own `cwd` being
-    free of a stray `klorb-config.json`. Tests that care about the loading behavior itself
-    patch or call `klorb.process_config.load_process_config` directly instead.
+    free of a stray `klorb-config.json`.
     """
     with patch("klorb.cli.show_config.load_process_config", return_value=ProcessConfig()) as mock_load:
         yield mock_load

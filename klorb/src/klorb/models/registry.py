@@ -17,22 +17,18 @@ MODELS_SUBDIR = "models"
 
 
 class _ModelSource(IntEnum):
-    """Priority tier a registered model came from — lower value wins when `find_by_capability`
-    has more than one qualifying model to choose from. Unrelated to `_discover_models`' own
-    packaged-then-user scan order, which governs same-`name` override instead (see
-    `ModelRegistry`'s docstring)."""
+    """Priority tier a registered model came from. Unrelated to `_discover_models`' own
+    packaged-then-user scan order, which governs same-`name` override instead."""
 
     MANUAL = 0
-    """Registered directly via `register()` — the most explicit source, so it outranks
+    """Registered directly via `register()`. The most explicit source, so it outranks
     anything discovered from a file."""
     USER = 1
     """Discovered from `$KLORB_DATA_DIR/models/`. Ranked above `PACKAGED` so a user can add a
-    model that deterministically wins a `find_by_capability` lookup — e.g. declaring
-    `klorb_capabilities.BASH_SAFETY_EVAL` on a model of their own choosing — without needing
-    to know or replace the packaged model that would otherwise be picked."""
+    model that deterministically wins a `find_by_capability` lookup without needing to know
+    or replace the packaged model that would otherwise be picked."""
     PACKAGED = 2
-    """Discovered from the packaged `klorb.resources/models/` tree — the built-in models
-    klorb ships with."""
+    """Discovered from the packaged `klorb.resources/models/` tree."""
 
 
 class ModelRegistry:
@@ -41,18 +37,13 @@ class ModelRegistry:
 
     Scans two directories, in order: the packaged built-in models tree
     (`klorb.resources/models/`) and the user-writable override tree
-    (`$KLORB_DATA_DIR/models/`, see `klorb.paths.KLORB_DATA_DIR`) — the same
-    packaged-tier-then-user-override-tier convention
-    `klorb.system_prompt.resolve_prompt_file` uses, except here both tiers are scanned
-    wholesale rather than a single relative path being looked up in each: a user model JSON
-    file whose `name` field matches a packaged one replaces it, and any other user model JSON
-    file adds a new entry. A different pair of directories can be passed to the constructor
-    (used by tests to scan fixture directories instead).
+    (`$KLORB_DATA_DIR/models/`). A user model JSON file whose `name` field matches a packaged
+    one replaces it, and any other user model JSON file adds a new entry. A different pair of
+    directories can be passed to the constructor.
 
     Separately from that scan order, each registered model is tagged with a `_ModelSource`
     priority tier (`register()` > user-directory > packaged-directory) that `find_by_capability`
-    consults when more than one registered model declares the same capability — see that
-    method and `_ModelSource` for why this is a distinct notion from scan order.
+    consults when more than one registered model declares the same capability.
     """
 
     def __init__(
@@ -72,9 +63,8 @@ class ModelRegistry:
     def _discover_models(self, directory: Traversable | Path, *, source: "_ModelSource") -> None:
         """Parse every `*.json` file directly inside `directory` as a `klorb-model` document
         and register the `ConfiguredModel` it describes, keyed by the model's `name` and tagged
-        with `source`. A file that fails schema validation is skipped (logged by
-        `parse_versioned_json`) rather than raising, so one malformed model file doesn't
-        prevent every other model — packaged or user-supplied — from loading.
+        with `source`. A file that fails schema validation is skipped rather than raising, so
+        one malformed model file doesn't prevent every other model from loading.
         """
         if not directory.is_dir():
             return
@@ -91,11 +81,7 @@ class ModelRegistry:
 
     def register(self, model: Model) -> None:
         """Register `model` directly, keyed by its `name()`, without discovering it from a
-        JSON file — replacing any existing model of the same name, the same override
-        semantics the user-tier directory scan already gives over the packaged tier, and
-        tagged with the highest `find_by_capability` priority (`_ModelSource.MANUAL`). Used by
-        tests to register `Model` test doubles without needing real `klorb-model` JSON
-        fixture files on disk.
+        JSON file.
         """
         self._models[model.name()] = model
         self._sources[model.name()] = _ModelSource.MANUAL
@@ -109,17 +95,12 @@ class ModelRegistry:
         return list(self._models.values())
 
     def find_by_capability(self, capability: str) -> Model | None:
-        """Return the registered model that best qualifies for `capability` — the one whose
-        `Model.klorb_capabilities()` reports it truthily, preferring a higher-priority
-        `_ModelSource` (manually `register()`-ed, then user-directory, then packaged) and
-        breaking ties by name for a deterministic pick among equals. Returns `None` if no
-        registered model declares the capability.
+        """Return the registered model that best qualifies for `capability`, preferring a
+        higher-priority `_ModelSource` and breaking ties by name for a deterministic pick
+        among equals. Returns `None` if no registered model declares the capability.
 
-        A user-added model (in `$KLORB_DATA_DIR/models/`) always outranks a packaged one here,
-        even though the packaged tier is scanned first — this lets a user deterministically
-        override which model klorb picks for a capability (e.g. `"BASH_SAFETY_EVAL"`) just by
-        dropping in a `klorb-model` JSON file that declares it, without needing to know about
-        or replace whichever packaged model would otherwise win. See `Model.klorb_capabilities`.
+        A user-added model always outranks a packaged one here, even though the packaged
+        tier is scanned first.
         """
         candidates = [
             name for name, model in self._models.items() if model.klorb_capabilities().get(capability)

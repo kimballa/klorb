@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`ChunkerRouter`: dispatches a file to the structural/markdown chunker matching its extension,
-plus the windowed chunker unconditionally, per docs/specs/local-search-index.md.
+plus the windowed chunker unconditionally.
 """
 
 from klorb.search_index.chunk import Chunk

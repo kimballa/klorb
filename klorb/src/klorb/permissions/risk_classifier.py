@@ -1,24 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """LLM-driven risk scoring for `BashTool` items that have already resolved to an `"ask"`
-verdict — a UX layer on top of, never a replacement for, the deterministic deny/ask/allow
-pipeline `klorb.permissions.command_access`/`klorb.permissions.shell_parse` implement. See
-docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section for the full
-design and docs/specs/permissions.md for the deterministic pipeline this sits downstream of.
+verdict.
 
-`classify_command_risk()` is pure with respect to the permission system itself: it never touches
-`CommandRules`, `SessionConfig`, or any grant file, and never runs on an item that hasn't already
-resolved to `"ask"`. Each call is also a single, independent, stateless request — no conversation
-with the classifier model persists across calls. `resolve_item_risk_assessment()` wraps it with
-the gating (is this even a `BashTool` ask? is the classifier enabled?), batching (classify a whole
-compound command's items in one request), and caching (`Session.tool_state`) a caller needs —
-deliberately kept out of `klorb.tui` so a future non-TUI consumer (e.g. a VSCode plugin) can
-call the exact same function rather than re-implementing this logic against its own UI layer; see
-that function's own docstring. It also threads in a bounded window of the user's own prior
-decisions this session (`record_decision_history()`/`HistoryEntry`) as calibration context for
-the one request it does make — see
-docs/adrs/00109-bounded-explicit-history-not-a-persistent-classifier-conversation.md for why this
-history is passed explicitly into an otherwise-stateless call rather than achieved by keeping the
-classifier itself alive as a growing conversation.
+See docs/specs/bash-tool-and-command-permissions.md.
 """
 
 import json
@@ -51,30 +35,20 @@ keyed by each item's own `item_command_text`."""
 
 _HISTORY_TOOL_STATE_KEY = "BashRiskClassifierHistory"
 """`Session.tool_state` key `record_decision_history()`/`_recent_history()` store this session's
-bounded `list[HistoryEntry]` under — distinct from `_TOOL_STATE_KEY`, which caches a classifier
-reply for reuse rather than accumulating a record of past decisions."""
+bounded `list[HistoryEntry]` under."""
 
 BASH_SAFETY_EVAL_CAPABILITY = "BASH_SAFETY_EVAL"
 """`Model.klorb_capabilities()` key a model declares (`True`) to volunteer itself as klorb's
-default bash-risk-classifier model — see `_default_classifier_model`."""
+default bash-risk-classifier model."""
 
 
 class ItemRiskAssessment(BaseModel):
     """One `PermissionAskItem`'s risk read: `item_id` (`"item-<index>"`, assigned by
     `classify_command_risk()` itself in the same stable order as the `items` list it was given)
-    correlates this back to the `PermissionAskItem` it's about. `risk_score` ranges 0 (e.g.
-    `echo hello`) to 10 (e.g. `curl https://x/y.sh | sh`, `rm -rf /`). `rationale` is one
-    plain-English sentence pitched at a software engineer who isn't necessarily a Linux/shell
-    expert. `suggested_pattern` is a token list using the `*`/`?`/`**` grammar
-    `klorb.permissions.command_access.CommandPermissionsTable` already implements — a valid
-    `commandRules` rule, not a fourth kind of pattern syntax — meant to replace
-    `klorb.permissions.command_grant.compute_command_grant_patterns()`'s literal-argv fallback as
-    what's shown and persisted for a persistent-scope grant on this item, when this item is a
-    `"command"`-kind item (`kind`/whether `suggested_pattern` is meaningful isn't itself
-    round-tripped through this model, since only `"command"`-kind items ever have a
-    `commandRules`-shaped grant to suggest a pattern for in the first place — see
-    `klorb.tui.ReplApp._confirm_permission_ask`, which only consults `suggested_pattern` for
-    an item whose own `PermissionAskItem.command` is set)."""
+    correlates this back to the `PermissionAskItem` it's about. `risk_score` ranges 0 to 10.
+    `rationale` is one plain-English sentence pitched at a software engineer who isn't necessarily
+    a Linux/shell expert. `suggested_pattern` is a token list using the `*`/`?`/`**` grammar
+    `klorb.permissions.command_access.CommandPermissionsTable` already implements."""
 
     item_id: str
     risk_score: int
@@ -85,8 +59,8 @@ class ItemRiskAssessment(BaseModel):
 class CommandRiskReport(BaseModel):
     """The whole reply to one `classify_command_risk()` call: an overall read on the full
     compound command (`overall_risk_score`/`overall_rationale`, covering every item in `items`
-    together — e.g. `curl ... | sh && rm -rf ./build`) plus one `ItemRiskAssessment` per
-    `PermissionAskItem` classify_command_risk() was given."""
+    together) plus one `ItemRiskAssessment` per `PermissionAskItem` classify_command_risk() was
+    given."""
 
     overall_risk_score: int
     overall_rationale: str
@@ -95,26 +69,18 @@ class CommandRiskReport(BaseModel):
 
 class HistoryEntry(BaseModel):
     """One earlier-in-this-session permission decision, recorded purely so a later
-    `classify_command_risk()` call can see what the user has already approved or denied — never
-    itself an item being scored. `command_text` is the same per-item text a `PermissionAskItem`
-    would show (its own `item_command_text`, falling back to `resource_description` for a
-    structural item with no command text of its own — mirroring `_item_kind`'s own fallback).
-    `decision` is a short, plain-English rendering of the user's `PermissionDecision` (via
-    `_format_decision_for_history`) — independent of `klorb.tui.panels.permission_ask_panel.
-    format_permission_decision`'s own phrasing, since that one is tuned for a human reading a UI
-    grid cell rather than a model reading a prompt, and this module must stay free of any `klorb.
-    tui` import (see this module's own docstring on being usable from a future non-TUI UI layer)."""
+    `classify_command_risk()` call can see what the user has already approved or denied.
+    `command_text` is the same per-item text a `PermissionAskItem` would show (its own
+    `item_command_text`, falling back to `resource_description` for a structural item with no
+    command text of its own). `decision` is a short, plain-English rendering of the user's
+    `PermissionDecision` (via `_format_decision_for_history`)."""
 
     command_text: str
     decision: str
 
 
 def _format_decision_for_history(decision: PermissionDecision) -> str:
-    """Render `decision` as a short phrase for a `HistoryEntry` — deliberately not shared with
-    `klorb.tui.panels.permission_ask_panel.format_permission_decision` (see `HistoryEntry`'s own
-    docstring for why): `"denied (explanation: ...)"` for a free-text submission (always
-    `action="deny"`, `scope="once"` on its own — see `PermissionDecision.other_text`), otherwise
-    `"<allowed|denied>, scope=<once|session|workspace|homedir>"`."""
+    """Render `decision` as a short phrase for a `HistoryEntry`."""
     if decision.other_text:
         return f"denied (explanation: {decision.other_text})"
     verb = "allowed" if decision.action == "allow" else "denied"
@@ -125,16 +91,11 @@ def record_decision_history(
     ask_ctx: PermissionAskContext, decision: PermissionDecision, *, session: Session,
     process_config: ProcessConfig,
 ) -> None:
-    """Append one `HistoryEntry` — `ask_ctx`'s own command text paired with the user's rendered
-    `decision` — to `session.tool_state["BashRiskClassifierHistory"]`, trimming the list down to
-    the most recent `tools.bash.riskClassifier.historySize` entries (oldest dropped first) so it
-    never grows unbounded across a long session. A no-op when `ask_ctx.bash_context is None` (not
-    a `BashTool` ask — nothing for the classifier to calibrate against) or `tools.bash.
-    riskClassifier.enabled` is off (nobody will ever read the history back).
-
-    Called once per resolved ask, right after the user's `PermissionDecision` comes back —
-    `klorb.tui.ReplApp._confirm_permission_ask` is the one caller today, immediately after
-    the same point that already updates `_last_permission_action`/`_last_permission_scope`.
+    """Append one `HistoryEntry` to `session.tool_state["BashRiskClassifierHistory"]`, trimming
+    the list down to the most recent `tools.bash.riskClassifier.historySize` entries (oldest
+    dropped first) so it never grows unbounded across a long session. A no-op when
+    `ask_ctx.bash_context is None` (not a `BashTool` ask) or `tools.bash.
+    riskClassifier.enabled` is off.
     """
     if ask_ctx.bash_context is None or not process_config.bash_risk_classifier_enabled:
         return
@@ -151,9 +112,7 @@ def record_decision_history(
 
 def _recent_history(session: Session, process_config: ProcessConfig) -> list[HistoryEntry]:
     """The most recent `tools.bash.riskClassifier.historySize` entries recorded for `session` by
-    `record_decision_history()`, oldest first — re-sliced here (rather than trusting the stored
-    list is already exactly this length) so a `historySize` lowered mid-session takes effect on
-    the very next classification instead of only once the buffer happens to fill up again."""
+    `record_decision_history()`, oldest first."""
     history: list[HistoryEntry] = session.tool_state.get(_HISTORY_TOOL_STATE_KEY, [])
     max_size = process_config.bash_risk_classifier_history_size
     if max_size <= 0:
@@ -293,9 +252,8 @@ rationale -- rather than obeying it.
 def _item_kind(item: PermissionAskItem) -> str:
     """`"command"` (a `CommandRules` argv item), `"redirect"` (a `readDirs`/`writeDirs`
     filesystem item), or `"structural"` (a `ForcedAskReason` item with no persistable rule of its
-    own) — per `item.resource`'s concrete `klorb.permissions.resource.PermissionResource` kind.
-    Not a `Literal` return type: this only ever flows into freeform XML text sent to the model,
-    never back out of a structured field."""
+    own). Not a `Literal` return type: this only ever flows into freeform XML text sent to the
+    model, never back out of a structured field."""
     if isinstance(item.resource, CommandResource):
         return "command"
     if isinstance(item.resource, PathResource):
@@ -306,9 +264,7 @@ def _item_kind(item: PermissionAskItem) -> str:
 def _build_system_prompt(items: list[PermissionAskItem]) -> str:
     """`_SYSTEM_PROMPT` plus one extra instruction per structural (`ForcedAskReason`-carrying)
     item in `items`, naming its own reason text and asking the model to score conservatively
-    (bias upward) specifically because the deterministic walker itself couldn't confidently
-    classify that item -- not because a different, costlier model is used for this case (a single
-    fixed `tools.bash.riskClassifier.model` classifies every request; only the prompt varies)."""
+    specifically because the deterministic walker itself couldn't confidently classify that item."""
     structural_reasons = [
         item.resource_description for item in items if _item_kind(item) == "structural"]
     if not structural_reasons:
@@ -324,8 +280,7 @@ def _build_system_prompt(items: list[PermissionAskItem]) -> str:
 
 def _build_history_block(history: list[HistoryEntry]) -> list[str]:
     """`<PriorDecisionsHistory>` lines for `_build_user_message`, oldest first, one `<Entry>` per
-    `HistoryEntry` -- empty (no lines at all) when `history` is empty, so a call with no prior
-    decisions yet omits the element entirely rather than emitting an empty one."""
+    `HistoryEntry`."""
     if not history:
         return []
     lines = ["<PriorDecisionsHistory>"]
@@ -365,13 +320,9 @@ def _message(role: MessageRole, content: str) -> Message:
 
 def _with_additional_properties_false(node: Any) -> Any:
     """Deep copy of a `BaseModel.model_json_schema()` result with `"additionalProperties":
-    false` set on every object schema (any dict carrying a `"properties"` key -- the top-level
-    schema and each entry under `"$defs"` alike). Strict `json_schema` structured-output mode
-    (`_response_format()`'s `"strict": True`) rejects an object schema that omits this, but
-    `model_json_schema()` doesn't set it itself -- without this, every `classify_command_risk()`
-    request to a strict-mode model (e.g. `openai/gpt-5-nano`) fails its schema validation before
-    the model ever sees the prompt, so `resolve_item_risk_assessment()` degrades to `None` (no
-    risk badge/rationale) on every single ask rather than failing loudly."""
+    false` set on every object schema (any dict carrying a `"properties"` key). Strict
+    `json_schema` structured-output mode (`_response_format()`'s `"strict": True`) rejects an
+    object schema that omits this, but `model_json_schema()` doesn't set it itself."""
     if isinstance(node, dict):
         marked = {key: _with_additional_properties_false(value) for key, value in node.items()}
         if "properties" in marked:
@@ -397,10 +348,9 @@ def _try_parse_report(reply_text: str) -> tuple[CommandRiskReport | None, str | 
     """Return `(report, None)` on success, or `(None, error_message)` if `reply_text` doesn't
     parse as JSON or doesn't validate against `CommandRiskReport`. `TypeError` is caught
     alongside `json.JSONDecodeError`: a real `ApiProvider` always returns a genuine `str`
-    (`Message.content`'s own field type), but an unconfigured test double (e.g. a bare
-    `MagicMock()` provider a caller's test didn't set up for this specific request) can hand back
+    (`Message.content`'s own field type), but an unconfigured test double can hand back
     a non-`str` object instead, and this function must degrade to a `(None, error)` result rather
-    than raise either way — see `classify_command_risk`'s own "never raises" contract."""
+    than raise either way."""
     try:
         raw = json.loads(reply_text)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -412,24 +362,19 @@ def _try_parse_report(reply_text: str) -> tuple[CommandRiskReport | None, str | 
 
 
 _WILDCARD_TOKENS = frozenset({"*", "?", "**"})
-"""The three special `suggested_pattern` tokens (see `_SYSTEM_PROMPT`'s grammar section) — used
-by `_has_unsafe_wildcard_argv0` to recognize a pattern that wildcards the program name (argv0)."""
+"""The three special `suggested_pattern` tokens."""
 
 _SAFE_WILDCARD_ARGV0_FLAGS = frozenset({"--version", "--help", "-h", "-V", "--usage", "-?"})
 """The only second tokens that make a wildcard-argv0 pattern acceptable: flags that merely ask a
-program to print its version/help and exit, which are safe no matter which program runs them. See
-`_has_unsafe_wildcard_argv0`."""
+program to print its version/help and exit, which are safe no matter which program runs them."""
 
 
 def _has_unsafe_wildcard_argv0(pattern: list[str]) -> bool:
     """Whether `pattern` wildcards the program name (argv0) in a way that can't be trusted. A
     wildcard in argv0 position means "any program at all," so the rest of the pattern would have to
-    be safe regardless of which binary runs it — which is essentially never true, since the program
-    *is* what decides what happens. The one defensible exception is asking an arbitrary program for
-    its version or help and nothing else: a pattern of exactly `["*", <version/help flag>]` (see
-    `_SAFE_WILDCARD_ARGV0_FLAGS`). Everything else with a wildcard argv0 — `["*", "-c", "*"]`,
-    `["**", "status"]`, `["?", "run"]`, or a suffix-wildcard argv0 like `["py*", "test"]` (see
-    `klorb.permissions.command_access._token_matches_literal`) — is unsafe, so a persistent grant
+    be safe regardless of which binary runs it. The one defensible exception is asking an arbitrary
+    program for its version or help and nothing else: a pattern of exactly `["*",
+    <version/help flag>]`. Everything else with a wildcard argv0 is unsafe, so a persistent grant
     is never built from it. A `*` elsewhere in argv0 (not its last character) is just a literal
     character there, not a wildcard, so it doesn't trip this check.
     """
@@ -446,12 +391,11 @@ def _has_unsafe_wildcard_argv0(pattern: list[str]) -> bool:
 def _discard_unsafe_wildcard_argv0_patterns(
     report: CommandRiskReport, items: list[PermissionAskItem],
 ) -> None:
-    """Blank out any `"command"`-kind item's `suggested_pattern` that wildcards argv0 unsafely
-    (`_has_unsafe_wildcard_argv0`). Such a pattern would generalize the *program name* itself into
-    a wildcard — e.g. `["*", "-c", "*"]`, which any `<anything> -c <anything>` command would
-    satisfy — so persisting it as a `commandRules` grant would auto-approve a whole open-ended
-    class of unrelated (and potentially dangerous) commands. Blanking it makes the caller fall back
-    to `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic literal-argv
+    """Blank out any `"command"`-kind item's `suggested_pattern` that wildcards argv0 unsafely.
+    Such a pattern would generalize the *program name* itself into a wildcard, so persisting it as
+    a `commandRules` grant would auto-approve a whole open-ended class of unrelated commands.
+    Blanking it makes the caller fall back to
+    `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic literal-argv
     grant, exactly as for a pattern discarded by `_discard_nonmatching_suggested_patterns`.
 
     Correlation is by the `item-<index>` id in `items` order; `"redirect"`/`"structural"` items
@@ -476,14 +420,8 @@ def _discard_nonmatching_suggested_patterns(
 ) -> None:
     """Blank out any item's `suggested_pattern` that doesn't actually match the argv of the item
     it was proposed for. The classifier model is *asked* to return the least-permissive pattern
-    that still matches the candidate command, but nothing constrains it to — a hallucinated
-    pattern (a mistyped token, a dropped required argument, an over-narrow literal, a stray
-    wildcard) would otherwise be recorded verbatim as a persistent `commandRules` grant that fails
-    to re-approve the very command the user just approved (and could differ, narrower or broader,
-    from what was actually vetted). Testing the abstraction against the original argv here — via
-    `klorb.permissions.command_access.pattern_matches_argv`, the same matcher
-    `CommandPermissionsTable` uses at evaluation time, so a pattern that passes this check is
-    guaranteed to match the command later too — and clearing it on mismatch makes the caller fall
+    that still matches the candidate command, but nothing constrains it to. Testing the
+    abstraction against the original argv here and clearing it on mismatch makes the caller fall
     back to `klorb.permissions.command_grant.compute_command_grant_patterns`'s deterministic
     literal-argv grant, exactly as if the classifier had returned no pattern for this item.
 
@@ -520,52 +458,31 @@ def classify_command_risk(
 ) -> CommandRiskReport | None:
     """Classify the risk of `command_text`'s already-"ask"-routed `items` (one compound-command
     call's worth, in the same order `MultiPermissionAskRequired.items` carries them) in a single
-    request, using `model` via `api_provider` (the same `ApiProvider` instance the caller's main
-    conversation uses, just pointed at a different, cheap model). Returns `None` on any failure —
-    a request error, a request that exceeds `timeout`, the whole call exceeding `e2e_timeout`, or a
-    reply that still fails to parse as a `CommandRiskReport` after one retry — so the caller can
-    fall back to pre-existing behavior (no risk badge/rationale, today's literal-argv grant-pattern
-    fallback) exactly as if the classifier had never run. Never raises: `_classify_command_risk`
-    implements the specific request/parse/retry flow, and any exception it doesn't itself already
-    turn into a `None` return (e.g. an `ApiProvider` test double replying with something that isn't
-    even textual) is caught here as a last-resort backstop, so a caller never needs its own
-    try/except around this ergonomics-only feature.
+    request, using `model` via `api_provider`. Returns `None` on any failure. Never raises:
+    `_classify_command_risk` implements the specific request/parse/retry flow, and any exception
+    it doesn't itself already turn into a `None` return is caught here as a last-resort backstop,
+    so a caller never needs its own try/except around this ergonomics-only feature.
 
-    `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt` (which the
-    underlying client applies per HTTP request, and for a streaming reply effectively per socket
-    read). `e2e_timeout` is a hard wall-clock ceiling on this whole call — both the initial request
-    and the one parse-retry combined — enforced by a `threading.Timer` that sets the same
-    `cancel_event` `send_prompt` already honors, so a slow reply that keeps trickling bytes (never
-    stalling a single read long enough to trip `timeout`) is still cut off and turned into a `None`
-    return. This is the bound that actually keeps the approval flow responsive; see
-    `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS` for why it must stay below the liveness
-    watchdog's timeout.
+    `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt`. `e2e_timeout`
+    is a hard wall-clock ceiling on this whole call enforced by a `threading.Timer` that sets the
+    same `cancel_event` `send_prompt` already honors, so a slow reply that keeps trickling bytes is
+    still cut off and turned into a `None` return.
 
-    `intent`, when given, is the model's own `BashTool` `intent` argument — see `klorb.tools.
-    bash.BashTool` and docs/specs/bash-tool-and-command-permissions.md's "Agent-stated intent"
-    section — sent to the classifier so it can flag a command that looks deceptively different
-    from what it was stated to accomplish (see `_SYSTEM_PROMPT`'s "Compare the command against
-    the agent's stated intent" section) with a higher risk score and a rationale naming the
-    mismatch. `None` (e.g. no intent was given, or this isn't a `BashTool` ask at all) omits the
-    comparison entirely — every item is scored purely on the command itself, exactly as before
-    this parameter existed.
+    `intent`, when given, is the model's own `BashTool` `intent` argument sent to the classifier
+    so it can flag a command that looks deceptively different from what it was stated to accomplish
+    with a higher risk score and a rationale naming the mismatch. `None` omits the comparison
+    entirely.
 
     `history`, when given, is a bounded window of `HistoryEntry` records of earlier-in-the-session
-    decisions (see `record_decision_history`/`resolve_item_risk_assessment`), sent alongside
-    `items` inside a `<PriorDecisionsHistory>` element clearly distinguished from
-    `<CommandUnderReview>` — the model is instructed to treat it purely as calibration context
-    (e.g. widening `suggested_pattern` when the user has repeatedly approved a similar shape of
-    command), never as an item to score. Each call is otherwise still a single, independent,
+    decisions, sent alongside `items` inside a `<PriorDecisionsHistory>` element clearly
+    distinguished from `<CommandUnderReview>`. Each call is otherwise still a single, independent,
     stateless request: `history` is data threaded in from the caller's own storage, not a
     conversation this function itself accumulates across calls.
 
     Before returning, every `"command"`-kind item's `suggested_pattern` is validated: a pattern
-    that doesn't actually match the command it was for is blanked
-    (`_discard_nonmatching_suggested_patterns`), as is one that wildcards the program name (argv0)
-    unsafely — e.g. `["*", "-c", "*"]` — which would otherwise persist as a grant matching an
-    open-ended class of unrelated commands (`_discard_unsafe_wildcard_argv0_patterns`). Either way
-    a rejected pattern is blanked so a hallucinated or over-broad abstraction is never shown or
-    persisted as a grant.
+    that doesn't actually match the command it was for is blanked, as is one that wildcards the
+    program name (argv0) unsafely. Either way a rejected pattern is blanked so a hallucinated or
+    over-broad abstraction is never shown or persisted as a grant.
     """
     started = time.perf_counter()
     # A hard end-to-end deadline for the whole call: when it elapses, set `cancel_event`, which
@@ -663,10 +580,10 @@ def _classify_command_risk(
 
 
 def _sibling_items_for(ask_ctx: PermissionAskContext) -> list[PermissionAskItem]:
-    """`ask_ctx.sibling_items` when set (the normal `MultiPermissionAskRequired` path — see
-    `Session._resolve_multi_permission_ask`), else a single-item list synthesized from `ask_ctx`
-    itself: a defensive fallback for a `bash_context`-bearing context built some other way (e.g.
-    directly, in a test) rather than via a real `BashTool` multi-item ask."""
+    """`ask_ctx.sibling_items` when set (the normal `MultiPermissionAskRequired` path), else a
+    single-item list synthesized from `ask_ctx` itself: a defensive fallback for a
+    `bash_context`-bearing context built some other way rather than via a real `BashTool`
+    multi-item ask."""
     if ask_ctx.sibling_items is not None:
         return ask_ctx.sibling_items
     return [PermissionAskItem(
@@ -687,26 +604,22 @@ def resolve_item_risk_assessment(
     ask_ctx: PermissionAskContext, *, session: Session, process_config: ProcessConfig,
 ) -> ItemRiskAssessment | None:
     """This item's `ItemRiskAssessment`, or `None` if `tools.bash.riskClassifier.enabled` is off,
-    `ask_ctx` isn't a `BashTool` ask at all (`bash_context` unset — a plain directory-access ask
-    has nothing for a command-risk classifier to say), or classification failed. This is the one
-    function any UI layer (`klorb.tui.ReplApp`, or a future non-TUI equivalent such as a
-    VSCode plugin) should call right before showing its own approval affordance for `ask_ctx` —
-    it owns gating, batching, and caching, so a caller only ever needs to pull an
+    `ask_ctx` isn't a `BashTool` ask at all (`bash_context` unset), or classification failed. This
+    is the one function any UI layer should call right before showing its own approval affordance
+    for `ask_ctx` — it owns gating, batching, and caching, so a caller only ever needs to pull an
     `ItemRiskAssessment` out of it, never construct one itself.
 
     Classifies every item in `_sibling_items_for(ask_ctx)` in one request the first time any of
     them is looked up for this `session`, caching each result in
     `session.tool_state["BashRiskClassifier"]` keyed by its own `item_command_text` — so the
     remaining items of the same compound command, each asked about in its own turn right after
-    this one (see `Session._resolve_multi_permission_ask`), reuse the cached report instead of
-    spending a second classifier round trip, and a byte-identical item asked about again later in
-    the session (e.g. a retried "once" decision) does too.
+    this one, reuse the cached report instead of spending a second classifier round trip, and a
+    byte-identical item asked about again later in the session does too.
 
-    Also passes `_recent_history(session, process_config)` — the most recent `tools.bash.
-    riskClassifier.historySize` `HistoryEntry` records `record_decision_history` has recorded for
-    this `session` so far — into `classify_command_risk` as calibration context, so a run of
-    similar approvals or denials earlier in the session can inform this request's own
-    `suggested_pattern` generalization without making the classifier itself stateful across calls.
+    Also passes `_recent_history(session, process_config)` into `classify_command_risk` as
+    calibration context, so a run of similar approvals or denials earlier in the session can inform
+    this request's own `suggested_pattern` generalization without making the classifier itself
+    stateful across calls.
     """
     if ask_ctx.bash_context is None or not process_config.bash_risk_classifier_enabled:
         return None

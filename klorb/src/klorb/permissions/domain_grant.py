@@ -1,17 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Computes and persists permission grants for a domain-access ask — the `webDomains`/
-`bashDomains` counterpart to `klorb.permissions.skill_grant`. Records what gets added to
-`.allow`/`.deny` (and removed from `.ask`), in memory and on disk, when a user answers a
-domain-access ask with a persistent scope.
-
-`webDomains` (consulted only by `WebFetch`, which runs inside klorb's own trust boundary) and
-`bashDomains` (consulted only by sandboxed `Bash` network egress, which does not) are two
-independent `DomainRules` tables — see `klorb.session.SessionConfig.web_domain_rules`/
-`bash_domain_rules` — so this module owns two separate `RuleGrantWriter` instances
-(`_web_writer`/`_bash_writer`) rather than one shared table, and
-`apply_domain_permission_grant` dispatches to the matching one via `DomainResource.rule_set`.
-See docs/specs/permissions.md and docs/specs/bash-tool-and-command-permissions.md.
-"""
+"""Computes and persists permission grants for a domain-access ask."""
 
 from typing import Any
 
@@ -51,15 +39,13 @@ _web_writer = RuleGrantWriter[DomainRules](
     config_key=_WEB_DOMAINS_KEY,
     make=lambda deny, ask, allow: DomainRules(deny=deny, ask=ask, allow=allow),
     from_json=_domain_rules_from_json, to_json=_domain_rules_to_json)
-"""The `webDomains` instance of the generic single-table grant scaffolding shared with
-`klorb.permissions.command_grant`/`klorb.permissions.skill_grant` — see
-`klorb.permissions.rule_grant_base.RuleGrantWriter`."""
+"""The `webDomains` instance of the generic single-table grant scaffolding."""
 
 _bash_writer = RuleGrantWriter[DomainRules](
     config_key=_BASH_DOMAINS_KEY,
     make=lambda deny, ask, allow: DomainRules(deny=deny, ask=ask, allow=allow),
     from_json=_domain_rules_from_json, to_json=_domain_rules_to_json)
-"""The `bashDomains` instance — same shape as `_web_writer`, a genuinely separate table."""
+"""The `bashDomains` instance."""
 
 
 def apply_domain_permission_grant(
@@ -71,13 +57,7 @@ def apply_domain_permission_grant(
     *, rule_set: str = "web",
 ) -> None:
     """Record a permanent Allow or Deny decision for `domain` at `scope`, against the
-    `webDomains` table (`rule_set="web"`, the default — `WebFetch`'s domain asks) or the
-    `bashDomains` table (`rule_set="bash"` — sandboxed `Bash` network-egress asks) — the
-    `domains` counterpart to `klorb.permissions.skill_grant.apply_skill_permission_grant`; see
-    that function's docstring for the shared scope/cross-file semantics (`"session"` stops at
-    the live `SessionConfig`; `"workspace"`/`"homedir"` additionally ripple into
-    `process_config.session` and persist to the scope's target file; `"homedir"` additionally
-    best-effort-cleans a redundant workspace-file `ask` entry, never the reverse).
+    `webDomains` table or the `bashDomains` table.
     """
     granted = [domain]
     writer = _bash_writer if rule_set == "bash" else _web_writer

@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Pure evaluation of a `HookConfigFilter` against a subject string — no I/O, no config
-lookup, just string/regex matching and boolean composition.
+"""Pure evaluation of a `HookConfigFilter` against a subject string.
 """
 
 import re

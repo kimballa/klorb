@@ -1,24 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 r"""@mention file inlining: when a user's prompt contains `@<filename>`, the referenced file's
 contents are attached alongside the prompt as one or more `MessageFragment`s, so the model sees
-the file's contents without needing a separate `ReadFile` tool call. A mention whose bytes are
-recognized as an image (see `detect_mention_mime_type`) is instead resized/transcoded via
-`klorb.images.prepare.prepare_image_for_model` and attached as an `image_url` fragment, the same
-pipeline a drag-drop/paste attachment goes through (see docs/specs/vision-image-input.md); every
-other mention is read via `ReadFileCore` and attached as text, as before.
-
-Filenames after `@` may contain escaped spaces (`\ `), backslashes (`\\`), and double-quote
-marks (`\"`); each is unescaped before the file is opened.  A backslash followed by any other
-character is left as-is (the backslash is literal).  Quoted filenames (`@"path with spaces"`)
-are also supported -- the quotes are stripped and the inner escapes processed identically.
-
-An unquoted mention's trailing sentence punctuation (`.`, `,`, `'`, `)`, `]`, `}`, `!`, `?`) is
-trimmed before the file is opened, so a mention interwoven into a sentence (`see @foo.txt.`,
-`(@foo.txt)`) still resolves to the intended file -- see `TRAILING_MENTION_PUNCTUATION` and
-`strip_trailing_mention_punctuation`. A quoted mention is exempt: its contents are used verbatim.
-
-See docs/specs/at-mention-file-inlining.md for the full design.
-"""
+the file's contents without needing a separate `ReadFile` tool call."""
 
 import logging
 import mimetypes
@@ -44,11 +27,10 @@ logger = logging.getLogger(__name__)
 
 _RECOGNIZED_IMAGE_MIME_TYPES = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"})
-"""Every MIME type `detect_mention_mime_type` will report -- the formats every packaged vision
-model's `vision_details.supported_mime_types` overlaps on (see docs/specs/vision-image-input.md),
-plus BMP. Filters both the `filetype`-sniffed and the extension-guessed result, so a MIME type
-the `filetype` package recognizes but this codebase can't decode (e.g. `image/heic`, which needs
-a Pillow plugin klorb doesn't bundle) is never treated as a recognized image mention."""
+"""Every MIME type `detect_mention_mime_type` will report. Filters both the
+`filetype`-sniffed and the extension-guessed result, so a MIME type the `filetype` package
+recognizes but this codebase can't decode is never treated as a recognized image
+mention."""
 
 
 def detect_mention_mime_type(filename: str, path: Path) -> str | None:
@@ -80,15 +62,11 @@ sentence-punctuation character on group 2's match is further trimmed by
 
 TRAILING_MENTION_PUNCTUATION = frozenset({".", ",", "'", ")", "]", "}", "!", "?", ":", ";"})
 """Characters that, as the literal last character of an *unquoted* `@mention` match, are far
-more likely to be sentence punctuation immediately following the mention (`see @foo.txt.`,
-`(@foo.txt)`) than part of the filename itself. Stripped from the tail of an unquoted match by
-`strip_trailing_mention_punctuation` so those mentions still resolve to the intended file. A
-quoted mention (`@"foo.txt."`) is never subject to this -- its contents are taken verbatim. An
-unescaped `"` needs no entry here: it's excluded from `_AT_MENTION_RE`'s unquoted character class
-outright, so it can never appear in an unquoted match (leading, trailing, or embedded) in the
-first place -- `hello @foo.txt"followed by...` already stops the unquoted match at `foo.txt`
-without this set's help, with no need to track whether some earlier, unrelated quote in the
-sentence was "open"."""
+more likely to be sentence punctuation immediately following the mention than part of the
+filename itself. Stripped from the tail of an unquoted match by
+`strip_trailing_mention_punctuation` so those mentions still resolve to the intended file."""
+
+
 
 
 def _mention_token_starts(raw: str) -> list[int]:
@@ -181,8 +159,7 @@ def _format_attachment(
 
 def _mention_read_error_result(message: object) -> dict[str, Any]:
     """Build the synthetic `_format_attachment`-shaped result for an @mention that couldn't be
-    read/attached -- shared by a text-read failure and an image-mention failure (no vision
-    support, unreadable bytes, or an oversized prepared image) alike."""
+    read/attached."""
     return {
         "start_line": 0,
         "end_line": 0,
@@ -251,9 +228,8 @@ def resolve_at_mentions(
 
 
 def _resolve_mention_path(filename: str, workspace_path: Path) -> Path:
-    """Resolve *filename* to an absolute path within *workspace_path* -- shared by the text and
-    image mention-resolution paths. No permission check is performed -- the user implicitly
-    authorized the read by @mentioning the file."""
+    """Resolve *filename* to an absolute path within *workspace_path*. No permission check is
+    performed."""
     path = Path(filename)
     if not path.is_absolute():
         path = workspace_path / path
@@ -289,10 +265,7 @@ def _resolve_mention_fragments(
 
 def _image_attachment_header_text(ordinal: int, filename: str, prepared: PreparedImage) -> str:
     """Text-fragment header `_resolve_mention_image` places immediately ahead of an @mentioned
-    image's `image_url` fragment -- mirrors `_format_attachment`'s `Filename`/`Attachment Id`
-    framing so the model can correlate an image mention with a text one by ordinal, per vendor
-    guidance that an image should follow descriptive text (see docs/specs/vision-image-input.md's
-    `_image_header_text`)."""
+    image's `image_url` fragment."""
     return (
         f"Filename: {filename}\n"
         f"Attachment Id: {ordinal}\n"

@@ -2,8 +2,9 @@
 """`TurnBridge`: the sync/async bridge that runs a blocking `Session.send_turn()` call on a
 worker thread and converts its `TurnEventHandlers` callbacks into ordered ACP `session/update`
 notifications, and its blocking asks (permission, escalation, tool-call-limit) into ordered
-`session/request_permission`/`_klorb/raiseToolCallLimit` round trips -- see
-docs/specs/klorb-server.md's "Threading bridge" section."""
+`session/request_permission`/`_klorb/raiseToolCallLimit` round trips.
+
+See docs/specs/klorb-server.md."""
 
 import asyncio
 import logging
@@ -57,52 +58,41 @@ logger = logging.getLogger(__name__)
 
 _SENTINEL = object()
 """Enqueued by `run_turn()`'s `finally` to tell the pump task to stop, once the worker thread's
-`Session.send_turn()` call has returned or raised -- distinct from `None`, which is never a
-value a real session update could be."""
+`Session.send_turn()` call has returned or raised."""
 
 _RAISE_TOOL_CALL_LIMIT_EXT_METHOD = "klorb/raiseToolCallLimit"
 """The `_klorb/raiseToolCallLimit` extension method name, with the leading `_` that marks it as
-an extension already stripped -- `acp.Client.ext_method()`'s own proxy re-adds it on the wire
-(see `acp.agent.connection.AgentSideConnection.ext_method`)."""
+an extension already stripped."""
 
 _ASK_USER_QUESTIONS_EXT_METHOD = "klorb/askUserQuestions"
-"""The `_klorb/askUserQuestions` extension method name, with the leading `_` stripped -- see
-`_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why."""
+"""The `_klorb/askUserQuestions` extension method name, with the leading `_` stripped."""
 
 _USAGE_UPDATE_INTERVAL = 1.0
-"""Minimum seconds between intermediate `_klorb/usage` notifications sent during streaming
-(see `run_turn`'s chunk-throttle logic). Tool-call completions always trigger one
-unconditionally, regardless of this interval."""
+"""Minimum seconds between intermediate `_klorb/usage` notifications sent during streaming.
+Tool-call completions always trigger one unconditionally, regardless of this interval."""
 
 _USAGE_EXT_NOTIFICATION = "klorb/usage"
-"""The `_klorb/usage` extension notification name, with the leading `_` stripped -- see
-`_RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why. Sent unconditionally (no
-capability gate): unlike a blocking ext *request*, an unrecognized ext *notification* is
-silently ignored per ACP's own extensibility rules, so there's no wire cost to a client that
-doesn't understand it. Intermediate updates (during streaming, not just at turn-end) let the
-client's status-row token meter stay current -- see `run_turn`'s chunk-throttle and
-tool-call-interval logic."""
+"""The `_klorb/usage` extension notification name, with the leading `_` stripped. Sent
+unconditionally: an unrecognized ext notification is silently ignored per ACP's own
+extensibility rules, so there's no wire cost to a client that doesn't understand it.
+Intermediate updates (during streaming, not just at turn-end) let the client's status-row
+token meter stay current."""
 
 _MESSAGE_QUEUED_EXT_NOTIFICATION = "klorb/messageQueued"
-"""The `_klorb/messageQueued` extension notification name, sent (unconditionally, like
-`_klorb/usage`) whenever `Session.enqueue_queued_message` accepts a message into the running
-turn -- see `_klorb/enqueueMessage` in docs/specs/klorb-server.md."""
+"""The `_klorb/messageQueued` extension notification name, sent unconditionally whenever
+`Session.enqueue_queued_message` accepts a message into the running turn."""
 
 _QUEUED_MESSAGE_SENT_EXT_NOTIFICATION = "klorb/queuedMessageSent"
 """The `_klorb/queuedMessageSent` extension notification name, sent once a previously-queued
 message has actually been delivered (folded into a tool-response envelope, or redelivered as
-the next turn at turn-end) -- the client's cue to flip that message's rendering from queued to
-delivered."""
+the next turn at turn-end)."""
 
 _AskResultT = TypeVar("_AskResultT")
 
 
 class _ExtNotificationItem(NamedTuple):
     """One `_klorb/*` extension notification riding the same ordered outbound queue as a
-    `session/update` -- `pump()` tells the two apart by type so `_klorb/messageQueued`/
-    `_klorb/queuedMessageSent` stay correctly interleaved with the session updates around
-    them, exactly like every other fire-and-forget callback (see docs/specs/klorb-server.md's
-    "Threading bridge" section)."""
+    `session/update`."""
 
     method: str
     params: dict[str, Any]
@@ -115,9 +105,9 @@ class TurnBridge:
     Every `on_chunk`/`on_thinking_chunk`/`on_tool_call_started`/`on_tool_call` callback fires on
     `Session.send_turn()`'s worker thread (via `asyncio.to_thread`); each is enqueued onto one
     `asyncio.Queue` via `loop.call_soon_threadsafe`, and a single pump task awaits each
-    `client.session_update()` call in the order the callbacks fired -- the ordering guarantee
-    described in docs/specs/klorb-server.md. `on_tool_call_started`/`on_tool_call` delegate the
-    klorb-event-to-ACP-update translation to `klorb.server.update_mapping`, passing this turn's
+    `client.session_update()` call in the order the callbacks fired.
+    `on_tool_call_started`/`on_tool_call` delegate the klorb-event-to-ACP-update translation
+    to `klorb.server.update_mapping`, passing this turn's
     `Session.tool_registry`/`Session.config.workspace.path` through, and additionally track a
     stack of in-flight `call_id`s so a same-turn permission/escalation ask can link itself to
     whichever call raised it.
@@ -126,50 +116,36 @@ class TurnBridge:
     `on_ask_user_questions` are the turn's blocking asks: each builds its `session/
     request_permission`/`_klorb/raiseToolCallLimit`/`_klorb/askUserQuestions` round trip as a
     coroutine and runs it via `call_blocking()`, which first awaits `queue.join()` (so every
-    `session/update` already enqueued has actually been sent before the ask goes out -- the same
-    ordering guarantee, extended to asks) and then `asyncio.run_coroutine_threadsafe(...)
-    .result()`s it, parking the worker thread until the client answers. `on_permission_ask` also
-    calls `klorb.permissions.risk_classifier.resolve_item_risk_assessment`/`record_decision_history`
-    for a `BashTool` ask, exactly as `klorb.tui.mixins.interactions.InteractionsMixin.
-    _confirm_permission_ask` does -- both call sites share that module's own gating/batching/
-    caching rather than each re-implementing it (see that module's docstring).
+    `session/update` already enqueued has actually been sent before the ask goes out) and then
+    `asyncio.run_coroutine_threadsafe(...).result()`s it, parking the worker thread until the
+    client answers. `on_permission_ask` also calls
+    `klorb.permissions.risk_classifier.resolve_item_risk_assessment`/`record_decision_history`
+    for a `BashTool` ask.
 
     `run_turn()` always drains and stops the pump task in a `finally`, whether `send_turn()`
     succeeds, raises `ResponseAborted`, or raises anything else -- and, once drained, sends one
     `_klorb/usage` notification carrying the session's resulting token tally. Intermediate
-    `_klorb/usage` notifications are also enqueued during streaming: after every `on_tool_call`
-    (so the client's token meter updates as each tool call completes), and on the next
-    `on_chunk` if at least `_USAGE_UPDATE_INTERVAL` seconds have elapsed since the last usage
-    update (so the meter stays current during long streaming phases without one). Both use the
+    `_klorb/usage` notifications are also enqueued during streaming: after every `on_tool_call`,
+    and on the next `on_chunk` if at least `_USAGE_UPDATE_INTERVAL` seconds have elapsed since
+    the last usage update. Both use the
     same `_build_usage_params()` helper as the turn-end notification, and ride the same ordered
     queue as every other update. `on_session_name_changed` enqueues a `session_info_update`
-    (title) the same way `on_chunk`/`on_thinking_chunk`
+    (title).
 
     `on_tool_call` additionally enqueues a `plan` update (`fetch_plan_update()`) after any
-    finished call to a chainlink task tool (`TASK_TOOL_NAMES`), mirroring the TUI task sidebar's
-    own refresh trigger -- see docs/specs/klorb-server.md's "Chainlink task-plan updates"
-    section.
+    finished call to a chainlink task tool (`TASK_TOOL_NAMES`).
 
     `on_enqueue_message` enqueues `_klorb/messageQueued` onto the same ordered queue as every
-    other update, and `on_send_queued_message`'s mid-turn firing (from `Session.
-    deliver_queued_user_message()`'s own drain, delivering a message into the running turn as a
-    `role="user"` message) enqueues `_klorb/queuedMessageSent` the same way. Once a
-    `Session.send_turn()` call returns (successfully, aborted, or raising), `run_turn()` drains
-    any message still queued at that point (`Session.drain_queued_messages()`, called with no
-    `callbacks` -- this iteration's own pump task has already stopped, so there is nothing left
-    to enqueue onto) and sends `_klorb/queuedMessageSent` for each directly, then folds them into
-    one more `send_turn()` call for the same ACP `session/prompt` request -- mirroring the TUI's
-    `_finish_turn()`, which redelivers a still-queued message as the next turn regardless of how
-    the current one ended (this is also how a `chat` hook handler's `onAgentTurnEnd`/
-    `onSubagentTurnEnd` continuation reaches a client: `Session._deliver_chained_hook_message`
-    enqueues it, and it surfaces here the same as a user's typed-ahead message would).
-    `Session.mark_next_turn_continuation()` is called on the raw drained list (mirroring what
-    `Session.drain_next_turn_text()` does for a caller that doesn't also need per-message
-    notifications) so a purely hook-chained batch doesn't reset `Session._chained_hook_turns`.
+    other update, and `on_send_queued_message`'s mid-turn firing enqueues
+    `_klorb/queuedMessageSent` likewise. Once a `Session.send_turn()` call returns
+    (successfully, aborted, or raising), `run_turn()` drains any message still queued at that
+    point (`Session.drain_queued_messages()`) and sends `_klorb/queuedMessageSent` for each
+    directly, then folds them into one more `send_turn()` call for the same ACP
+    `session/prompt` request. `Session.mark_next_turn_continuation()` is called on the raw
+    drained list so a purely hook-chained batch doesn't reset `Session._chained_hook_turns`.
     The loop repeats until a `send_turn()` call ends with nothing left queued; the JSON-RPC
     response `KlorbAcpAgent.prompt()` builds reflects the *last* turn in the chain, and an
-    exception from that last turn propagates after the loop (not the exception, if any, of an
-    earlier turn in the chain whose queued message triggered a successful follow-on turn).
+    exception from that last turn propagates after the loop.
     """
 
     def __init__(
@@ -186,12 +162,8 @@ class TurnBridge:
 
     def fetch_plan_update(self) -> acp.schema.AgentPlanUpdate | None:
         """Fetch `self._session`'s chainlink issues and build the ACP `plan` update to send, or
-        `None` if chainlink is unavailable or the fetch fails -- see docs/specs/klorb-server.md's
-        "Chainlink task-plan updates" section. Runs synchronously (chainlink shells out), so the
-        caller must already be off the event loop: `run_turn()`'s `on_tool_call` callback (itself
-        on `Session.send_turn()`'s worker thread), and `KlorbAcpAgent.new_session()`'s initial
-        snapshot (only after it has confirmed a chainlink database already exists, so this never
-        triggers `chainlink init`'s scaffolding as a side effect)."""
+        `None` if chainlink is unavailable or the fetch fails. Runs synchronously, so the caller
+        must already be off the event loop."""
         context = ToolSetupContext(
             process_config=self._process_config, session_config=self._session.config,
             session=self._session)
@@ -205,8 +177,7 @@ class TurnBridge:
 
     def _build_usage_params(self) -> dict[str, Any]:
         """Build the params dict for a `_klorb/usage` extension notification from the
-        session's live token tally -- called from the worker thread (where the session's
-        `num_tokens` fields are kept up-to-date by streaming chunks)."""
+        session's live token tally."""
         return {
             "sessionId": self._session_id,
             "usedTokens": self._session.total_tokens_used(),
@@ -219,12 +190,9 @@ class TurnBridge:
     ) -> str:
         """Send `prompt_text` as one turn of `self._session`'s conversation, streaming the
         reply and any reasoning text out as ACP `session/update` notifications. Returns the
-        final response text of the *last* turn in the chain (see class docstring for the
-        turn-end redelivery loop); propagates whatever that last turn's `Session.send_turn()`
-        call raised (including `klorb.api_provider.ResponseAborted` on a cancelled turn), after
-        every pump task has fully drained and a `_klorb/usage` notification carrying the
-        session's resulting token tally has gone out -- unconditionally, whichever way the last
-        turn in the chain ended.
+        final response text of the *last* turn in the chain; propagates whatever that last turn's
+        `Session.send_turn()` call raised, after every pump task has fully drained and a
+        `_klorb/usage` notification carrying the session's resulting token tally has gone out.
 
         Intermediate `_klorb/usage` notifications are also sent during streaming so the
         client's status-row token meter stays live: one after every tool-call completion, and
@@ -233,9 +201,7 @@ class TurnBridge:
         other update, so they arrive interleaved with the session updates they accompany.
 
         `image_fragments`, if given, are attached to the *first* `Session.send_turn()` call
-        only -- never to a later iteration of the turn-end redelivery loop, which resends
-        plain drained-queued-message text, not a fresh ACP `session/prompt` with its own
-        content blocks.
+        only.
         """
         loop = asyncio.get_running_loop()
         text_to_send = prompt_text
@@ -316,7 +282,7 @@ class TurnBridge:
             ) -> _AskResultT:
                 """Await `queue.join()` (draining every `session/update` enqueued so far) before
                 running `build_coro()`, so a blocking ask never overtakes the updates that led to
-                it -- see docs/specs/klorb-server.md's "Threading bridge" section."""
+                it."""
                 await queue.join()
                 return await build_coro()
 
@@ -333,7 +299,7 @@ class TurnBridge:
                 # pydantic re-wraps `sibling_items` into a fresh list on every
                 # `PermissionAskContext` construction (one per item in the batch), so the *list*
                 # object's id differs across calls even though the `PermissionAskItem` objects
-                # inside it -- plain objects, never copied by pydantic -- stay identical.
+                # inside it stay identical.
                 batch_key = id(ctx.sibling_items[0]) if ctx.sibling_items else id(ctx)
                 item_index = sibling_batch_index.get(batch_key, 0)
                 sibling_batch_index[batch_key] = item_index + 1
@@ -438,8 +404,7 @@ class TurnBridge:
             # this iteration's pump task has already stopped, so `handlers.on_send_queued_message`
             # would enqueue onto a queue nothing is draining anymore. The `_klorb/
             # queuedMessageSent` notification for each drained message is sent directly instead,
-            # right here on the event loop -- safe because nothing else is queued for this
-            # iteration by this point, and the next iteration's own queue doesn't exist yet.
+            # right here on the event loop.
             drained = self._session.drain_queued_messages()
             if not drained:
                 break

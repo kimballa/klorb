@@ -22,23 +22,18 @@ class Model(ABC):
 
     @abstractmethod
     def name(self) -> str:
-        """Return the model's identifier, as used by the API provider and the command palette."""
+        """Return the model's identifier."""
 
     def mangled_name(self) -> str:
-        """Return `name()` made filesystem-safe (see
-        `klorb.system_prompt.mangle_model_name`): this model's filename stem within a
+        """Return `name()` made filesystem-safe: this model's filename stem within a
         `system_prompts.d/` prompt-file tree."""
         return mangle_model_name(self.name())
 
     def system_prompt(self) -> str | None:
-        """Return this model's role-agnostic, model-specific system prompt — the
-        `<mangled_name()>.md` prompt file at the top of a `system_prompts.d/` tree (user
-        override tier, then packaged tier — see
-        `klorb.system_prompt.resolve_prompt_file`) — or `None` if no such file exists.
-        Consulted by `Session._resolve_system_prompt()` as one tier of its "default walk",
-        independent of whatever the active `Role`'s own prompt tiers resolve. Subclasses
-        (e.g. test fixtures) may override to return a literal string without filesystem
-        access."""
+        """Return this model's role-agnostic, model-specific system prompt, the
+        `<mangled_name()>.md` prompt file at the top of a `system_prompts.d/` tree, or
+        `None` if no such file exists. Subclasses may override to return a literal string
+        without filesystem access."""
         return resolve_prompt_file(f"{self.mangled_name()}.md")
 
     @abstractmethod
@@ -68,32 +63,28 @@ class Model(ABC):
         return None
 
     def model_version(self) -> str | None:
-        """Return this model's version within its `family()` (e.g. `"5.0"`), or `None` if
-        unknown. See `family()`."""
+        """Return this model's version within its `family()`, or `None` if unknown."""
         return None
 
     def release_date(self) -> str | None:
-        """Return this model's release date as an ISO-8601 date string (e.g. `"2024-06-30"`), or
-        `None` if unknown/unpublished. Can be used as a stand-in for knowledge cutoff if
+        """Return this model's release date as an ISO-8601 date string, or `None` if
+        unknown/unpublished. Can be used as a stand-in for knowledge cutoff if
         the latter is unspecified.
         """
         return None
 
     def knowledge_cutoff(self) -> str | None:
         """Return this model's training data knowledge cutoff date as an ISO-8601 date
-        string (e.g. `"2024-06-30"`), or `None` if unknown/unpublished."""
+        string, or `None` if unknown/unpublished."""
         return None
 
     def klorb_capabilities(self) -> dict[str, Any]:
-        """Return a dict of klorb-curated capability flags for this model — e.g.
-        `{"BASH_SAFETY_EVAL": True}` — distinct from `capabilities()`'s raw provider-reported
-        capabilities (vision, context window, ...). These flags name tasks klorb itself
-        considers this model especially suited for, so code that picks a model
-        programmatically (e.g. `klorb.permissions.risk_classifier`) can select one by capability
-        (`klorb.models.registry.ModelRegistry.find_by_capability`) instead of a hardcoded model
-        name. A user is always free to configure any model for any task regardless of what it
-        declares here — these flags only inform klorb's own defaults, they're never validated
-        against a user's explicit choice.
+        """Return a dict of klorb-curated capability flags for this model, distinct from
+        `capabilities()`'s raw provider-reported capabilities. These flags name tasks klorb
+        itself considers this model especially suited for, so code that picks a model
+        programmatically can select one by capability instead of a hardcoded model name.
+        A user is always free to configure any model for any task regardless of what it
+        declares here.
         """
         return {}
 

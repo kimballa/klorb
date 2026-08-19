@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """LLM-driven session naming: derive a short human title for a fresh klorb session from its
-first user prompt. See docs/specs/process-and-session-config.md's "Session naming" section for
-the full design.
-"""
+first user prompt."""
 
 import json
 import logging
@@ -27,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 NANO_CLASSIFIER_CAPABILITY = "NANO_CLASSIFIER"
 """`Model.klorb_capabilities()` key a model declares (`True`) to volunteer itself as klorb's
-default cheap/fast classifier model for small structured-output tasks such as session naming
--- see `_default_naming_model`. Named generically (not e.g. `SESSION_NAMER`) since this same
-model choice may be reused for other small classification tasks beyond naming."""
+default cheap/fast classifier model for small structured-output tasks such as session naming.
+Named generically since this same model choice may be reused for other small classification
+tasks beyond naming."""
 
 
 class SessionName(BaseModel):
@@ -62,11 +60,8 @@ summarize it into a `title` and `slug` describing what it's asking for.
 
 def _with_additional_properties_false(node: Any) -> Any:
     """Deep copy of a `BaseModel.model_json_schema()` result with `"additionalProperties":
-    false` set on every object schema. Strict `json_schema` structured-output mode (see
-    `_response_format`) rejects an object schema that omits this. Duplicated from
-    `klorb.permissions.risk_classifier._with_additional_properties_false` rather than imported:
-    this module must not depend on `klorb.permissions` for an unrelated, single-model-turn
-    classification task."""
+    false` set on every object schema. Strict `json_schema` structured-output mode rejects an
+    object schema that omits this."""
     if isinstance(node, dict):
         marked = {key: _with_additional_properties_false(value) for key, value in node.items()}
         if "properties" in marked:
@@ -121,14 +116,10 @@ def generate_session_name(
     using `model` via `api_provider`. Returns `None` on any failure.
 
     `timeout` is the per-request budget passed straight to `ApiProvider.send_prompt`. `e2e_timeout`
-    is a hard wall-clock ceiling on this whole call (the initial request and the one parse-retry
-    combined), enforced the same way `classify_command_risk` enforces its own: a
-    `threading.Timer` sets a `cancel_event` that `send_prompt` honors, so a slow reply that keeps
-    trickling bytes (never stalling a single read long enough to trip `timeout`) is still cut off.
+    is a hard wall-clock ceiling on this whole call, enforced by a `threading.Timer` that sets
+    a `cancel_event` that `send_prompt` honors.
 
-    `reasoning`, when given, is passed straight through to `ApiProvider.send_prompt` -- see
-    `thinking_effort_for`, which computes `{"effort": "low"}` for a thinking-capable `model` so
-    this one-shot summarization task doesn't inherit a costlier provider-side reasoning default.
+    `reasoning`, when given, is passed straight through to `ApiProvider.send_prompt`.
     """
     started = time.perf_counter()
     cancel_event = threading.Event()
@@ -209,9 +200,8 @@ def _generate_session_name(
 
 def default_naming_model(session: "Session") -> str:
     """The model name to derive a `SessionName` with when `ProcessConfig.session_classifier_model`
-    is unset: the first model in `session.model_registry` that declares itself good at this
-    (`Model.klorb_capabilities()[NANO_CLASSIFIER_CAPABILITY]`, via
-    `ModelRegistry.find_by_capability`), or `DEFAULT_SESSION_CLASSIFIER_MODEL` if none does."""
+    is unset: the first model in `session.model_registry` that declares itself good at this,
+    or `DEFAULT_SESSION_CLASSIFIER_MODEL` if none does."""
     # Deferred: `klorb.process_config` imports `SessionConfig`/`ThinkingEffort`/
     # `THINKING_EFFORT_TOKEN_BUDGETS` from `klorb.session`, so a module-level import here would
     # be circular whenever `klorb.process_config` is imported before `klorb.session_naming`.
@@ -223,11 +213,8 @@ def default_naming_model(session: "Session") -> str:
 
 def thinking_effort_for(session: "Session", model_name: str) -> dict[str, Any] | None:
     """`{"effort": "low"}` if `model_name` is a locally registered model whose
-    `Model.capabilities()` reports `"thinking"`, else `None`. A `ProcessConfig.
-    session_classifier_model` override that isn't a locally registered name (e.g. a raw
-    OpenRouter id) is tolerated the same way `bash_risk_classifier_model` already is elsewhere:
-    the string is still sent to the provider as-is, just with no reasoning-effort override
-    computed for it here."""
+    `Model.capabilities()` reports `"thinking"`, else `None`. A non-locally-registered name
+    is sent to the provider as-is, with no reasoning-effort override."""
     try:
         model_obj = session.model_registry.get(model_name)
     except KeyError:
@@ -238,8 +225,7 @@ def thinking_effort_for(session: "Session", model_name: str) -> dict[str, Any] |
 
 
 _FALLBACK_TITLE_WORD_RE = re.compile(r"[a-zA-Z0-9_]+")
-"""Word-token pattern for `fallback_session_title`: runs of letters, digits, and underscores --
-anything else (punctuation, whitespace, emoji) is a separator, never part of a token."""
+"""Word-token pattern for `fallback_session_title`: runs of letters, digits, and underscores."""
 
 MAX_FALLBACK_TITLE_WORDS = 6
 MAX_FALLBACK_TITLE_CHARS = 45
@@ -251,17 +237,12 @@ def fallback_session_title(prompt_text: str) -> str:
     """Derive a session title from `prompt_text` (a session's first user prompt) without calling
     the nano classifier: the first run of `[a-zA-Z0-9_]+` word-tokens in `prompt_text`, joined
     with single spaces, capped at `MAX_FALLBACK_TITLE_WORDS` tokens or `MAX_FALLBACK_TITLE_CHARS`
-    characters (whichever limit is hit first -- the cutoff always lands on a whole token, never a
-    partial one), followed by a literal `"..."`. Used by
-    `klorb.session.mixins.core.SessionCoreMixin._run_session_naming` when
-    `generate_session_name()` returns `None` (classifier failure/timeout) or is skipped outright
-    -- e.g. a headless one-shot run that opts out of the classifier round trip.
+    characters (whichever limit is hit first).
 
     The `"..."` suffix is unconditional, even when neither cap actually triggered: this fallback
     is only ever reached when the *real* classifier title is unavailable, so it's a permanent
     marker of "auto-derived, not classifier-derived," not a truncation indicator specifically.
-    `prompt_text` with no matching tokens at all (e.g. all punctuation or emoji) yields `"..."`
-    alone -- an accepted degenerate case, not specially handled.
+    `prompt_text` with no matching tokens at all yields `"..."` alone.
     """
     words: list[str] = []
     total_chars = 0

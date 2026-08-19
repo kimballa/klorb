@@ -19,9 +19,7 @@ from klorb.sandbox import allowed_dir_snapshot, build_bwrap_argv, compute_sandbo
 requires_bwrap = pytest.mark.skipif(
     not sandbox.bwrap_available(),
     reason="bwrap cannot create a sandbox here (missing binary or no unprivileged user namespaces)")
-"""Skip (never xfail/error) tests that need a real, working `bwrap` — shared with the runtime's
-own `bwrap_available()` gate rather than a separate Docker-detection heuristic. Container/
-cloud-agent CI environments legitimately can't run these; a WSL2/bare-metal dev host can."""
+"""Skip (never xfail/error) tests that need a real, working `bwrap`."""
 
 
 @pytest.fixture(autouse=True)
@@ -256,9 +254,7 @@ def test_read_files_deny_becomes_a_mask_file_when_it_exists(tmp_path: Path) -> N
 
 
 def test_wildcard_read_files_deny_is_not_masked(tmp_path: Path) -> None:
-    """compute_sandbox_dirs does not glob-expand a wildcard rule against the bound directories --
-    a matching real file stays unmasked in the sandbox, unlike an exact-path deny of the same
-    file (see docs/adrs/00174-wildcard-file-rules-are-not-glob-expanded-in-the-bwrap-sandbox.md)."""
+    """compute_sandbox_dirs does not glob-expand a wildcard rule against the bound directories."""
     home = tmp_path / "home"
     home.mkdir()
     secret = home / "key.pem"
@@ -371,9 +367,7 @@ def test_argv_chdir_is_the_workspace_root(tmp_path: Path) -> None:
 def test_argv_tmpfs_tmp_is_world_writable_and_sticky(tmp_path: Path) -> None:
     # /tmp is the only writable entry in the sandbox's temp-dir search path (--tmpfs /var shadows
     # /var/tmp, there is no /usr/tmp), so it must be writable regardless of which uid the userns
-    # maps the command to -- a default 0755 tmpfs is writable only by its owner uid. It is mounted
-    # 1777 (world-writable + sticky, like a real /tmp). See
-    # docs/adrs/00114-sandbox-tmp-is-1777-so-any-uid-can-write.md.
+    # maps the command to.
     argv = _argv(tmp_path)
     tmpfs_tmp = next(
         i for i, tok in enumerate(argv) if tok == "--tmpfs" and argv[i + 1] == "/tmp")
@@ -385,9 +379,7 @@ def test_argv_tmpfs_tmp_is_world_writable_and_sticky(tmp_path: Path) -> None:
 def test_argv_does_not_bind_tmp_over_the_scratch_tmpfs(tmp_path: Path) -> None:
     # /tmp is commonly in readDirs.allow, which would put it in SandboxDirs.read_only and emit a
     # `--ro-bind /tmp /tmp` that shadows the disposable scratch tmpfs with the host's read-only
-    # /tmp -- making the sandbox's /tmp read-only and sending tempfile.gettempdir() falling back to
-    # the workspace root. The disposable tmpfs must win. See
-    # docs/adrs/00115-sandbox-tmpfs-scratch-wins-over-tmp-readdir-bind.md.
+    # /tmp.
     home = tmp_path / "home"
     home.mkdir()
     ws = tmp_path / "ws"
@@ -526,7 +518,7 @@ def test_sandbox_write_lands_in_the_workspace_owned_by_the_real_user(tmp_path: P
 def test_sandbox_propagates_a_signal_death_as_128_plus_signum(tmp_path: Path) -> None:
     argv = _argv(tmp_path)
     # Pipeline forces bash to fork the python child, so bash observes its signal death and itself
-    # exits 128+SIGSEGV(11)=139 -- the positive-code path klorb.tools.bash._decode_exit handles.
+    # exits 128+SIGSEGV(11)=139.
     result = _run_sandboxed(
         argv, 'true | python3 -c "import os,signal; os.kill(os.getpid(), signal.SIGSEGV)"')
     assert result.returncode == 139

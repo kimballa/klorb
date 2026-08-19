@@ -1,15 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Session-scoped temp-directory management shared by every tool that spills an oversized
-result to disk instead of returning it inline in the tool result — `WebFetchTool`'s response
-bodies (`klorb.tools.web.spill`) and `GrepTool`'s `files` payload (`klorb.tools.grep`) both
-build on `SpillDir` here. The model can then `ReadFile`/`Grep` the spilled file via the normal
-file tools, the same "spill to a file the model can read back" idea `BashTool` uses for its own
-`stdout`/`stderr` (see docs/specs/bash-tool-and-command-permissions.md's "stdout/stderr
-capture" section) — but unlike `BashTool`'s fresh `mkdtemp()` per call, `SpillDir` reuses one
-directory for a tool's whole session, since a tool that spills more than once per session
-(WebFetch across several fetches, Grep across several searches) shouldn't accumulate one
-throwaway directory per call.
-"""
+"""Session-scoped temp-directory management for tools that spill oversized results to disk."""
 
 import atexit
 import logging
@@ -30,12 +20,12 @@ _DIR_ADDED_KEY = "tmpdir_dir_added"
 
 
 class SpillDir:
-    """One tool's session-scoped spill directory. `tool_name` (e.g. `"WebFetch"`, `"Grep"`)
-    namespaces both the tmpdir's `mkdtemp()` prefix (`klorb-<tool_name lowercased>-`) and the
-    tool's own slot in `session.tool_state`, so distinct tools spilling within the same session
-    get distinct directories that never collide. Holds no state of its own beyond `tool_name` —
-    every fact a call reads or writes lives on the `Session` passed in — so a `Tool` can hold a
-    single `SpillDir` instance for its whole lifetime and share it across every `apply()` call.
+    """One tool's session-scoped spill directory. `tool_name` namespaces both the tmpdir's
+    `mkdtemp()` prefix (`klorb-<tool_name lowercased>-`) and the tool's own slot in
+    `session.tool_state`, so distinct tools spilling within the same session get distinct
+    directories that never collide. Holds no state of its own beyond `tool_name`, so a `Tool`
+    can hold a single `SpillDir` instance for its whole lifetime and share it across every
+    `apply()` call.
     """
 
     def __init__(self, tool_name: str) -> None:
@@ -70,7 +60,7 @@ class SpillDir:
         return tmpdir_path
 
     def _cleanup(self, tmpdir_path: Path) -> None:
-        """Remove the spill tmpdir, ignoring errors (belt-and-suspenders teardown)."""
+        """Remove the spill tmpdir, ignoring errors."""
         shutil.rmtree(tmpdir_path, ignore_errors=True)
         logger.debug("Cleaned up %s spill tmpdir: %s", self._tool_name, tmpdir_path)
 
@@ -79,10 +69,7 @@ class SpillDir:
         `ReadFile`/`Grep` call against a spilled file doesn't itself hit an `ask`.
 
         Appends to `session.config.read_dirs.allow` (reassigning the whole `DirRules`, never
-        mutating its list in place, per `DirRules`'s documented contract) — this is automatic
-        harness bookkeeping for the harness's own scratch output, not a user-confirmed grant, so
-        it bypasses `klorb.permissions.grant`'s interactive-grant flow entirely (there is no ask
-        being answered here).
+        mutating its list in place, per `DirRules`'s documented contract).
         """
         tool_state: dict = session.tool_state.setdefault(self._tool_name, {})  # type: ignore[assignment]
         if tool_state.get(_DIR_ADDED_KEY):

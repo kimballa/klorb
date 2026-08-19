@@ -1,9 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Secret-detection redaction filter shared by `ReadFileCore`, `EditFileCore`, and
-`CreateFileCore` -- masks likely credentials (AWS keys, private keys, vendor API tokens, etc,
-via `detect-secrets`) out of file content before it reaches a model, and reverses the masking
-so `EditFileCore`/`CreateFileCore` can still match/write the file's real bytes when a token is
-echoed back. See docs/specs/secret-redaction.md.
+"""Secret-detection redaction filter for file content.
+See docs/specs/secret-redaction.md.
 """
 
 import hashlib
@@ -39,16 +36,13 @@ SECRET_DETECTION_PLUGINS: tuple[str, ...] = (
     "PypiTokenDetector", "SendGridDetector", "SlackDetector", "SoftlayerDetector",
     "SquareOAuthDetector", "StripeDetector", "TelegramBotTokenDetector", "TwilioKeyDetector",
 )
-"""`detect-secrets` plugin classnames this filter scans with -- every credential-shaped
-vendor/format detector it ships, deliberately excluding `Base64HighEntropyString`/
-`HexHighEntropyString` (trip constantly on ordinary hashes, UUIDs, and base64 blobs) and
-`IPPublicDetector` (an IP address isn't a credential). See docs/specs/secret-redaction.md."""
+"""`detect-secrets` plugin classnames this filter scans with.
+See docs/specs/secret-redaction.md."""
 
 SECRET_DETECTION_SCAN_LOCK = threading.Lock()
-"""`detect-secrets` keeps its plugin/filter configuration in a process-wide
-`functools.lru_cache` singleton (`detect_secrets.settings.get_settings()`); serializes
-`SecretRedactor.redact()` calls so two sessions scanning concurrently in the same process
-can't race on it."""
+"""`detect-secrets` keeps its plugin/filter configuration in a process-wide `functools.lru_cache`
+singleton; serializes `SecretRedactor.redact()` calls so two sessions scanning concurrently in
+the same process can't race on it."""
 
 
 def load_secrets_baseline(workspace_path: Path, *, trusted: bool) -> frozenset[str]:
@@ -100,28 +94,23 @@ def load_secrets_baseline(workspace_path: Path, *, trusted: bool) -> frozenset[s
 
 class SecretRedactor:
     """Detects likely credentials in file content and replaces each occurrence with a stable
-    `[[SECRET:<type>:<hash>]]` token, reversible via `detokenize()` -- so a model never sees a
-    plaintext secret via `ReadFile`, but `EditFile` can still match and write the file's real
-    bytes when a token is echoed back in `old_text`/`old_text_start`/`old_text_end`/`new_text`.
-    Holds no state of its own; the token<->plaintext map lives in
-    `session.tool_state`, so a `Tool` can share one `SecretRedactor()` across its whole
-    lifetime, the same shape as `klorb.tools.util.spill.SpillDir`. See
-    docs/specs/secret-redaction.md.
+    `[[SECRET:<type>:<hash>]]` token, reversible via `detokenize()`. Holds no state of its own;
+    the token<->plaintext map lives in `session.tool_state`, so a `Tool` can share one
+    `SecretRedactor()` across its whole lifetime.
+    See docs/specs/secret-redaction.md.
 
     When `baseline_hashes` is given (SHA-1 digests from a `detect-secrets` baseline file),
-    secrets whose hash appears in the set are left un-redacted -- they're known false
-    positives the workspace owner has allowlisted. See `load_secrets_baseline()`.
+    secrets whose hash appears in the set are left un-redacted.
     """
 
     def __init__(self, baseline_hashes: frozenset[str] = frozenset()) -> None:
         self._baseline_hashes = baseline_hashes
 
     def redact(self, session: "Session | None", text: str) -> str:
-        """Scan `text` (typically one `ReadFile`/`EditFile` call's raw line content) for
-        likely credentials and replace each one with its token, recording the token<->
-        plaintext mapping in `session.tool_state` for a later `detokenize()` call to reverse.
-        A `None` session (e.g. a `ToolSetupContext` built directly in a unit test) still
-        redacts, just without a map that survives past this one call.
+        """Scan `text` for likely credentials and replace each one with its token, recording
+        the token<->plaintext mapping in `session.tool_state` for a later `detokenize()` call
+        to reverse. A `None` session still redacts, just without a map that survives past this
+        one call.
         """
         if not text:
             return text
@@ -148,8 +137,7 @@ class SecretRedactor:
     @staticmethod
     def _token_for(secret: PotentialSecret, token_map: dict[str, str]) -> str:
         """Return `secret`'s token, deriving it from a hash of its plaintext so the same
-        secret value always resolves to the same token -- a re-read of the same file (or the
-        same secret appearing at a second location) doesn't mint a new one."""
+        secret value always resolves to the same token."""
         assert secret.secret_value is not None
         slug = re.sub(r"[^a-z0-9]+", "_", secret.type.lower()).strip("_")
         digest = hashlib.sha256(secret.secret_value.encode("utf-8")).hexdigest()[:12]
@@ -206,11 +194,7 @@ def get_or_create_secret_redactor(session: "Session | None") -> SecretRedactor:
 
 
 def clear_cached_redactor(session: "Session") -> None:
-    """Drop the session-cached `SecretRedactor` so the next tool instantiation rebuilds it.
-
-    Called by `_apply_workspace_config()` when workspace trust changes, since the cached
-    instance's `baseline_hashes` were derived from the old trust state.
-    """
+    """Drop the session-cached `SecretRedactor` so the next tool instantiation rebuilds it."""
     state: dict[str, Any] | None = session.tool_state.get(_TOOL_STATE_KEY)
     if state is not None:
         state.pop(_REDACTOR_CACHE_KEY, None)

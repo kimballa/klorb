@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider that reports everything klorb knows about the active model: its
-family/version, capabilities (vision, thinking, context window, etc.), klorb-curated
-capability flags, and current per-token pricing (fetched live from OpenRouter — see
-`klorb.models.openrouter_pricing`)."""
+"""Command palette provider that reports everything klorb knows about the active model.
+"""
 
 import asyncio
 from typing import Protocol, cast
@@ -24,11 +22,10 @@ _CAPABILITY_LABELS: dict[str, str] = {
     "function_calling": "Function calling",
     "streaming": "Streaming",
 }
-"""Display label for each standard `Model.capabilities()` key (see
-docs/specs/model-framework.md), in the order they're shown. `thinking_budget_style` is
-folded into the `Thinking` row rather than shown as its own row (see
-`_format_capabilities`); any other, provider-specific key is shown afterwards under its raw
-dict key, verbatim."""
+"""Display label for each standard `Model.capabilities()` key, in the order they're shown.
+`thinking_budget_style` is folded into the `Thinking` row rather than shown as its own row;
+any other, provider-specific key is shown afterwards under its raw dict key, verbatim.
+"""
 
 
 class SupportsModelInfo(Protocol):
@@ -85,12 +82,8 @@ def _format_klorb_capabilities(klorb_capabilities: dict[str, object]) -> str:
 
 def format_model_info(model: Model, pricing: ModelPricing | None) -> str:
     """Render every field klorb tracks for `model` as human-readable `"Label: value"` lines,
-    joined with newlines — the body of the history notice
-    `ModelInfoCommandProvider` posts, and independently testable without constructing a
-    Textual app or a network connection. `pricing` is looked up separately
-    (`fetch_openrouter_pricing`, live, not stored on `model` — see
-    docs/adrs/00100-fetch-model-pricing-live-not-from-json.md) and passed in rather than read off
-    `model`, since fetching it is a blocking network call this function itself must not make.
+    joined with newlines. `pricing` is passed in rather than read off `model`, since fetching
+    it is a blocking network call this function itself must not make.
     """
     lines = [
         f"Name: {model.name()}",
@@ -110,9 +103,8 @@ def format_model_info(model: Model, pricing: ModelPricing | None) -> str:
 
 class ModelInfoCommandProvider(Provider):
     """Offers a `"Show model info"` command via the command palette that appends
-    `format_model_info`'s rendering of the currently active model to the history scroll (see
-    `SupportsModelInfo.show_notice`), or a plain notice if no model is currently
-    registered/active.
+    `format_model_info`'s rendering of the currently active model to the history scroll, or
+    a plain notice if no model is currently registered/active.
     """
 
     async def search(self, query: str) -> Hits:

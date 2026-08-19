@@ -10,5 +10,4 @@ SERVER_SUBCOMMAND = "server"
 INDEX_SUBCOMMAND = "index"
 
 TABLE_GUTTER = "  "
-"""Column spacing for the CLI's table-formatted output (`klorb models`, `klorb system-prompt`'s
-tool token-count table) — no vertical border characters between columns."""
+"""Column spacing for the CLI's table-formatted output."""

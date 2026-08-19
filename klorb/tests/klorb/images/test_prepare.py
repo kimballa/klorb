@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for klorb.images.prepare -- prepare_image_for_model's resize/format/byte-ceiling
-pipeline."""
+"""Tests for klorb.images.prepare."""
 
 import io
 

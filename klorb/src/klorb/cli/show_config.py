@@ -11,8 +11,7 @@ from klorb.workspace import TrustManager
 
 
 def build_show_config_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb show-config`'s own flags (`--config`)
-    -- see `run_show_config_cli()`.
+    """Build the argument parser for `klorb show-config`'s own flags (`--config`).
     """
     parser = argparse.ArgumentParser(
         prog=f"klorb {SHOW_CONFIG_SUBCOMMAND}",
@@ -37,7 +36,7 @@ def run_show_config_cli(argv: list[str]) -> int:
 
     Resolves the config file stack (the same `/etc`/per-user/per-project/`--config` layers
     `load_process_config()` always reads). The workspace is resolved via a fresh `TrustManager`
-    (never bootstrapped -- that needs the interactive TUI), the same non-interactive path a
+    (never bootstrapped), the same non-interactive path a
     headless one-shot prompt takes: if the project isn't trusted, its per-project config layer
     is simply skipped, not prompted for.
 

@@ -1,7 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Process-wide configuration: settings that live for the lifetime of the klorb process and
-are shared by every `Session` created within it (today, one at a time; eventually several
-running concurrently). See docs/specs/process-and-session-config.md.
+are shared across every `Session` created within it.
+
+See docs/specs/process-and-session-config.md.
 """
 
 import importlib.resources
@@ -67,8 +68,7 @@ at construction time instead."""
 DEFAULT_GREP_SPILL_BYTES = 32 * 1024
 """Byte threshold on the JSON-serialized size of `GrepTool`'s `files` result value above which
 it's spilled to a file (reporting `results_data_file` instead of `files` in the result) rather
-than returned inline — mirrors `DEFAULT_BASH_SPILL_BYTES`'s rationale for `BashTool`'s
-`stdout`/`stderr`. The canonical source of this value — `klorb.tools.grep` has no constant of
+than returned inline. The canonical source of this value — `klorb.tools.grep` has no constant of
 its own, it reads `ProcessConfig.grep_spill_bytes` via `ToolSetupContext` at construction time
 instead."""
 
@@ -104,14 +104,10 @@ DEFAULT_ETC_CONFIG_PATH = Path("/etc/klorb") / CONFIG_FILENAME
 SESSION_DEFAULTS_KEY = "sessionDefaults"
 
 THEME_CONFIG_KEY = "ui.theme"
-"""On-disk `klorb-config.json` key for `ProcessConfig.theme` — the sole canonical spelling,
-shared by `PROCESS_KEY_MAP` (reading it back) and `persist_theme` (writing it), so the two
-never drift apart."""
+"""On-disk `klorb-config.json` key for `ProcessConfig.theme` — the sole canonical spelling."""
 
 SIDEBAR_CONFIG_KEY = "ui.sidebar"
-"""On-disk `klorb-config.json` key for `ProcessConfig.sidebar` — the sole canonical spelling,
-shared by `PROCESS_KEY_MAP` (reading it back) and `persist_sidebar` (writing it),
-so the two never drift apart."""
+"""On-disk `klorb-config.json` key for `ProcessConfig.sidebar` — the sole canonical spelling."""
 
 DEFAULT_PROMPT_INPUT_MAX_LINES = 12
 """Default max soft-wrapped-line height for the REPL's prompt textarea before it scrolls
@@ -192,11 +188,11 @@ same session can inform how aggressively the classifier generalizes its next `su
 
 DEFAULT_BASH_NETWORK_ENABLED = True
 """Default for `ProcessConfig.bash_network_enabled` — whether a sandboxed `Bash` command gets a
-domain-gated network-egress proxy at all (`klorb.sandbox.network`); `False` is a full escape
-hatch, mirroring `bash_risk_classifier_enabled`: the sandbox reverts to today's unconditional
-`--unshare-net`-denies-everything behavior, no proxy/relay stood up. See
-docs/specs/bash-tool-and-command-permissions.md's "Network egress (domain-gated proxy)"
-section."""
+domain-gated network-egress proxy at all; `False` reverts to unconditional `--unshare-net`
+behavior, no proxy/relay stood up.
+
+See docs/specs/bash-tool-and-command-permissions.md.
+"""
 
 DEFAULT_BASH_NETWORK_RECOGNIZED_CLIENTS = [
     "curl", "wget", "git", "pip", "pip3", "uv", "npm", "yarn", "pnpm",
@@ -283,14 +279,13 @@ this same small/cheap classifier model choice may be reused for other structured
 beyond session naming."""
 
 DEFAULT_SESSION_CLASSIFIER_TIMEOUT_SECONDS = 5.0
-"""Default for `ProcessConfig.session_classifier_timeout_seconds` — mirrors
-`DEFAULT_BASH_RISK_CLASSIFIER_TIMEOUT_SECONDS`'s rationale: a short, fail-fast per-request
+"""Default for `ProcessConfig.session_classifier_timeout_seconds` — a short, fail-fast per-request
 budget for a classifier call that happens before the session's real turn is dispatched."""
 
 DEFAULT_SESSION_CLASSIFIER_E2E_TIMEOUT_SECONDS = 10.0
 """Default for `ProcessConfig.session_classifier_e2e_timeout_seconds` — a hard wall-clock ceiling
 on the entire `klorb.session_naming.generate_session_name()` call (initial request plus one
-parse-retry), mirroring `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`'s rationale."""
+parse-retry)."""
 
 SESSION_KEY_MAP: dict[str, str] = {
     "model": "model",

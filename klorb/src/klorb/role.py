@@ -1,13 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Operating roles: the job a session's agent is performing, independent of which model
-runs it.
-
-A `Role` names what the agent is *for* this session — operating a coding task end to
-end, exploring a codebase, auditing a change — and resolves the role-specific tiers of the
-session's system prompt. `Session` constructs its `Role` itself, from
-`SessionConfig.role_name`, via `get_role()`; callers never hand a `Role` object in, so a
-session's `Role` can never disagree with its `config.role_name`. See
-docs/specs/roles-and-system-prompts.md.
+runs it. See docs/specs/roles-and-system-prompts.md.
 """
 
 from abc import ABC, abstractmethod
@@ -17,15 +10,15 @@ from klorb.system_prompt import ROLES_SUBDIR, resolve_prompt_file
 
 OPERATOR_ROLE_NAME = "operator"
 """`SessionConfig.role_name`'s default: the top-level operating role a klorb session runs
-as unless a caller (e.g. a future subagent-spawning code path) says otherwise."""
+as unless a caller says otherwise."""
 
 
 class Role(ABC):
     """Base class for the operating role a session's agent performs.
 
     Concrete subclasses give klorb somewhere to hang role-specific behavior beyond the
-    prompt files themselves (specialist tool access, a curated subagent repertoire) as those
-    features are built; `NamedRole` covers any role that has no dedicated subclass yet.
+    prompt files themselves as those features are built; `NamedRole` covers any role that has
+    no dedicated subclass yet.
     """
 
     @abstractmethod
@@ -39,11 +32,9 @@ class Role(ABC):
         tuned variant exists, or `None` if no prompt file for this role exists at all.
 
         Checks, most specific first, each via
-        `klorb.system_prompt.resolve_prompt_file()` (user override tier, then packaged
-        tier): `roles/<name>/<model.mangled_name()>.md` (skipped when `model` is `None`,
-        e.g. the active model string has no registered `Model`), then
-        `roles/<name>/default.md`. Subclasses (e.g. test fixtures) may override to return a
-        literal string without filesystem access.
+        `klorb.system_prompt.resolve_prompt_file()`: `roles/<name>/<model.mangled_name()>.md`
+        then `roles/<name>/default.md`. Subclasses may override to return a literal string
+        without filesystem access.
         """
         if model is not None:
             prompt = resolve_prompt_file(f"{ROLES_SUBDIR}/{self.name()}/{model.mangled_name()}.md")
@@ -53,9 +44,7 @@ class Role(ABC):
 
     def repertoire(self) -> list[str]:
         """Return the names of the specialist subagents and role-specific tools this role
-        may employ. A placeholder for the multi-agent teamwork described in
-        docs/specs/roles-and-system-prompts.md's "Out of scope": no dispatch mechanism
-        exists yet, so every role's repertoire is empty."""
+        may employ. No dispatch mechanism exists yet, so every role's repertoire is empty."""
         return []
 
 
@@ -63,10 +52,7 @@ class NamedRole(Role):
     """A role identified only by its name string, with no dedicated subclass.
 
     Covers any `SessionConfig.role_name` that `get_role()` doesn't recognize: it
-    triangulates the right behavior purely from the name — its system prompt comes from
-    whatever `system_prompts.d/roles/<name>/` files exist, layered onto the model-specific
-    and default tiers rather than replacing them (`None` when none exist at all — see
-    `Session._resolve_system_prompt`).
+    triangulates the right behavior purely from the name.
     """
 
     def __init__(self, role_name: str) -> None:
@@ -79,7 +65,7 @@ class NamedRole(Role):
 class OperatorRole(Role):
     """The default top-level operating role: the lead agent that owns a coding task end to
     end, with full latitude to research, decide, plan, write docs/code/tests, run and debug,
-    and review work (its own or another agent's), biased toward an iterative
+    and review work, biased toward an iterative
     research/think/decide/plan/execute/verify/analyze loop and toward decomposing large
     problems into ordered, fine-grained tasks. The behavioral instructions themselves live
     in `system_prompts.d/roles/operator/default.md`, not in code.
@@ -91,7 +77,7 @@ class OperatorRole(Role):
 
 def get_role(role_name: str) -> Role:
     """Return the `Role` implementation for `role_name`: its dedicated subclass when one
-    exists (today only `OperatorRole`), else a `NamedRole` carrying the name as-is."""
+    exists, else a `NamedRole` carrying the name as-is."""
     if role_name == OPERATOR_ROLE_NAME:
         return OperatorRole()
     return NamedRole(role_name)

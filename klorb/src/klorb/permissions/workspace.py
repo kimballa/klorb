@@ -1,26 +1,10 @@
 # © Copyright 2026 Aaron Kimball
 """Resolves a filename argument supplied by a model tool call into a canonical on-disk path,
-and evaluates that path against the `readFiles`/`writeFiles` `FileAccessTable`s (an exact-match
-check, consulted first), then the workspace-root boundary and the `readDirs`/`writeDirs`
-`DirectoryAccessTable`s, to decide whether the operation is allowed. See
-docs/specs/permissions.md, docs/adrs/00025-confine-file-tools-to-workspace-root.md, and
-docs/adrs/00028-gate-read-hard-boundary-on-workspace-trust.md.
+and evaluates that path against the `readFiles`/`writeFiles` `FileAccessTable`s, then the
+workspace-root boundary and the `readDirs`/`writeDirs` `DirectoryAccessTable`s, to decide
+whether the operation is allowed.
 
-This module takes a `ToolSetupContext` parameter purely as a type annotation (never
-instantiates or introspects it beyond attribute access), so the import is `TYPE_CHECKING`-only
-— a real import here would cycle, since `ToolSetupContext` pulls in `klorb.session`, which
-itself depends on `klorb.permissions.directory_access` for `DirRules` and
-`klorb.permissions.file_access` for `FileRules`. `klorb.tools`' own file tools import from this
-module, not the other way around.
-
-Note (TOCTOU): every path this module returns is canonical only as of the moment it's resolved
-— nothing here holds an open OS-level handle across the gap between a permission check and the
-caller's actual file I/O, so a directory rename/symlink swap in that window could redirect an
-approved operation to an unintended target.
-
-TODO(aaron): close the TOCTOU gap above by operating relative to an `os.open()`-obtained
-directory file descriptor (e.g. with `O_NOFOLLOW`/`O_DIRECTORY`) rather than re-resolving a
-path string.
+See docs/specs/permissions.md.
 """
 
 from pathlib import Path

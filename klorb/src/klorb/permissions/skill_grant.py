@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Computes and persists permission grants for `ActivateSkill`'s `(namespace, name)` asks -- the
-`skillRules` counterpart to `klorb.permissions.command_grant`. Records what gets added to
-`skillRules.allow`/`.deny` (and removed from `.ask`), in memory and on disk, when a user answers a
-skill-activation ask with a persistent scope. See docs/specs/skills.md and docs/specs/permissions.md.
+"""Computes and persists permission grants for `ActivateSkill`'s `(namespace, name)` asks.
+
+See docs/specs/skills.md.
 """
 
 from typing import Any
@@ -53,13 +52,7 @@ def apply_skill_permission_grant(
     process_config: ProcessConfig | None,
     skill_id: SkillId,
 ) -> None:
-    """Record a permanent Allow or Deny decision for `skill_id` at `scope` -- the `skillRules`
-    counterpart to `klorb.permissions.command_grant.apply_command_permission_grant`; see that
-    function's docstring for the shared scope/cross-file semantics (`"session"` stops at the live
-    `SessionConfig`; `"workspace"`/`"homedir"` additionally ripple into `process_config.session`
-    and persist to the scope's target file; `"homedir"` additionally best-effort-cleans a redundant
-    workspace-file `ask` entry, never the reverse).
-    """
+    """Record a permanent Allow or Deny decision for `skill_id` at `scope`."""
     granted = [skill_id]
 
     session_config.skill_rules = _writer.apply_decision(session_config.skill_rules, granted, action)

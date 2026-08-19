@@ -1,9 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""TypeScript/TSX structural chunker: one chunk per class (fields, method signatures), one chunk per
-method, one chunk per top-level function, one chunk per contiguous run of leftover top-level
-statements (which covers `const`/`interface`/ `type` declarations and arrow-function assignments,
-none of which get special synopsis treatment at this time). `export`/`export default` wrappers are
-unwrapped for classification but kept in the chunked text.
+"""TypeScript/TSX structural chunker: one chunk per class, one chunk per method, one chunk per
+top-level function, one chunk per contiguous run of leftover top-level statements.
 """
 
 import tree_sitter_typescript

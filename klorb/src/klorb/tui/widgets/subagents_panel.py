@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`SubagentsPanel`: a docked, togglable right-hand panel listing every session in the current
-subagent tree -- see `klorb.tui.mixins.subagents_panel.SubagentsPanelMixin` (Ctrl+G) and
-docs/specs/subagents.md's "Subagents panel" section.
+subagent tree. See docs/specs/subagents.md.
 """
 
 from dataclasses import dataclass
@@ -16,8 +15,7 @@ from textual.widgets.option_list import Option
 from klorb.tui.widgets.task_sidebar import TASK_SIDEBAR_WIDTH
 
 SUBAGENTS_PANEL_WIDTH = TASK_SIDEBAR_WIDTH
-"""Same width as `TaskSidebar` -- the two panels occupy the same docked RHS slot, one at a time
-(see `SubagentsPanelMixin.action_toggle_subagents_panel`)."""
+"""Same width as `TaskSidebar`."""
 
 SUBAGENTS_LIST_ID = "subagents-panel-list"
 _HEADER_ID = "subagents-panel-header"
@@ -39,8 +37,7 @@ def _friendly_role_name(role_name: str) -> str:
 
 @dataclass(frozen=True)
 class SubagentRowData:
-    """One row `SubagentsPanel.show_rows` renders -- a display-layer projection of one
-    `klorb.agents.runtime.SessionTreeNode`, decoupled from `Session`/threading internals the way
+    """One row `SubagentsPanel.show_rows` renders, decoupled from `Session`/threading internals the way
     `TaskSidebar.show_tasks`'s plain dicts are decoupled from `ChainlinkClient`. No `depth` field:
     the dotted-decimal address (`"1.1.1"`) already reads as nested without needing extra
     indentation stacked on top of it."""
@@ -50,14 +47,12 @@ class SubagentRowData:
     title: str
     role: str
     state: Literal["running", "finished"] | None
-    """`None` only for the tree's own root row -- a root session has no `SubagentHandle` describing
-    it, so "running"/"finished" doesn't apply."""
+    """`None` only for the tree's own root row."""
 
 
 class SubagentPanelOption(Option):
     """An `OptionList` row carrying the `session_id` it represents, so selecting it can recover
-    which `Session` to switch the history view to -- mirrors `klorb.tui.widgets.palette.
-    PaletteOption`."""
+    which `Session` to switch the history view to."""
 
     def __init__(self, row: SubagentRowData, label: Text) -> None:
         super().__init__(label, id=row.session_id)
@@ -120,8 +115,7 @@ class SubagentsPanel(Vertical, can_focus=False):
         """Replace the displayed rows with `rows` (expected in `klorb.agents.runtime.
         walk_session_tree` order), highlighting whichever one's `session_id` matches
         `selected_session_id` and updating the footer with its role. `attention_ids` -- sessions
-        with an ask waiting for the user to select them (see `klorb.tui.mixins.interactions.
-        InteractionsMixin._await_session_selected`) -- get a `(!)` marker, shown only while
+        with an ask waiting for the user to select them -- get a `(!)` marker, shown only while
         `blink_on` so repeated calls from `SubagentsPanelMixin._tick_subagents_panel` make it
         blink rather than stay lit solid.
         """

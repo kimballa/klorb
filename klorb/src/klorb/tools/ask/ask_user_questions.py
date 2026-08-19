@@ -2,18 +2,11 @@
 """A Tool that poses one or more structured questions to the user, instead of the model
 guessing, fabricating an assumption, or re-deriving the same uncertain conclusion in a loop.
 
-Mirrors the shape of the permission-ask mechanism (`klorb.permissions.table.
-PermissionAskRequired`, `klorb.session.PermissionAskContext`/`PermissionDecision`): a `Tool`'s
-`apply()` can't itself block on user input (see `Tool`'s "single `ToolSetupContext` argument"
-contract), so `AskUserQuestionsTool.apply()` validates its arguments and, if they're
-well-formed, always raises `AskUserQuestionsRequired` rather than returning a value.
-`Session._run_tool_calls` catches it, asks the user one question at a time via
-`TurnEventHandlers.on_ask_user_questions`, and assembles the answers into the tool's result.
+`AskUserQuestionsTool.apply()` validates its arguments and, if they're well-formed, always
+raises `AskUserQuestionsRequired` rather than returning a value.
+`Session._run_tool_calls` catches it and assembles the answers into the tool's result.
 
-The data types and validation logic themselves live in `klorb.tools.ask.common` rather than
-here, so `klorb.session` can import them without importing this module (which pulls in
-`klorb.tools.tool`/`klorb.tools.setup_context`, and so `klorb.session` itself — see that
-module's docstring for the full cycle).
+The data types and validation logic live in `klorb.tools.ask.common` rather than here.
 """
 
 from typing import Any
@@ -24,10 +17,7 @@ from klorb.tools.tool import Tool
 
 class AskUserQuestionsTool(Tool):
     """Poses one or more multiple-choice (or, with no `options`, free-text) questions to the
-    user in a single call, always raising `AskUserQuestionsRequired` for well-formed input
-    (see module docstring for why). Use this instead of guessing at an ambiguous requirement,
-    inventing a plausible default, or re-deriving the same uncertain conclusion more than
-    once — see `default_sys.md`'s guidance on when to reach for this tool.
+    user in a single call, always raising `AskUserQuestionsRequired` for well-formed input.
     """
 
     def name(self) -> str:

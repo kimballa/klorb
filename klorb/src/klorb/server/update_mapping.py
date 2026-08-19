@@ -1,16 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Pure functions mapping klorb tool-call events (`klorb.session.events.ToolCallStartedEvent`/
-`ToolCallEvent`) onto ACP `session/update` tool-call notifications -- see
-docs/specs/klorb-server.md's tool-call update mapping section. Kept free of I/O beyond the
-read-only path canonicalization every klorb file tool already performs, so `TurnBridge` (and a
-test) can call these directly against a `ToolRegistry` and a workspace root, with no live
-`Session`/ACP connection required.
+`ToolCallEvent`) onto ACP `session/update` tool-call notifications.
 
-Every function here is total: no klorb event may raise a mapping failure out to the caller. A
-per-field failure (a tool's `summary()`/`detail_view()`/`diff_preview()` override raising, or an
-unresolvable location) degrades to a simpler rendering (a default summary/detail string, or no
-location/diff content) rather than propagating, with the reason logged at `debug` level.
-"""
+See docs/specs/klorb-server.md."""
 
 import json
 import logging
@@ -103,10 +95,8 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "MessageSubagent": "other",
 }
 """Every tool name `ToolRegistry.discover_tools()` can produce today, mapped to its ACP
-`ToolKind` -- see `docs/specs/klorb-server.md`. A name this dict doesn't cover falls back to
-`"other"` at lookup time (see `_tool_kind`), the same as an unrecognized future tool would;
-`test_update_mapping.py` parametrizes over every currently-discovered tool name so a new tool
-added without an entry here fails loudly instead of silently becoming `"other"`."""
+`ToolKind`. A name this dict doesn't cover falls back to
+`"other"` at lookup time."""
 
 TOOL_LOCATION_ARG: dict[str, str] = {
     "ReadFile": "filename",
@@ -118,14 +108,12 @@ TOOL_LOCATION_ARG: dict[str, str] = {
     "ListDir": "dirname",
 }
 """Tool name to the arg key naming the filesystem path a call's ACP `locations` should point at.
-A tool not in this dict emits no `locations` at all -- either it has no path-shaped argument, or
-(`EditScratchpad`) its subject isn't a model-nameable path in the first place."""
+A tool not in this dict emits no `locations` at all."""
 
 
 def _instantiate_tool(name: str, tool_registry: ToolRegistry | None) -> Tool | None:
     """Return a fresh instance of the named tool from `tool_registry`, or `None` if the
-    registry doesn't have one (no registry at all, or the name isn't registered) -- the same
-    fallback shape `klorb.tui.mixins.rendering.RenderingMixin._render_tool_call_summary` uses."""
+    registry doesn't have one."""
     if tool_registry is None:
         return None
     try:
@@ -135,9 +123,7 @@ def _instantiate_tool(name: str, tool_registry: ToolRegistry | None) -> Tool | N
 
 
 def _tool_title(name: str, args: dict[str, Any], tool_registry: ToolRegistry | None) -> str:
-    """The tool's pre-execution summary line, for a `tool_call` update's `title`: the same
-    string `RunningToolCallStatic` shows in the TUI, via `Tool.summary(args)` called with no
-    result/error."""
+    """The tool's pre-execution summary line, for a `tool_call` update's `title`."""
     tool = _instantiate_tool(name, tool_registry)
     if tool is None:
         return default_tool_call_summary(name, args, None)
@@ -162,7 +148,7 @@ def _tool_locations(
     name: str, args: dict[str, Any], workspace_root: Path,
 ) -> list[ToolCallLocation] | None:
     """Return the `[{path, line}]` ACP `locations` list for one call, or `None` if this tool
-    (or this particular call's arguments) name no filesystem path -- see `TOOL_LOCATION_ARG`.
+    (or this particular call's arguments) name no filesystem path.
     `ReadFile`'s `start_line` arg additionally sets `line` on the one location it reports."""
     arg_key = TOOL_LOCATION_ARG.get(name)
     if arg_key is None:
@@ -195,11 +181,9 @@ def tool_call_started_update(
     event: ToolCallStartedEvent, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> ToolCallStart:
     """Map a just-started tool call onto an ACP `tool_call` (`session/update`) notification:
-    `status="in_progress"` unconditionally -- klorb fires `on_tool_call_started` immediately
-    before `apply()` runs, so there's no separate `"pending"` phase worth reporting.
+    `status="in_progress"` unconditionally.
     `_meta.klorb.toolName` always carries `event.name` verbatim, so a client can tell apart
-    tools that share one `ToolKind` bucket (e.g. `CreateSubagent`/`WaitForSubagent`/
-    `MessageSubagent`/`AskUserQuestions` all map to `"other"`)."""
+    tools that share one `ToolKind` bucket."""
     title = _tool_title(event.name, event.args, tool_registry)
     kind = TOOL_KIND_MAP.get(event.name, "other")
     locations = _tool_locations(event.name, event.args, workspace_root)
@@ -215,13 +199,10 @@ def tool_call_started_update(
 
 
 def _diff_text(hunks: list[DiffHunk]) -> tuple[str | None, str]:
-    """Reassemble `hunks` (a hunk-with-context view, not a whole file) back into an
-    old/new text pair for ACP's `diff` content block -- `oldText`/`newText` are therefore an
-    approximation of the touched file, not its literal full contents; see
-    docs/adrs/00146-persist-diff-hunks-in-edit-result.md for why klorb persists hunks rather than
-    whole files in the first place. `old_text` is `None` when every line is an `"add"` (a
-    brand-new file/memory/scratchpad has no prior content to show), matching ACP's own
-    `oldText: None` convention for new files."""
+    """Reassemble `hunks` back into an old/new text pair for ACP's `diff` content block.
+    `old_text` is `None` when every line is an `"add"` (a brand-new file/memory/scratchpad
+    has no prior content to show), matching ACP's own `oldText: None` convention for new
+    files."""
     old_lines: list[str] = []
     new_lines: list[str] = []
     for hunk in hunks:
@@ -307,9 +288,9 @@ def _json_safe_result(result: Any) -> Any:
 
 def _bash_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
     """Return `_meta.klorb.bash` for a finished `Bash` call's result, or `None` for other
-    tools or when the result is not a dict (e.g. an error before `apply()` returned).
-    Re-includes `command`/`intent` (see `_bash_meta_start`) because the webview client treats
-    `command` as the required field that marks a `_meta.klorb.bash` payload as present at all."""
+    tools or when the result is not a dict. Re-includes `command`/`intent` because the webview
+    client treats `command` as the required field that marks a `_meta.klorb.bash` payload as
+    present at all."""
     if event.name != "Bash" or not isinstance(event.result, dict):
         return None
     bash_meta = _bash_meta_start(event.args)
@@ -351,7 +332,7 @@ def _readfile_meta_finish(event: ToolCallEvent) -> dict[str, Any] | None:
     the truncated line-numbered content (same format as `detail_view()`), so the webview can
     render it as a structured line-numbered card instead of parsing JSON. `filename` falls
     back to the tool's own name for `ReadScratchpad`, whose subject isn't a model-nameable
-    path in the first place (same reasoning as `_diff_path`'s fallback)."""
+    path in the first place."""
     if event.name not in _READFILE_META_TOOLS or not isinstance(event.result, dict):
         return None
     content = event.result.get("content")
@@ -484,9 +465,8 @@ def permission_decision_grant_patterns(
     """The pattern to thread through as `PermissionDecision.grant_patterns` -- unlike
     `_display_grant_patterns`, this is `None` whenever the risk classifier didn't suggest a
     pattern, so a persistent grant falls back to `apply_command_permission_grant`'s own
-    deterministic computation rather than persisting a preview-only fallback pattern that was
-    never actually vetted by the classifier -- mirrors `klorb.tui.mixins.interactions.
-    InteractionsMixin._confirm_permission_ask`."""
+    deterministic computation rather than persisting a preview-only pattern that was never
+    actually vetted by the classifier."""
     if isinstance(resource, CommandResource) and risk is not None and risk.suggested_pattern:
         return [risk.suggested_pattern]
     return None
@@ -498,15 +478,15 @@ def permission_ask_meta(
 ) -> dict[str, Any]:
     """The `_meta.klorb` payload for a `session/request_permission` request built from `ctx`:
     always `resourceDescription` and `headerKind` (the same "Run command"/`resource.
-    header_kind()` noun phrase `PermissionAskPanel.header_text()` uses); for a `BashTool` ask
+    header_kind()` noun phrase); for a `BashTool` ask
     (`ctx.bash_context` set), additionally the full/per-item command text, this item's position
     within its sibling batch, a grant-pattern preview, and the risk classifier's score and
     rationale (`risk`, or `None` if classification is disabled, not a bash ask, or the classifier
-    failed -- see `klorb.permissions.risk_classifier.resolve_item_risk_assessment`); `originSessionId`
+    failed); `originSessionId`
     is included whenever `ctx.origin_session_id` is set (a subagent's ask, forwarded through its
-    creator's own turn -- see `klorb.agents.policy.build_subagent_turn_handlers`), so a client
-    tracking multiple sessions (the VSCode subagents panel) can gate showing this ask on that
-    session being selected, mirroring the TUI's own `SubagentsPanelMixin._await_session_selected`."""
+    creator's own turn), so a client
+    tracking multiple sessions can gate showing this ask on that
+    session being selected."""
     header_kind = "Run command" if ctx.bash_context is not None else ctx.resource.header_kind()
     meta: dict[str, Any] = {
         "resourceDescription": ctx.resource_description, "headerKind": header_kind}
@@ -529,9 +509,8 @@ def permission_ask_meta(
 def escalate_privileges_meta(ctx: EscalatePrivilegesContext) -> dict[str, Any]:
     """The `_meta.klorb` payload for an `EscalatePrivilegesContext` ask's `session/
     request_permission` request: `escalation.scope`/`escalation.description`/`escalation.reason`,
-    so the client can render this as its own distinct (e.g. red-border) flow rather than an
-    ordinary permission grid. `originSessionId` is included when set -- see `permission_ask_meta`'s
-    own doc comment."""
+    so the client can render this as its own distinct flow rather than an
+    ordinary permission grid. `originSessionId` is included when set."""
     meta: dict[str, Any] = {
         "escalation": {
             "scope": ctx.scope, "description": ctx.description, "reason": ctx.reason}}
@@ -553,7 +532,7 @@ def _split_option_id(option_id: str) -> tuple[
 def _other_text(outcome: AllowedOutcome) -> str | None:
     """The user's free-text redirect, if the client's response carried one: a non-empty
     `_meta.klorb.otherText` string on a `selected` outcome, regardless of which option id was
-    actually selected alongside it -- see docs/specs/klorb-server.md."""
+    actually selected alongside it."""
     if not outcome.field_meta:
         return None
     klorb_meta = outcome.field_meta.get("klorb")
@@ -572,8 +551,7 @@ def permission_decision_from_outcome(
     non-empty string is the free-text redirect (`action="deny", scope="once", other_text=...`),
     regardless of the option id chosen; otherwise the option id's own `<action>:<scope>` encodes
     the decision directly. `grant_patterns` (from `permission_decision_grant_patterns`) is
-    threaded through unconditionally, matching `klorb.tui.mixins.interactions.InteractionsMixin.
-    _confirm_permission_ask`'s own unconditional threading -- it's only ever consulted downstream
+    threaded through unconditionally -- it's only ever consulted downstream
     for a persistent-scope `"allow"`."""
     if outcome.outcome == "cancelled":
         return PermissionDecision(action="deny", scope="once")
@@ -602,9 +580,8 @@ def ask_user_questions_ext_params(
     """The `_klorb/askUserQuestions` ext request params for one question of an
     `AskUserQuestionsItemContext` batch: `{sessionId, header, question, options: [{label,
     description?}], index, total}` -- `index`/`total` verbatim from `ctx`, since klorb asks
-    serially, one request per question, exactly as the TUI panel is driven. `originSessionId` is
-    included whenever `ctx.origin_session_id` is set -- see `permission_ask_meta`'s own doc
-    comment for why."""
+    serially, one request per question. `originSessionId` is
+    included whenever `ctx.origin_session_id` is set."""
     params: dict[str, Any] = {
         "sessionId": session_id,
         "header": ctx.header,
@@ -669,11 +646,11 @@ def session_mode_state(permission_framework: PermissionFramework) -> SessionMode
 def session_config_json(session: Session, model_registry: ModelRegistry) -> dict[str, Any]:
     """Build the `_klorb/getSessionConfig`/`_klorb/setSessionConfig` result payload: the
     session's current model and thinking settings, plus every model `model_registry` knows
-    about -- see docs/specs/klorb-server.md's "Model and thinking session config" section. The
-    pinned ACP SDK (0.7.x) has no generic select/boolean config-option surface, and no notion
-    of `thinking.enabled`/`thinking.effort` at all (`session/set_model` exists but is marked
-    unstable and only covers `model`), so both ride this one ext-method JSON shape uniformly
-    rather than splitting model onto the native surface and thinking onto an ext method."""
+    about. The pinned ACP SDK (0.7.x) has no generic select/boolean config-option surface, and
+    no notion of `thinking.enabled`/`thinking.effort` at all (`session/set_model` exists but is
+    marked unstable and only covers `model`), so both ride this one ext-method JSON shape
+    uniformly rather than splitting model onto the native surface and thinking onto an ext
+    method."""
     active_model = session.active_model()
     return {
         "model": {
@@ -776,13 +753,11 @@ def _replay_tool_call_entry(
 ) -> dict[str, Any]:
     """Build one `_klorb/sessionReplay` `toolCall`-kind entry from a restored `role="tool_use"`
     message's request and its matching `role="tool_response"` message (if any) -- best-effort
-    reversal of `Session._run_tool_calls`'s persisted encoding, the same reasoning
-    `klorb.tui.mixins.rendering.RenderingMixin._render_restored_tool_call` applies for the TUI's
-    own history-scroll restore: a `response.content` that's a JSON `klorb.tools.
-    response_envelope.ToolResponseEnvelope` (`is_error`/`error_message`/`response_body`) is
-    decoded structurally; a pre-envelope save (`"Error: {message}"` or a bare string) falls back
-    to prefix-matching, best-effort. Locations/toolKind/title reuse the same helpers a live
-    `tool_call` update uses, so a replayed call looks the same as it would have live."""
+    reversal of `Session._run_tool_calls`'s persisted encoding: a `response.content` that's a
+    JSON `klorb.tools.response_envelope.ToolResponseEnvelope` is decoded structurally; a
+    pre-envelope save falls back to prefix-matching, best-effort. Locations/toolKind/title reuse
+    the same helpers a live `tool_call` update uses, so a replayed call looks the same as it
+    would have live."""
     try:
         args = json.loads(call.arguments) if call.arguments else {}
         if not isinstance(args, dict):
@@ -833,14 +808,12 @@ def _replay_tool_call_entry(
 
 
 def _replay_image_meta(message: Message) -> list[dict[str, Any]]:
-    """Build the `AttachedImageMeta`-shaped dicts (`shared/webviewMessages.ts`) for `message`'s
+    """Build the `AttachedImageMeta`-shaped dicts for `message`'s
     `image_url` fragments, if any -- metadata only, no bytes: a `_klorb/sessionReplay` restore
-    doesn't resend an already-persisted image just to redraw a thumbnail (see docs/specs/
-    session-persistence.md), so the webview renders a paper-clip placeholder captioned with
-    whatever of `source_filename`/`original_width`/`original_height` survived persistence (see
-    `klorb.message.MessageFragment`). A key is omitted rather than sent as `null` for an unknown
-    field, matching every other optional field this dict's TS counterpart expects absent, not
-    `null`, when unset.
+    doesn't resend an already-persisted image just to redraw a thumbnail, so the webview renders
+    a paper-clip placeholder captioned with whatever of `source_filename`/`original_width`/
+    `original_height` survived persistence. A key is omitted rather than sent as `null` for an
+    unknown field.
     """
     if message.fragments is None:
         return []
@@ -870,11 +843,8 @@ def _readable_reasoning_text(entry: dict[str, Any]) -> str | None:
 def _resolve_thinking_text(content: str, reasoning_details: list[dict[str, Any]] | None) -> str:
     """Reconstruct a `"thinking"` message's replay text from `reasoning_details` when `content`
     itself is empty -- `content` and `reasoning_details` are populated by two independent
-    provider streams that aren't guaranteed to stay in sync (see `klorb.message.Message.
-    reasoning_details`), so a `content`-only replay can render an empty `<Thinking>` block even
-    though real reasoning text arrived. Duplicates `klorb.tui.formatting.
-    resolve_thinking_body_text`'s logic rather than importing it: that module pulls in
-    `textual`/`rich` at import time, which this server module must not depend on."""
+    provider streams that aren't guaranteed to stay in sync, so a `content`-only replay can
+    render an empty `<Thinking>` block even though real reasoning text arrived."""
     if content.strip():
         return content
     if not reasoning_details:
@@ -886,20 +856,14 @@ def _resolve_thinking_text(content: str, reasoning_details: list[dict[str, Any]]
 def build_session_replay(
     session: Session, tool_registry: ToolRegistry | None, workspace_root: Path,
 ) -> list[dict[str, Any]]:
-    """Build the `entries` payload for a `_klorb/sessionReplay` ext notification (see
-    `KlorbAcpAgent.load_session`) or a `_klorb/subagentTranscript` ext method result (see
-    `KlorbAcpAgent._ext_subagent_transcript`): one `HistoryEntry`-shaped dict (matching the
-    webview's own `shared/webviewMessages.ts`-adjacent `HistoryEntry` shape) per restored
-    message, in order. `role="system"`/`"tool_defs"` bookkeeping messages are skipped, matching
-    how they're never rendered live either; a `role="tool_response"` is folded into its matching
-    `role="tool_use"` entry (see `_replay_tool_call_entry`) rather than appearing on its own. A
-    `role="tool_use"` message's own `content` (commentary alongside the tool calls it requested --
-    e.g. the model's final answer, when that answer arrives in the same round as its last tool
-    calls) is emitted as its own `"response"`-kind entry ahead of that message's tool calls, and a
-    `role="thinking"` message's text is resolved via `_resolve_thinking_text` -- both mirror the
-    same two gaps `klorb.tui.formatting.resolve_thinking_body_text` and the TUI's own
-    `tool_use`-content handling close for the TUI's restored-history/subagent-transcript render
-    paths (see docs/specs/subagents.md's "Subagents panel (TUI)" section).
+    """Build the `entries` payload for a `_klorb/sessionReplay` ext notification or a
+    `_klorb/subagentTranscript` ext method result: one `HistoryEntry`-shaped dict per restored
+    message, in order. `role="system"`/`"tool_defs"` bookkeeping messages are skipped; a
+    `role="tool_response"` is folded into its matching `role="tool_use"` entry rather than
+    appearing on its own. A `role="tool_use"` message's own `content` (commentary alongside
+    the tool calls it requested) is emitted as its own `"response"`-kind entry ahead of that
+    message's tool calls, and a `role="thinking"` message's text is resolved via
+    `_resolve_thinking_text`.
     """
     entries: list[dict[str, Any]] = []
     responses_by_call_id = {

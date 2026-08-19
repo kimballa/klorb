@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.grant: computing and persisting Allow grants for the
-interactive "ask" confirmation flow. See docs/specs/permissions.md's "Interactive ask
-confirmation" section.
+interactive "ask" confirmation flow. See docs/specs/permissions.md.
 """
 
 import json
@@ -63,10 +62,9 @@ def test_compute_grant_paths_falls_back_to_containing_directory_when_nothing_mat
 def test_compute_grant_paths_falls_back_to_itself_when_candidate_is_a_directory(
     tmp_path: Path,
 ) -> None:
-    """A directory candidate (e.g. an `ls some/dir` implicit-read target — see
-    docs/adrs/00085-grant-directory-candidate-at-itself-not-its-parent.md) is already the
-    directory-scoped unit a grant should cover, so the no-match fallback must not widen it to its
-    own parent the way it does for a file candidate."""
+    """A directory candidate is already the directory-scoped unit a grant should cover,
+    so the no-match fallback must not widen it to its own parent the way it does for a file
+    candidate."""
     candidate = tmp_path / "sub"
     candidate.mkdir()
     assert compute_grant_paths(DirRules(), DirRules(), tmp_path, candidate, is_write=False) == [
@@ -177,7 +175,7 @@ def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> 
 
 def test_session_scope_deny_write_only_touches_write_dirs(tmp_path: Path) -> None:
     """A "Deny, always" decision on a write ask must not also deny read access that was never
-    in question -- only writeDirs.deny gets the new entry."""
+    in question."""
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     target = tmp_path / "sub" / "f.txt"
@@ -229,10 +227,9 @@ def test_workspace_scope_mutates_session_and_process_template(tmp_path: Path) ->
 def test_workspace_scope_with_no_process_config_skips_the_ripple_but_still_persists(
     tmp_path: Path,
 ) -> None:
-    """A caller with no live `ProcessConfig` (e.g. a `Session` constructed without one) still
-    gets a working grant: the live `SessionConfig` and the on-disk file, neither of which needs
-    the `ProcessConfig` object itself, are still updated -- only the `process_config.session.*`
-    ripple is skipped, since there's nothing to ripple into."""
+    """A caller with no live `ProcessConfig` still gets a working grant: the live
+    `SessionConfig` and the on-disk file, neither of which needs the `ProcessConfig` object
+    itself, are still updated."""
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     target = tmp_path / "sub" / "f.txt"
 
@@ -305,9 +302,8 @@ def test_workspace_scope_promotes_matched_ask_rule_and_removes_it_from_the_same_
 
 
 def test_workspace_scope_never_opens_the_homedir_file(tmp_path: Path) -> None:
-    """Safety-critical negative test: a workspace-scope grant must never touch the homedir (or
-    /etc) file, even to clean up a matching, now-redundant ask entry there -- that direction is
-    reserved for a homedir-scope grant only (see the next section)."""
+    """A workspace-scope grant must never touch the homedir file, even to clean up a matching,
+    now-redundant ask entry there."""
     homedir_path = user_config_path()
     _write_config(homedir_path, {"readDirs": {"deny": [], "ask": [str(tmp_path)], "allow": []}})
     homedir_mtime_before = homedir_path.stat().st_mtime_ns

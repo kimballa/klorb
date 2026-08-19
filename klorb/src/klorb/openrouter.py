@@ -24,9 +24,7 @@ DEFAULT_MODEL = "xiaomi/mimo-v2.5"
 
 _REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS = ("text", "summary", "data")
 """`reasoning_details` entry fields that stream incrementally, fragment by fragment, and so
-are concatenated across fragments sharing the same `index` rather than overwritten -- unlike
-`"type"`/`"id"`/`"format"`/`"index"` themselves, which a provider repeats identically (or
-sends only once) on every fragment for a given entry."""
+are concatenated across fragments sharing the same `index` rather than overwritten."""
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +42,9 @@ def _log_api_error_context(
     """Log detailed context about an API error to help diagnose request issues.
 
     Extracts HTTP request/response bodies from OpenAI SDK exceptions when available,
-    and logs a summary of what was being sent (model, message count, content size,
-    etc.) alongside the full error details.  For400-level errors where the response
-    body contains a JSON parse error message, also logs a truncated snapshot of the
-    request body that was sent.
+    and logs a summary of what was being sent alongside the full error details. For
+    400-level errors where the response body contains a JSON parse error message, also
+    logs a truncated snapshot of the request body that was sent.
     """
     # --- basic context always logged ---
     logger.error(
@@ -171,12 +168,11 @@ class OpenRouterApiProvider(ApiProvider):
 
         If `tools` is given and non-empty, it's offered to the model as the OpenAI-style
         function-calling `tools` array; any tool calls the model requests are streamed in as
-        `delta.tool_calls` fragments (per SDK index, an `id`/`function.name` sent once and
-        `function.arguments` accumulated piecemeal), reassembled here, and reported as
+        `delta.tool_calls` fragments, reassembled here, and reported as
         `ToolCallRequest`s on the returned reply's `Message.tool_calls`.
 
         `response_format`, if given, is folded into `extra_body` alongside `session_id`/
-        `reasoning` (the same additive-request-body pattern all three already use), asking the
+        `reasoning`, asking the
         underlying model for a structured-output reply rather than free-form text.
 
         `timeout`, if given, is passed straight through to the OpenAI SDK's own per-request
@@ -184,12 +180,11 @@ class OpenRouterApiProvider(ApiProvider):
         default.
 
         `drop_reasoning` controls whether prior turns' thinking content is included in
-        `api_messages` at all -- see `_build_api_messages`.
+        `api_messages` at all.
 
         If `on_reasoning_details` is given, it's invoked with the current, fully-merged
-        `reasoning_details` array (OpenRouter's structured reasoning payload -- see
-        `Message.reasoning_details`) each time a chunk carries a new fragment of it, mirroring
-        `delta.tool_calls`: fragments arrive keyed by `index` and are merged here
+        `reasoning_details` array each time a chunk carries a new fragment of it:
+        fragments arrive keyed by `index` and are merged here
         (`_REASONING_DETAIL_INCREMENTAL_TEXT_FIELDS` concatenated, every other field
         overwritten) rather than left for the caller to reassemble. Each call gets a fresh
         snapshot (a new list of shallow-copied entry dicts) rather than a reference to the
@@ -276,10 +271,7 @@ class OpenRouterApiProvider(ApiProvider):
 
         # Spawn a daemon thread that watches cancel_event and closes the stream
         # when it fires.  This unblocks the blocked next() call inside
-        # ``for chunk in stream:`` immediately — without this, the per-chunk
-        # ``cancel_event.is_set()`` check only runs after the *next* chunk
-        # arrives from the HTTP response, which can take seconds if the model
-        # is still thinking/processing.
+        # ``for chunk in stream:`` immediately.
         _stream_done = threading.Event()
         _stream_closer_thread: threading.Thread | None = None
         if cancel_event is not None and not cancel_event.is_set():
@@ -456,28 +448,22 @@ class OpenRouterApiProvider(ApiProvider):
     ) -> list[ChatCompletionMessageParam]:
         """Convert session history (plus an optional system prompt) into OpenAI SDK message
         dicts. `"tool_defs"`- and `"system"`-role messages are omitted: tool definitions are
-        offered via the request's separate `tools` array (see `send_prompt`) rather than as a
+        offered via the request's separate `tools` array rather than as a
         chat message, and a stored `"system"` message is only `klorb.session.Session`'s
-        bookkeeping record of what was sent on the first turn (see
-        `Session._ensure_system_message`) — the live system prompt is supplied fresh via the
-        `system_prompt` argument below instead, so it reflects the current active model even
-        if it's changed since that bookkeeping message was inserted. `"tool_use"` and
+        bookkeeping record of what was sent on the first turn. `"tool_use"` and
         `"tool_response"` are translated into the shapes the API expects for a tool-calling
         round trip: an `assistant` message carrying `tool_calls`, and a `tool` message
         carrying `tool_call_id`, respectively.
 
-        A `"thinking"`-role message is never sent as its own chat message -- the OpenAI-
-        compatible API has no such role. `Session` always appends one immediately ahead of
-        the `"assistant"`/`"tool_use"` reply it belongs to (see `Session._send_and_receive`),
-        so when `drop_reasoning` is `False` (the default), its `content` and
+        A `"thinking"`-role message is never sent as its own chat message. `Session`
+        always appends one immediately ahead of the `"assistant"`/`"tool_use"` reply it
+        belongs to, so when `drop_reasoning` is `False` (the default), its `content` and
         `reasoning_details` are instead folded onto that next reply's own request dict as
-        `reasoning`/`reasoning_details` fields -- the shape OpenRouter expects for replayed
-        reasoning, letting the model continue from its own prior reasoning trace. When
+        `reasoning`/`reasoning_details` fields. When
         `drop_reasoning` is `True`, a `"thinking"` message's content is discarded entirely.
 
         Every `"content"` value comes from `message.provider_content()` rather than
-        `message.content` directly, so a message carrying `fragments` (e.g. a user turn with
-        `@mention`ed file attachments -- see docs/specs/at-mention-file-inlining.md) sends its
+        `message.content` directly, so a message carrying `fragments` sends its
         structured content-part array to the API instead of the plain-text `content` field.
         """
         api_messages: list[ChatCompletionMessageParam] = []

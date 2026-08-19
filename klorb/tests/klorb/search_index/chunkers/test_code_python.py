@@ -70,9 +70,7 @@ def test_function_chunk_has_full_body() -> None:
 
 
 def test_garbage_input_produces_no_class_or_function_chunks() -> None:
-    # tree-sitter is error-tolerant, so garbage input still parses into a module with content --
-    # it just never matches a class/function/method node type, so it all falls into the
-    # leftover-statement grouping rather than crashing.
+    # tree-sitter is error-tolerant, so garbage input still parses into a module with content.
     chunks = PythonChunker().chunk("broken.py", "\x00\x01 not python at all {{{")
 
     assert all(chunk.kind == "toplevel" for chunk in chunks)
@@ -83,8 +81,7 @@ def test_completely_empty_of_named_nodes_produces_no_chunks() -> None:
 
 
 def test_chunk_is_safe_across_concurrent_threads() -> None:
-    # Regression test: a shared tree_sitter.Parser isn't safe for concurrent .parse() calls --
-    # TreeSitterChunker gives each calling thread its own lazily-constructed instance.
+    # Regression test: a shared tree_sitter.Parser isn't safe for concurrent .parse() calls.
     chunker = PythonChunker()
     errors: list[BaseException] = []
 

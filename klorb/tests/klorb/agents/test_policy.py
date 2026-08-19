@@ -1,10 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.policy: the CreateSubagent rejection checks and the tool/skill/role
-intersection wiring that produces a subagent's SessionConfig and tool registry -- driven
-against the real, packaged agents.json ("operator"/"explorer"/"reviewer"/"planner"/"implementer"
-entries) rather than a
-fixture, since these are exactly the entries CreateSubagent consults in production. See
-docs/specs/subagents.md.
+intersection wiring that produces a subagent's SessionConfig and tool registry.
 """
 import threading
 from collections.abc import Callable
@@ -85,11 +81,7 @@ def test_rejects_when_depth_would_exceed_max_depth(
 def test_rejects_when_callers_own_role_disallows_subagents(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """A caller whose own `role_name` has no `agents.json` entry at all -- e.g. a typo, or a role
-    retired from the file -- is rejected the same way a role with `allow_subagents: false` would
-    be (both hit `caller_definition is None or not caller_definition.allow_subagents`); both
-    packaged roles (operator, explorer) currently have `allow_subagents: true`, so an unknown role
-    name is what exercises this branch against the real file."""
+    """A caller whose own `role_name` has no `agents.json` entry at all is rejected."""
     process_config = ProcessConfig()
     session_config = make_session_config(role_name="no_such_role", workspace=Workspace(path=tmp_path))
     tool_registry = ToolRegistry.discover_tools(process_config, session_config)
@@ -114,12 +106,11 @@ def test_rejects_unknown_role(tmp_path: Path, make_session_config: Callable[...,
 def test_operator_cannot_launch_another_operator(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """operator's own agents.json entry names `restrict_to.subagent_roles: ["explorer",
-    "reviewer", "planner", "implementer"]`. `_operator_context` builds its root session via
-    `compute_root_session_grants`, the same path every real root `Session` construction site
-    uses, so `effective_subagent_roles` is already `{"explorer", "implementer", "planner",
-    "reviewer"}` by the time `plan_subagent_creation` reads it -- not "every role agents.json
-    defines" -- so a root operator session can't spawn another operator."""
+    """operator's own agents.json entry names
+    `restrict_to.subagent_roles: ["explorer", "reviewer", "planner", "implementer"]`.
+    `_operator_context` builds its root session via `compute_root_session_grants`,
+    so `effective_subagent_roles` is already `{"explorer", "implementer", "planner",
+    "reviewer"}` by the time `plan_subagent_creation` reads it."""
     context = _operator_context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
@@ -183,10 +174,7 @@ def test_rejects_when_active_total_limit_already_reached(
 def test_finished_but_undelivered_subagent_does_not_count_toward_concurrent_limit(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
-    """A subagent session is never destroyed once it finishes its turn -- it sits dormant,
-    possibly still undelivered, until MessageSubagent resumes it. That dormant backlog must not
-    itself block creating a new subagent under a tight maxConcurrentPerParent -- only a turn
-    that's actually running should occupy a slot."""
+    """A subagent session is never destroyed once it finishes its turn."""
     context = _operator_context(tmp_path, make_session_config, max_concurrent=1)
     assert context.session is not None
     child = Session(make_session_config(role_name="explorer"), provider=MagicMock(), parent=context.session)
@@ -293,9 +281,7 @@ def test_subagent_roles_are_the_explorer_roles_own_restriction_intersected_with_
 def test_dispatch_direct_message_enqueues_into_a_running_turn(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """A human messaging a still-running subagent just enqueues into its current turn -- it does
-    not start a second, competing one, and (per SubagentHandle's own docstring) never touches
-    `parent_interested` on the handle that turn was originally dispatched under."""
+    """A human messaging a still-running subagent just enqueues into its current turn."""
     provider = _FakeProvider()
     process_config = ProcessConfig()
     parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
@@ -505,9 +491,7 @@ def test_dispatch_subagent_turn_chains_via_onsubagentturnend_until_the_cap_trips
     tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A `chat` handler's `onSubagentTurnEnd` continuation is delivered via
-    `Session._deliver_chained_hook_message`, exactly like the root session's own `onAgentTurnEnd`
-    chaining -- `_run_subagent_turn`'s own loop (`klorb.agents.policy`) is the "host" that drains
-    and resubmits it, since nothing else runs a subagent session's turns."""
+    `Session._deliver_chained_hook_message`."""
     provider = _FakeProvider(reply_text="subagent reply")
     parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentTurnEnd": [HookConfig(type="chat", prompt="keep going")],

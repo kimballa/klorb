@@ -15,9 +15,7 @@ from klorb.tui.widgets.palette import PALETTE_PREFIX
 PALETTE_HINT_TEXT = f"{PALETTE_PREFIX} palette"
 
 PERMISSION_BADGE_HORIZONTAL_PADDING = 2
-"""Matches `PermissionBadge`'s own `padding: 0 1` (1 cell each side) -- folded into
-`PERMISSION_BADGE_WIDTH` since Textual's CSS `width` is a border-box measurement that
-already includes padding, so the content area available for text is `width` minus this."""
+"""Matches `PermissionBadge`'s own `padding: 0 1` (1 cell each side)."""
 
 PERMISSION_BADGE_WIDTH = (
     max(len(f"[{value}]") for value in PERMISSION_FRAMEWORK_CYCLE) + 1
@@ -32,8 +30,8 @@ value's trailing `]`."""
 
 
 class PaletteHint(Static):
-    """Renders `PALETTE_HINT_TEXT` styled like one of `Footer`'s own key-binding chips (e.g.
-    `^q Quit`): the leading `>` in `$footer-key-foreground`/`-background` (bold, like a key),
+    """Renders `PALETTE_HINT_TEXT` styled like one of `Footer`'s own key-binding chips:
+    the leading `>` in `$footer-key-foreground`/`-background` (bold, like a key),
     ` palette` in `$footer-description-foreground`/`-background` — rather than plain
     single-toned text — so it reads as one more binding in the status row instead of an
     unrelated label. Uses its own component classes (`palette-hint--key`/`-description`)
@@ -76,10 +74,9 @@ class PaletteHint(Static):
 
     def render(self) -> Text:
         """Render `PALETTE_PREFIX` and `"palette"` in the two component styles above (or
-        nothing, while hidden), padded the same way `FooterKey.render()` pads its own
-        key/description. Recomputing the styles here — rather than baking a `Text` once via
-        `self.update(...)` in `show_hint()` — is what `FooterKey.render()` itself does too,
-        and is why it works: Textual re-invokes `render()` whenever the active theme changes,
+        nothing, while hidden). Recomputing the styles here — rather than baking a `Text` once via
+        `self.update(...)` in `show_hint()` — is why it works: Textual re-invokes
+        `render()` whenever the active theme changes,
         so reading `get_component_rich_style()`/`get_component_styles()` fresh on every call
         (rather than caching their result in a stored renderable) is what keeps this hint's
         colors following a theme switch instead of freezing at whatever they were the moment
@@ -113,29 +110,27 @@ _PermissionBadgeFlashStage = Literal["normal", "yellow", "white"]
 
 class PermissionBadge(Static):
     """Shows `Session.config.permission_framework` as a bracketed, right-justified footer
-    chip (e.g. `[ask]`), styled like `PaletteHint`/`#status-bar` so it reads as one more item
+    chip styled like `PaletteHint`/`#status-bar` so it reads as one more item
     in the status row. Its width is fixed at `PERMISSION_BADGE_WIDTH` rather than `auto`,
     since a `Static`'s auto-width only re-measures on `update()`, not on the bare `refresh()`
     a custom `render()` uses — a fixed width sized for the longest value
     (`"[auto]"`/`"[deny]"`) plus one, with the text right-justified within it, means a
     shorter value like `"[ask]"` is left-padded rather than ever clipping a longer one's
     trailing `]`. `ReplApp.action_cycle_permission_framework()` (bound to Shift+Tab, and
-    reached by clicking the badge — see `Clicked`) calls
+    reached by clicking the badge) calls
     `flash_to()` whenever the value changes, which briefly flashes the chip bright yellow
     (the same `$footer-key-foreground` used for the footer's own key-binding chips) for
     `_FLASH_YELLOW_SECONDS`, then bright/bold white for the longer `_FLASH_WHITE_SECONDS`,
-    before settling back to its normal color -- a quick spark followed by a lingering glow
-    reads more like a natural attention flash than two equal-length steps would. `set_value()`
+    before settling back to its normal color. `set_value()`
     sets the displayed value without flashing, used for the initial render at startup.
 
     Clicking the badge posts `Clicked`, which `ReplApp` handles by advancing the framework
-    exactly as Shift+Tab does — so the chip is a live control, not just a readout.
+    exactly as Shift+Tab does.
     """
 
     class Clicked(Message):
         """Posted when the user clicks the badge, asking `ReplApp` to advance the permission
-        framework to the next value — the same cycle Shift+Tab drives (see
-        `StatusBarMixin.on_permission_badge_clicked` / `action_cycle_permission_framework`)."""
+        framework to the next value."""
 
     COMPONENT_CLASSES = {"permission-badge--flash-yellow", "permission-badge--flash-white"}
 
@@ -166,13 +161,13 @@ class PermissionBadge(Static):
         self._flash_stage: _PermissionBadgeFlashStage = "normal"
 
     def set_value(self, value: PermissionFramework) -> None:
-        """Set the displayed value with no flash -- used for the initial startup render."""
+        """Set the displayed value with no flash."""
         self._value = value
         self.refresh()
 
     def on_click(self, event: events.Click) -> None:
         """Post `Clicked` (and stop the event) so a click on the badge cycles the permission
-        framework — the mouse equivalent of the Shift+Tab binding. The value change and its
+        framework. The value change and its
         flash happen in `ReplApp.action_cycle_permission_framework`, not here, so both entry
         points stay identical."""
         event.stop()

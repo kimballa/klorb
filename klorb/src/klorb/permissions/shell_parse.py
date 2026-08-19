@@ -1,17 +1,9 @@
 # © Copyright 2026 Aaron Kimball
 """Parses a bash command string into the shape `klorb.permissions.command_access`'s
-`CommandPermissionsTable` (and `klorb.permissions.workspace`'s `evaluate_write`/
-`resolve_and_evaluate_read`) can evaluate: every simple command's own argv, every redirection's
-file target, and every construct the walker can't confidently classify — escalated to "ask",
-never silently to "allow". See docs/specs/bash-tool-and-command-permissions.md.
+`CommandPermissionsTable` can evaluate: every simple command's own argv, every redirection's
+file target, and every construct the walker can't confidently classify.
 
-Parsing itself is delegated entirely to `shfmt --to-json` (the `shfmt-py` pypi package wrapping
-`mvdan/sh`'s `syntax` package) — never a regexp/lexical classifier; see
-docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md for why. This module has no dependency on
-`klorb.tools`/`klorb.session`:
-it returns plain data (`BashCommandAnalysis`) for `klorb.tools.bash.BashTool` to combine with
-`CommandPermissionsTable`/`evaluate_write`/`resolve_and_evaluate_read`, mirroring the
-`directory_access`/`workspace` split.
+See docs/specs/bash-tool-and-command-permissions.md.
 """
 
 import json
@@ -29,45 +21,33 @@ SAFE_STDIN_CONSUMERS = frozenset({
     "cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "sort", "uniq", "wc", "jq",
     "git",
 })
-"""Commands that only ever consume stdin as inert data — read, search, filter, or summarize it,
-never execute it — so they may receive heredoc/herestring/piped content under ordinary
-`CommandRules` evaluation. Any other command on the receiving end of a pipe, heredoc, or
-herestring is escalated to "ask" regardless of what an allow-rule for its own argv0 would
-otherwise say — see `_check_stdin_consumer`.
+"""Commands that only ever consume stdin as inert data so they may receive
+heredoc/herestring/piped content under ordinary `CommandRules` evaluation. Any other command
+on the receiving end of a pipe, heredoc, or herestring is escalated to "ask" regardless of
+what an allow-rule for its own argv0 would otherwise say.
 
-Deliberately excludes `tee` (writes stdin to a file — that write target would need its own
-`writeDirs` check, which this consumer-safety check doesn't perform) and `xargs` (constructs and
-runs commands from its input, which is exactly the class of risk this check exists to catch)."""
+Deliberately excludes `tee` (writes stdin to a file) and `xargs` (constructs and runs
+commands from its input, which is exactly the class of risk this check exists to catch)."""
 
 HIDDEN_EFFECT_COMMANDS = frozenset({"eval", "exec", "source", "."})
 """Commands whose real effect isn't visible in their own argv — always escalated to "ask",
 regardless of `CommandRules`."""
 
 _PIPE_OPS = frozenset({13, 14})
-"""`BinaryCmd.Op` values for `|` (Pipe) and `|&` (PipeAll) — verified empirically against this
-project's pinned `shfmt` build (see `klorb.permissions.command_access` module docstring for why
-these are read from real `shfmt --to-json` output, not assumed from documentation): the `Y` side
-of one of these receives the `X` side's stdout, so it's subject to the same
-safe-stdin-consumer check as a heredoc/herestring target — see `_check_stdin_consumer`."""
+"""`BinaryCmd.Op` values for `|` (Pipe) and `|&` (PipeAll)."""
 
 _WRITE_REDIR_OPS = frozenset({63, 64, 66, 68, 69, 74, 76})
 """`Redirect.Op` values whose `Word` names a filesystem target opened for writing: `>` (63),
-`>>` (64), `<>` (66), `>&`/dup (68 — see `_looks_like_fd_dup`, since the same op code is used for
-both `N>&file` and the numeric-fd-duplication form `N>&M`), `>|` (69), `&>` (74), `&>>` (76).
-Routed through `klorb.permissions.workspace.evaluate_write` by `klorb.tools.bash.BashTool` —
-a bash redirection is a filesystem write, governed by the same `DirectoryAccessTable`/
-`writeDirs` a model-invoked `EditFile` call already is."""
+`>>` (64), `<>` (66), `>&`/dup (68), `>|` (69), `&>` (74), `&>>` (76).
+Routed through `klorb.permissions.workspace.evaluate_write` by `klorb.tools.bash.BashTool`."""
 
 _READ_REDIR_OPS = frozenset({65})
-"""`Redirect.Op` for `<` (RdrIn) — the only redirection operator that opens its `Word` target
-for reading rather than writing; routed through `resolve_and_evaluate_read` instead of
-`evaluate_write`."""
+"""`Redirect.Op` for `<` (RdrIn)."""
 
 _INLINE_CONTENT_REDIR_OPS = frozenset({71, 72, 73})
 """`Redirect.Op` values for `<<` (Hdoc), `<<-` (DashHdoc), and `<<<` (WordHdoc/herestring): the
 redirected content is inline in the script itself, not a filesystem path, so there is no
-`evaluate_write`/`resolve_and_evaluate_read` candidate here at all — instead, the *owning*
-`Stmt`'s own command is checked against `SAFE_STDIN_CONSUMERS` (see `_walk_stmt`)."""
+`evaluate_write`/`resolve_and_evaluate_read` candidate here at all."""
 
 RedirDirection = Literal["read", "write"]
 
@@ -75,15 +55,12 @@ RedirDirection = Literal["read", "write"]
 @dataclass(frozen=True)
 class RedirectTarget:
     """One redirection's file target extracted from the AST, and which permissions direction
-    (`klorb.permissions.workspace.evaluate_write` for `"write"`, `resolve_and_evaluate_read` for
-    `"read"`) `BashTool` should check it against.
+    `BashTool` should check it against.
 
     `source_text` is the exact original source of the *owning statement* (the simple command
-    this redirect belongs to, including the redirect itself, e.g. `"cat file > out.txt"`) —
-    sliced directly from the raw command string via AST offsets, never reconstructed from parsed
-    parts, so original quoting/spacing survives. It's purely a display aid (see
-    `klorb.permissions.table.PermissionAskItem.item_command_text`), never itself the resource a
-    grant is checked or persisted against, unlike `target`/`direction`."""
+    this redirect belongs to, including the redirect itself). It's purely a display aid, never
+    itself the resource a grant is checked or persisted against, unlike `target`/`direction`.
+    """
 
     target: str
     direction: RedirDirection
@@ -94,11 +71,8 @@ class RedirectTarget:
 class SimpleCommand:
     """One parsed simple command: `argv` (argv0 first) is what `CommandPermissionsTable` matches
     against; `source_text` is the exact original source of the `CallExpr`/`DeclClause` node it
-    came from — sliced directly from the raw command string via AST offsets, not reconstructed
-    from `argv` (which would lose original quoting/spacing, e.g. `git commit -m "a message"`
-    losing its quotes if rejoined with spaces). Purely a display aid (see
-    `klorb.permissions.table.PermissionAskItem.item_command_text`), never itself the resource a
-    grant is checked or persisted against, unlike `argv`."""
+    came from. Purely a display aid, never itself the resource a grant is checked or persisted
+    against, unlike `argv`."""
 
     argv: list[str]
     source_text: str
@@ -109,13 +83,11 @@ class ForcedAskReason:
     """One reason the walker itself escalated to "ask", paired with the exact original source
     text of whichever AST node the reason is actually about (a `CallExpr`/`DeclClause` for a
     non-literal-argument or hidden-effect command, the owning `Stmt` for a backgrounded command,
-    an unsafe stdin consumer, or a redirect-level issue — see each `forced_ask_reasons.append`
-    call site) — sliced directly from the raw command string via AST offsets. Without this, a
-    structural item had nothing but the abstract `reason` text to show a UI
-    (`klorb.tui.panels.permission_ask_panel.PermissionAskPanel`): two structural items from the same
-    compound command (e.g. `echo $SHELL; echo $HOME`, both non-literal-argument reasons) were
-    otherwise indistinguishable from each other in the UI, both showing the identical generic
-    reason string with no indication of which specific command each one is actually about."""
+    an unsafe stdin consumer, or a redirect-level issue). Without this, a structural item had
+    nothing but the abstract `reason` text to show a UI: two structural items from the same
+    compound command were otherwise indistinguishable from each other in the UI, both showing the
+    identical generic reason string with no indication of which specific command each one is
+    actually about."""
 
     reason: str
     source_text: str
@@ -125,37 +97,20 @@ class ForcedAskReason:
 class BashCommandAnalysis:
     """Everything `klorb.tools.bash.BashTool` needs to evaluate one parsed command: every simple
     command's own argv (argv0 first, from every pipeline stage, `&&`/`||`/`;` list member,
-    subshell, command substitution, control-flow body, etc. — see `parse_command`), every
-    redirection's file target, and every reason the walker itself escalated to "ask" (a
-    backgrounded top-level `&`, a heredoc/herestring/pipe feeding an unsafe consumer, a
-    non-literal argv token, an unrecognized AST node, or a hidden-effect command like `eval`).
+    subshell, command substitution, control-flow body, etc.), every redirection's file target,
+    and every reason the walker itself escalated to "ask".
 
-    `BashTool.apply()` combines `simple_commands`/`redirects` with `CommandPermissionsTable`'s
-    own verdicts and `forced_ask_reasons` via the same strictest-wins rule
-    `klorb.permissions.workspace.evaluate_write` already uses for read/write — see
-    docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md.
-
-    `command_count` tallies every executable node the walker visits — every `CallExpr` with a
-    non-empty `Args` (`_handle_call_expr`), every `DeclClause` (`_handle_decl_clause`), and every
-    unrecognized construct `_walk_cmd` falls through on — regardless of whether that node's own
-    argv turned out fully literal (landing in `simple_commands`) or not (landing in
-    `forced_ask_reasons` instead, via the early-return branches in those same two handlers, still
-    incrementing this count first). This is deliberately a separate tally from
-    `len(simple_commands)`: a `for`/`if`/`case` body command with a non-literal argument (`cat
-    "$f"`) never reaches `simple_commands` at all, but it's still exactly one more real command
-    that will execute — undercounting it would make `BashTool._classify`'s `is_compound` signal
-    (see its own docstring) miss a command line that's genuinely made of more than one action just
-    because every action in it happened to need a non-literal-argument ask rather than a
-    `CommandRules` one. Bare variable-assignment statements (`FOO=bar`, no `Args` at all) invoke
-    nothing, so they're never counted; a `TestClause`/`ArithmCmd` guard (`[[ ... ]]`/`(( ... ))`)
-    likewise invokes no external program of its own and is never counted either — only a real
-    `[`/`test` invocation (an ordinary `CallExpr`) is.
+    `command_count` tallies every executable node the walker visits regardless of whether that
+    node's own argv turned out fully literal (landing in `simple_commands`) or not (landing in
+    `forced_ask_reasons` instead). This is deliberately a separate tally from
+    `len(simple_commands)`: a `for`/`if`/`case` body command with a non-literal argument never
+    reaches `simple_commands` at all, but it's still exactly one more real command that will
+    execute. Bare variable-assignment statements invoke nothing, so they're never counted; a
+    `TestClause`/`ArithmCmd` guard likewise invokes no external program of its own and is never
+    counted either — only a real `[`/`test` invocation (an ordinary `CallExpr`) is.
 
     `raw_command` is the original command string `parse_command` was given, set once at
-    construction and never mutated afterward — every `source_text` field above (`SimpleCommand`/
-    `ForcedAskReason`/`RedirectTarget`'s own) is a slice of this same string, computed on demand
-    by `_node_text()` from a node's AST `Pos`/`End` byte offsets rather than threaded through
-    every walker function as a separate parameter.
+    construction and never mutated afterward.
     """
 
     simple_commands: list[SimpleCommand] = field(default_factory=list)
@@ -171,26 +126,16 @@ class ShellParseError(Exception):
     syntax; one exception type covers both, since the caller's response (surface it to the
     model as an ordinary tool error so it can retry with simpler syntax) is the same either way.
     Never routed through the permissions system: a syntax error isn't a permission verdict.
-    Every raise site also logs at `error` level (see `parse_command`), so recurring parse
-    failures are visible in klorb's own logs even though the model just sees a retryable error.
     """
 
 
 def _resolve_shfmt_command(shfmt_command: str) -> str:
     """Resolve a configured `shfmt_command` (default `"shfmt"`, `tools.bash.shfmtCommand`) to an
     actually-runnable path. A value that already looks like a path (contains a path separator)
-    is returned unchanged — the caller explicitly chose it. Otherwise, tries the directory
-    containing the running Python interpreter (`sys.executable`) first — where `shfmt-py` (a
-    "scripts"-only wheel with no importable Python API of its own) installs the exact-pinned
-    `shfmt` binary for a venv install (see `pyproject.toml`'s exact-version pin and
-    docs/adrs/00067-shell-out-to-shfmt-for-bash-parsing.md), alongside `python`/`pip` themselves,
-    whether or not that venv's `bin/` happens to be on `PATH` for the current process. Only if no
-    such sibling binary exists does this fall back to `PATH`. This order is deliberate, not
-    incidental: a machine with its own system-wide `shfmt` on `PATH` (a different, unpinned
-    version) must not shadow the exact build this module's `Redirect.Op` tables (`_WRITE_REDIR_
-    OPS` etc.) were empirically verified against — a version mismatch there doesn't error, it
-    silently degrades to "ask" more often as unrecognized operator codes fail closed (see the ADR
-    above), which is easy to mistake for a permissions bug rather than a `shfmt` version mismatch.
+    is returned unchanged. Otherwise, tries the directory containing the running Python
+    interpreter (`sys.executable`) first, alongside `python`/`pip` themselves, whether or not
+    that venv's `bin/` happens to be on `PATH` for the current process. Only if no such sibling
+    binary exists does this fall back to `PATH`.
     """
     if "/" in shfmt_command or "\\" in shfmt_command:
         return shfmt_command

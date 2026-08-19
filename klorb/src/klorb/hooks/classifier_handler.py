@@ -1,9 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """The `type=classifier` hook handler: appeals to a small, fast model for one structured
 `HookOutput`-shaped judgment, given the firing `HookInput` and the handler's own configured
-`prompt` instructions. A sibling of `klorb.session_naming.generate_session_name` -- same
-structured-JSON-output, `e2e_timeout`-wrapped, one-retry, never-raises shape, applied to hook
-classification instead of session naming.
+`prompt` instructions.
 """
 
 import json
@@ -43,12 +41,8 @@ that follow the JSON tell you what judgment to make.
 
 def _with_additional_properties_false(node: Any) -> Any:
     """Deep copy of a `BaseModel.model_json_schema()` result with `"additionalProperties":
-    false` set on every object schema. Strict `json_schema` structured-output mode (see
-    `_response_format`) rejects an object schema that omits this. Duplicated from
-    `klorb.session_naming._with_additional_properties_false` rather than imported: that module
-    duplicates it from `klorb.permissions.risk_classifier` for the same reason this one does --
-    each is an unrelated single-model-turn classification task that shouldn't depend on the
-    others."""
+    false` set on every object schema. Strict `json_schema` structured-output mode rejects an
+    object schema that omits this."""
     if isinstance(node, dict):
         marked = {key: _with_additional_properties_false(value) for key, value in node.items()}
         if "properties" in marked:

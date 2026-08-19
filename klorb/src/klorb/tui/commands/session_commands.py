@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider that lets the user manage the active session — clearing it,
-inspecting its run-time statistics, loading a previously saved one, or renaming it."""
+"""Command palette provider that lets the user manage the active session.
+"""
 
 from typing import Protocol, cast
 
@@ -71,9 +71,9 @@ class SupportsSessionRename(Protocol):
 class LoadSessionScreen(ModalScreen[None]):
     """Modal listing `entries`' titles (falling back to a raw `session_id` for an entry with no
     title), stacked vertically in an `OptionList` so the user can move between them with the
-    up/down arrow keys and confirm with Enter -- mirrors `klorb.tui.commands.theme_commands.
-    ThemeSelectionScreen`'s exact shape. Escape dismisses without making a selection. Listing
-    order matches `entries`' own order (`sessions.json`'s recency order -- most recent first)."""
+    up/down arrow keys and confirm with Enter. Escape dismisses without making a selection.
+    Listing order matches `entries`' own order (most recent first).
+    """
 
     CSS = """
     LoadSessionScreen {
@@ -173,10 +173,7 @@ class RenameSessionScreen(ModalScreen[None]):
 
 class SessionCommandProvider(Provider):
     """Offers session-management commands (clearing the active session, showing
-    session statistics, loading a previously saved one, or renaming it) via the command palette
-    — reachable via ``ctrl+p`` or by typing ``>clear`` / ``>show session stats`` /
-    ``>load session`` / ``>rename session`` in the prompt
-    (see ``docs/specs/command-palette-from-prompt.md``).
+    session statistics, loading a previously saved one, or renaming it) via the command palette.
     """
 
     async def search(self, query: str) -> Hits:

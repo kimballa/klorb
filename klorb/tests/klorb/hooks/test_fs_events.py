@@ -29,8 +29,7 @@ def _entry(watch: str) -> FileSystemModifiedEventConfig:
 
 class _Recorder:
     """Captures every `dispatch` call, signaling an `asyncio.Event` so a test can `await` the
-    next background-thread delivery instead of polling or sleeping a fixed duration -- mirrors
-    `klorb.tests.klorb.tui.test_workspace_file_index`'s `_changed_event` pattern."""
+    next background-thread delivery instead of polling or sleeping a fixed duration."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[FileSystemModifiedEventConfig], EventInput]] = []
@@ -49,9 +48,7 @@ class _Recorder:
 @pytest.fixture
 async def recorder() -> _Recorder:
     """An async fixture, not a plain one, so `_Recorder.__init__` captures the test's own
-    running event loop (`asyncio.get_running_loop()`) -- a plain fixture runs before
-    pytest-asyncio has entered the test coroutine's loop context, which would bind the
-    recorder to the wrong (or no) loop entirely."""
+    running event loop (`asyncio.get_running_loop()`)."""
     return _Recorder()
 
 
@@ -202,8 +199,7 @@ async def test_dispatch_failure_does_not_stop_future_changes_from_being_watched(
 ) -> None:
     """A dispatch failure for one debounced batch (a hook handler error, or
     `Session.deliver_event_message` raising `ChainedHookMessageUndeliverableError` while idle)
-    must not stop later filesystem changes from still being watched -- see
-    docs/adrs/00186 (chained-turn delivery)."""
+    must not stop later filesystem changes from still being watched."""
     call_count = 0
 
     def _raise_once_then_record(
@@ -251,8 +247,7 @@ def test_close_is_safe_to_call_more_than_once(root: Path, recorder: _Recorder) -
 def test_watch_path_outside_workspace_is_skipped(
     root: Path, recorder: _Recorder, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A `watch` value that resolves outside the workspace root (e.g. `../../etc`) is skipped
-    with a warning -- the watcher never schedules it with the Observer."""
+    """A `watch` value that resolves outside the workspace root is skipped with a warning."""
     escape_entry = _entry("../../etc")
     watcher = FileSystemWatcher(
         root, [escape_entry], dispatch=recorder, debounce_seconds=_DEBOUNCE_SECONDS)

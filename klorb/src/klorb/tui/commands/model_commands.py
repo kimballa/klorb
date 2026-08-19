@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider and modal for switching the active model, mirroring
-`klorb.tui.commands.theme_commands`'s "one command that names the current value, opens a modal" shape
-— see docs/adrs/00102-single-change-model-command-with-typeahead-modal.md for why models get a
-dedicated typeahead-filterable modal instead of one palette entry per model."""
+"""Command palette provider and modal for switching the active model.
+See docs/adrs/00102-single-change-model-command-with-typeahead-modal.md.
+"""
 
 from typing import Protocol, cast
 
@@ -52,17 +51,16 @@ def filter_model_names(model_names: list[str], query: str) -> list[str]:
 
 class _ModelOptionList(OptionList, can_focus=False):
     """The filtered model list. Never focused: `ModelSelectionScreen`'s filter `Input` keeps
-    focus the whole time, and up/down/enter are forwarded here programmatically — the same
-    split-focus shape `klorb.tui.widgets.palette.PromptPalette` uses for the inline `>` palette."""
+    focus the whole time, and up/down/enter are forwarded here programmatically.
+    """
 
 
 class ModelSelectionScreen(ModalScreen[None]):
     """Modal listing every available model in a filterable `OptionList`, with a text `Input`
-    above it that narrows the list by fuzzy match as the user types (`textual.fuzzy.Matcher`,
-    the same matcher `Provider.matcher()` wraps for the rest of the command palette). Up/down
-    arrow keys move the highlight and Enter confirms — both work while the filter box keeps
-    keyboard focus. The currently-active model is marked with a trailing `(*)`. Escape
-    dismisses without making a selection.
+    above it that narrows the list by fuzzy match as the user types. Up/down arrow keys move
+    the highlight and Enter confirms; both work while the filter box keeps keyboard focus.
+    The currently-active model is marked with a trailing `(*)`. Escape dismisses without
+    making a selection.
     """
 
     CSS = """
@@ -115,8 +113,7 @@ class ModelSelectionScreen(ModalScreen[None]):
     def _refresh_options(self, query: str) -> None:
         """Recompute `self._filtered_names` (via `filter_model_names`) for `query` and
         repopulate the option list, with the matched substrings highlighted for a non-empty
-        query — the same score-then-highlight treatment `gather_palette_hits` gives every
-        other palette command.
+        query.
         """
         option_list = self.query_one(f"#{MODEL_OPTION_LIST_ID}", _ModelOptionList)
         self._filtered_names = filter_model_names(self._model_names, query)
@@ -143,7 +140,8 @@ class ModelSelectionScreen(ModalScreen[None]):
 
     def on_key(self, event: Key) -> None:
         """Forward up/down to the option list's highlight while the filter `Input` keeps
-        focus — `Input` doesn't bind either key itself, so they'd otherwise do nothing."""
+        focus.
+        """
         option_list = self.query_one(f"#{MODEL_OPTION_LIST_ID}", _ModelOptionList)
         if event.key == "up":
             event.stop()
@@ -168,8 +166,8 @@ class ModelSelectionScreen(ModalScreen[None]):
 
 class ModelCommandProvider(Provider):
     """Offers a single `"Change model (<current>)"` command via the command palette that opens
-    `ModelSelectionScreen`, replacing the previous one-entry-per-model listing — see
-    docs/adrs/00102-single-change-model-command-with-typeahead-modal.md.
+    `ModelSelectionScreen`.
+    See docs/adrs/00102-single-change-model-command-with-typeahead-modal.md.
     """
 
     async def search(self, query: str) -> Hits:
@@ -183,15 +181,7 @@ class ModelCommandProvider(Provider):
         yield DiscoveryHit(self._label(), self._show_model_screen, text=CHANGE_MODEL_LABEL)
 
     def _label(self) -> str:
-        """`CHANGE_MODEL_LABEL` plus the currently-active model's name in parentheses.
-
-        `canonical_text` (see `search`/`discover`'s `text=` argument) deliberately stays the
-        undecorated `CHANGE_MODEL_LABEL` root rather than this decorated label — a
-        palette-from-prompt recall (see `docs/specs/command-palette-from-prompt.md`) needs to
-        match this same command again later, and the parenthetical current-model suffix
-        changes with `get_current_model_name()`, so recording it verbatim wouldn't reliably do
-        that.
-        """
+        """`CHANGE_MODEL_LABEL` plus the currently-active model's name in parentheses."""
         current = cast(SupportsModelSelection, self.app).get_current_model_name()
         return f"{CHANGE_MODEL_LABEL} ({current})"
 

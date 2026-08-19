@@ -15,25 +15,19 @@ logger = logging.getLogger(__name__)
 
 
 class EditFileTool(Tool):
-    """Replaces a block of a text file's current content with `new_text` — delegating that
-    mechanic to `self.edit_file_core` (a `klorb.tools.util.EditFileCore`), the same one
-    `EditScratchpadTool` uses, so it's written and tested once. See your system prompt's
-    guidance on `EditFile`/`EditScratchpad` for the `old_text`/`old_text_start`/`old_text_end`
-    conventions and "Ambiguous match" handling.
+    """Replaces a block of a text file's current content with `new_text`.
 
-    `filename` is checked against `writeFiles` (an exact-match carve-out, checked first — see
-    `klorb.permissions.workspace.resolve_and_evaluate_write`) and otherwise confined to
+    `filename` is checked against `writeFiles` and otherwise confined to
     `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
 
     A nonexistent `filename` doesn't need a separate `CreateFile` call first: `old_text=""`
-    creates it directly, including any missing parent directories -- see `EditFileCore.apply()`.
+    creates it directly, including any missing parent directories.
     Any other shape against a nonexistent file raises `FileNotFoundError` naming `CreateFile` as
     the tool to use instead.
 
-    `self._secret_redactor` (the same `klorb.tools.util.SecretRedactor` type `ReadFileTool`
-    uses) resolves any `[[SECRET:<type>:<hash>]]` token in the call's arguments back to real
-    plaintext before matching/writing, and re-masks the result before it's returned. See
-    docs/specs/secret-redaction.md.
+    `self._secret_redactor` resolves any `[[SECRET:<type>:<hash>]]` token in the call's
+    arguments back to real plaintext before matching/writing, and re-masks the result before
+    it's returned.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -103,8 +97,7 @@ class EditFileTool(Tool):
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts come from
-        `result`'s `replaced_lines` and the call's `new_text` -- only available on success, since
-        a failed match never resolves a location to count lines removed from."""
+        `result`'s `replaced_lines` and the call's `new_text`."""
         filename = args.get("filename", "?")
         diff = ""
         new_text = args.get("new_text")
@@ -117,10 +110,8 @@ class EditFileTool(Tool):
         return base if error is None else f"{base} failed: {error}"
 
     def detail_view(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """Same as the default pretty-JSON rendering, but with `result["post_edit_content"]` (the edited
-        region) capped to 8 lines — a full-file rewrite via one large `new_text` could otherwise
-        dump hundreds of lines here.
-        """
+        """Same as the default pretty-JSON rendering, but with `result["post_edit_content"]`
+        capped to 8 lines."""
         if error is not None or not isinstance(result, dict) or "post_edit_content" not in result:
             return super().detail_view(args, result, error)
         capped_result = dict(result)

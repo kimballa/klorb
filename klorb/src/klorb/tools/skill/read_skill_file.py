@@ -22,13 +22,11 @@ logger = logging.getLogger(__name__)
 
 class ReadSkillFileTool(Tool):
     """Reads up to `max_lines` lines from a supporting file bundled with a skill (one of the
-    relative paths in `ActivateSkill`'s `files` manifest), via `self.read_file_core` (a
-    `klorb.tools.util.ReadFileCore`).
+    relative paths in `ActivateSkill`'s `files` manifest).
 
-    `namespace`/`name` are resolved as in `ActivateSkill`, and `path` is confined to the skill
-    directory (relative, no `..`, within the directory after symlink resolution). Reading is gated
-    by the skill's `skillRules` verdict -- the same gate as `ActivateSkill`, raising no second ask.
-    See docs/specs/skills.md.
+    `namespace`/`name` are resolved against the canonical catalog, and `path` is confined to the
+    skill directory (relative, no `..`, within the directory after symlink resolution). Reading is
+    gated by the skill's `skillRules` verdict. See docs/specs/skills.md.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -154,11 +152,8 @@ class ReadSkillFileTool(Tool):
     def _open_full_view(
         self, namespace: str, name: str, path: str, scroll_to_line: int,
     ) -> FullFileView:
-        """Re-read the skill file in full for the click-to-expand overlay -- via the same
-        `resolve_and_gate_skill`/`resolve_skill_file` `apply()` uses (unlike the other `Read*`
-        tools' `_open_full_view`, this re-consults `skillRules` rather than skipping the gate,
-        since that check is idempotent against an already-granted permission and there's no
-        ungated resolution path to call instead)."""
+        """Re-read the skill file in full for the click-to-expand overlay. Re-consults
+        `skillRules` since that check is idempotent against an already-granted permission."""
         registry = resolve_session_skill_catalog_registry(self.context)
         resolved = resolve_and_gate_skill(
             catalog=registry.canonical(), typed_catalog=registry.typed(),

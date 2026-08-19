@@ -1,9 +1,8 @@
 # © Copyright 2026 Aaron Kimball
 """Abstract permission-table evaluation: deny/ask/allow rule lists checked in that fixed
-category order, independent of what kind of resource (a directory, or in principle any other
-resource kind with its own matching semantics) the rules describe. See
-docs/specs/permissions.md and
-docs/adrs/00027-evaluate-permission-categories-deny-then-ask-then-allow.md.
+category order, independent of what kind of resource the rules describe.
+
+See docs/specs/permissions.md.
 """
 
 from abc import ABC, abstractmethod
@@ -31,23 +30,18 @@ specificity never changes this order, so a broad `deny` always beats a narrower 
 class PermissionAskRequired(Exception):
     """Raised when a `PermissionsTable`'s verdict for a candidate is `"ask"`. Deliberately not a
     `PermissionError` subclass, so interactive-prompt code can catch it specifically without
-    also swallowing plain denials. A call site with no interactive confirmation plumbing (e.g.
-    a one-shot/headless run) fails closed: `Session._run_tool_calls` treats an uncaught instance
-    of this the same as denial, just distinguishably.
+    also swallowing plain denials. A call site with no interactive confirmation plumbing fails
+    closed: `Session._run_tool_calls` treats an uncaught instance of this the same as denial,
+    just distinguishably.
 
     `path`/`is_write`, `skill`, `url`, and `memory` carry the resolved candidate a caller with
-    interactive plumbing (see `Session.on_permission_ask`) can act on directly, without
-    re-parsing `resource_description` -- `path`/`is_write` for a directory-access ask, `skill` (a
-    `(namespace, name)` pair) for a skill-activation ask (raised by
-    `ActivateSkill`/`ReadSkillFile` -- see docs/specs/skills.md), `url` for a `WebFetch` domain
-    ask, `memory` (an `(access, filename)` pair) for a workspace-memory write/delete ask (raised
-    by `CreateMemory`/`EditMemory`/`ForgetMemory` -- see docs/specs/memories.md). At most one is
-    ever given; all four are optional so a caller that only cares about the message string can
-    omit them. `resource`, computed from whichever one was given (or a
-    `klorb.permissions.resource.StructuralResource` built from `message` if none was), is the
-    `klorb.permissions.resource.PermissionResource` a caller should actually use -- see that
-    module for the polymorphic methods it exposes in place of branching on
-    `path`/`skill`/`url`/`memory`.
+    interactive plumbing can act on directly, without re-parsing `resource_description` -- `path`/
+    `is_write` for a directory-access ask, `skill` (a `(namespace, name)` pair) for a
+    skill-activation ask, `url` for a `WebFetch` domain ask, `memory` (an `(access, filename)`
+    pair) for a workspace-memory write/delete ask. At most one is ever given; all four are
+    optional so a caller that only cares about the message string can omit them. `resource`,
+    computed from whichever one was given (or a `StructuralResource` built from `message` if none
+    was), is the `PermissionResource` a caller should actually use.
     """
 
     def __init__(
@@ -78,19 +72,16 @@ class PermissionAskItem:
     decision — a single tool call can raise several of these at once (e.g. `BashTool`: several
     simple commands and/or redirection targets found within one parsed shell command).
 
-    `resource` is the `klorb.permissions.resource.PermissionResource` this item is about --
-    `klorb.permissions.resource.StructuralResource` for a structural item (the walker couldn't
-    classify something at all), which has no persistable rule of its own, so only "once"/"deny"
-    make sense for it, never a session/workspace/homedir grant.
+    `resource` is the `PermissionResource` this item is about — `StructuralResource` for a
+    structural item (the walker couldn't classify something at all), which has no persistable rule
+    of its own, so only "once"/"deny" make sense for it, never a session/workspace/homedir grant.
 
-    `bash_context`, when set, is the `klorb.permissions.resource.BashCommandContext` a `BashTool`
-    call originated from — set on every ask item that call produces, regardless of `resource`'s
-    own kind, since a compound command can need several independent decisions (one per simple
-    command and/or redirect target) that all still belong to the same one command the user
-    actually typed or the model actually submitted. Purely a display aid for a UI (`klorb.tui.
-    panels.permission_ask_panel.PermissionAskPanel`) to show what's actually being run, on top of
-    `resource_description`'s per-item specific detail — never itself the resource a grant is
-    checked or persisted against, unlike `resource`.
+    `bash_context`, when set, is the `BashCommandContext` a `BashTool` call originated from — set
+    on every ask item that call produces, regardless of `resource`'s own kind, since a compound
+    command can need several independent decisions that all still belong to the same one command
+    the user actually typed or the model actually submitted. Purely a display aid for a UI to show
+    what's actually being run, on top of `resource_description`'s per-item specific detail — never
+    itself the resource a grant is checked or persisted against, unlike `resource`.
     """
 
     def __init__(
@@ -178,14 +169,13 @@ def raise_if_not_allowed(
     url: str | None = None, memory: tuple[Literal["write", "delete"], str] | None = None,
 ) -> None:
     """Enforce `verdict`: raise `PermissionError` for `"deny"`, `PermissionAskRequired` for
-    `"ask"` (failing closed — see `PermissionAskRequired`), or return normally for `"allow"`.
+    `"ask"` (failing closed), or return normally for `"allow"`.
 
     This is the single seam where "ask fails closed as deny-but-distinctly-typed" is
     implemented, so swapping it for real interactive confirmation later is a one-function
-    change rather than a change at every tool call site. `path`/`is_write`/`skill`/`url`/`memory`
-    are forwarded onto `PermissionAskRequired` so interactive callers (see
-    `Session.on_permission_ask`) can act on the specific resource; all are optional, so callers
-    that don't have them handy (or don't need them) can omit them.
+    change. `path`/`is_write`/`skill`/`url`/`memory` are forwarded onto `PermissionAskRequired`
+    so interactive callers can act on the specific resource; all are optional, so callers that
+    don't have them handy can omit them.
     """
     if verdict == "deny":
         raise PermissionError(f"Permission denied: {resource_description}")

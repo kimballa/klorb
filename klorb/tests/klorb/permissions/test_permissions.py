@@ -88,8 +88,7 @@ def test_no_matching_rule_returns_none(tmp_path: Path) -> None:
 
 def test_stricter_rule_wins_regardless_of_construction_order(tmp_path: Path) -> None:
     """The single most important invariant: a deny always beats an allow, no matter which was
-    added to the table first — since concatenation across config layers means the final list
-    order carries no evaluation precedence of its own."""
+    added to the table first."""
     looser_first = DirectoryAccessTable(DirRules(allow=[tmp_path], deny=[tmp_path / "secret"]), tmp_path)
     stricter_first = DirectoryAccessTable(
         DirRules(deny=[tmp_path / "secret"], allow=[tmp_path]), tmp_path)
@@ -118,9 +117,8 @@ def test_symlinked_rule_directory_is_canonicalized(tmp_path: Path) -> None:
 def test_matches_a_pre_resolved_former_symlink_candidate_against_its_real_target(
     tmp_path: Path,
 ) -> None:
-    """DirectoryAccessTable.evaluate() expects an already-canonicalized candidate (the caller's
-    job — see canonicalize_candidate/resolve_within_workspace tests below); this confirms
-    containment matching itself is correct once a symlink hop has been resolved away."""
+    """DirectoryAccessTable.evaluate() expects an already-canonicalized candidate; this
+    confirms containment matching is correct once a symlink hop has been resolved away."""
     real_dir = tmp_path / "real"
     real_dir.mkdir()
     outside = tmp_path / "outside"
@@ -171,7 +169,7 @@ def test_relative_rule_path_is_resolved_against_workspace_root(tmp_path: Path) -
 
 def test_relative_dotdot_rule_path_escapes_workspace_root(tmp_path: Path) -> None:
     """Allow("..") means the same thing as Allow("<workspace_root>/.."), i.e. the workspace's
-    parent directory — not the process's current working directory's parent."""
+    parent directory."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
@@ -227,8 +225,7 @@ def test_empty_approved_scopes_keeps_all_privileged_dirs_denied(tmp_path: Path) 
 
 def test_resolve_and_evaluate_write_unlocks_klorb_after_workspace_escalation(tmp_path: Path) -> None:
     """End-to-end: with an approved 'workspace' scope threaded through ToolSetupContext, writing
-    to .klorb/ is no longer an unconditional deny -- it consults writeDirs/writeFiles like any
-    other in-workspace path."""
+    to .klorb/ is no longer an unconditional deny."""
     target = tmp_path / ".klorb" / "klorb-config.json"
     process_config = ProcessConfig()
     context = ToolSetupContext(
@@ -254,7 +251,7 @@ def test_privileged_klorb_deny_error_mentions_escalate_privileges(tmp_path: Path
 
 
 def test_privileged_klorb_deny_read_error_mentions_escalate_privileges(tmp_path: Path) -> None:
-    """Same as the write case, for a read of a .klorb/ path."""
+    # Same as the write case, for a read of a .klorb/ path.
     context = _context(tmp_path)
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
         resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
@@ -380,9 +377,7 @@ def test_directory_access_table_deny_rule_with_tilde_matches_home_relative_candi
 
 
 def test_evaluate_write_asks_when_nothing_matches_in_either_table(tmp_path: Path) -> None:
-    """Zero config, for a write interrogation, is (None, None) -> ask/ask -- unlike read, write
-    has no permissive no-match fallback; see test_write_merge_matrix below for the full
-    (readDirs verdict, writeDirs verdict) -> write verdict table this is one cell of."""
+    """Zero config, for a write interrogation, is (None, None) -> ask/ask."""
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     assert evaluate_write(_context(tmp_path), path) == "ask"
 
@@ -396,8 +391,7 @@ def test_evaluate_write_allows_only_when_both_tables_explicitly_allow(tmp_path: 
 
 def test_evaluate_write_asks_when_writedirs_allows_but_readdirs_is_silent(tmp_path: Path) -> None:
     """A writeDirs.allow entry alone does not grant write access to a path readDirs never
-    mentions -- that would make the directory write-only, which is backwards: write access is
-    never more permissive than read access for the same path."""
+    mentions."""
     context = _context(tmp_path, write_dirs=DirRules(allow=[tmp_path]))
     path = resolve_within_workspace(context, "f.txt")
     assert evaluate_write(context, path) == "ask"
@@ -427,8 +421,7 @@ def test_write_merge_matrix(
 ) -> None:
     """Full 4x4 (readDirs verdict, writeDirs verdict) -> write verdict matrix: write access is
     the stricter of the two, with a table's "no matching rule" (None) normalized to "ask" for
-    this write-side merge only (read's own no-match fallback, exercised separately below, is
-    unaffected by this normalization)."""
+    this write-side merge only."""
     def rules(verdict: str | None) -> DirRules:
         if verdict is None:
             return DirRules()
@@ -488,9 +481,9 @@ def test_resolve_and_evaluate_write_raises_outside_workspace_when_no_file_rule_m
 
 
 def test_writefiles_allow_bypasses_the_workspace_root_boundary(tmp_path: Path) -> None:
-    """The motivating case: an exact writeFiles.allow entry for a path outside the workspace
-    root (e.g. a character device) must resolve to "allow" rather than being rejected by the
-    hard boundary resolve_within_workspace() would otherwise raise for it."""
+    """An exact writeFiles.allow entry for a path outside the workspace root must resolve to
+    "allow" rather than being rejected by the hard boundary resolve_within_workspace() would
+    otherwise raise for it."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     device = tmp_path / "outside-device"
@@ -512,9 +505,7 @@ def test_writefiles_deny_short_circuits_even_when_writedirs_would_allow(tmp_path
 
 
 def test_writefiles_ask_short_circuits_even_when_writedirs_would_deny(tmp_path: Path) -> None:
-    """An exact writeFiles.ask entry is authoritative -- it is used as-is, not merged/stricter'd
-    against a writeDirs.deny for the same path, unlike evaluate_write()'s own readDirs/writeDirs
-    merge."""
+    """An exact writeFiles.ask entry is authoritative."""
     target = tmp_path / "f.txt"
     context = _context(tmp_path, write_dirs=DirRules(
         deny=[tmp_path]), write_files=FileRules(ask=[target]))
@@ -523,8 +514,7 @@ def test_writefiles_ask_short_circuits_even_when_writedirs_would_deny(tmp_path: 
 
 
 def test_writefiles_privileged_path_still_denied_even_with_writefiles_allow(tmp_path: Path) -> None:
-    """is_privileged_path() is checked before writeFiles -- no writeFiles.allow entry can
-    re-enable access to .klorb/, mirroring evaluate_write()'s own unconditional deny."""
+    """is_privileged_path() is checked before writeFiles."""
     target = tmp_path / ".klorb" / "klorb-config.json"
     context = _context(tmp_path, write_files=FileRules(allow=[target]))
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
@@ -555,8 +545,7 @@ def test_readfiles_deny_short_circuits_even_when_readdirs_would_allow(tmp_path: 
 
 
 def test_readfiles_has_no_opinion_falls_through_to_readdirs(tmp_path: Path) -> None:
-    """A readFiles entry for a different file must not affect evaluation of this one -- it
-    falls through to the ordinary readDirs/workspace-boundary flow untouched."""
+    """A readFiles entry for a different file must not affect evaluation of this one."""
     other = tmp_path / "other.txt"
     context = _context(tmp_path, read_dirs=DirRules(
         deny=[tmp_path]), read_files=FileRules(allow=[other]))
@@ -625,7 +614,7 @@ def test_untrusted_read_denies_klorb_dir_even_with_readdirs_allow_covering_works
         resolve_and_evaluate_read(context, ".klorb/klorb-config.json")
 
 
-# --- resolve_and_evaluate_read: trusted (see docs/specs/projects-and-trust.md) ---
+# --- resolve_and_evaluate_read: trusted ---
 
 
 def test_trusted_read_does_not_raise_merely_for_being_outside_workspace(tmp_path: Path) -> None:
@@ -641,8 +630,7 @@ def test_trusted_read_does_not_raise_merely_for_being_outside_workspace(tmp_path
 
 
 def test_trusted_read_fallback_asks_when_nothing_matches(tmp_path: Path) -> None:
-    """No implicit "inside the workspace" allow, but also no implicit outright deny -- an
-    unmentioned path reaches the same interactive-ask fallback evaluate_write() already uses."""
+    """No implicit "inside the workspace" allow, but also no implicit outright deny."""
     context = _context(tmp_path, is_workspace_trusted=True)
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "ask"
@@ -681,9 +669,8 @@ def test_canonicalize_candidate_does_not_raise_for_outside_workspace_paths(tmp_p
 def test_canonicalize_candidate_expands_home_tilde_for_llm_supplied_filename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A model-supplied `filename` of `"~/.ssh/id_rsa"` must resolve to the real home directory
-    (so a readDirs/writeDirs deny on `~/.ssh` actually catches it), not a literal `~`
-    subdirectory joined onto workspace_root — see canonicalize_dir's docstring."""
+    """A model-supplied `filename` of `"~/.ssh/id_rsa"` must resolve to the real home directory,
+    not a literal `~` subdirectory joined onto workspace_root."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -751,9 +738,8 @@ def test_find_workspace_root_ignores_klorb_file_not_directory(tmp_path: Path) ->
 def test_permission_ask_required_is_not_a_permission_error_subclass() -> None:
     """Deliberate design choice, not an oversight: PermissionAskRequired is a plain Exception,
     not a PermissionError subclass, specifically so future interactive-confirmation code can
-    catch it on its own (`except PermissionAskRequired`) without also silently swallowing
-    plain denials via a broader `except PermissionError`. See klorb.permissions.table's module
-    docstring and docs/specs/permissions.md. If this assertion ever fails because someone
+    catch it on its own without also silently swallowing
+    plain denials via a broader `except PermissionError`. If this assertion ever fails because someone
     added PermissionError as a base class, that's almost certainly the bug to revert, not this
     test to update.
     """
@@ -783,10 +769,9 @@ def test_raise_if_not_allowed_ask_populates_path_and_is_write() -> None:
 
 
 def test_raise_if_not_allowed_ask_defaults_path_and_is_write_when_omitted() -> None:
-    """The two tests above (test_raise_if_not_allowed_ask_raises_permission_ask_required, etc.)
-    call raise_if_not_allowed with only resource_description, exactly as every pre-existing
-    call site outside the four file tools does; path/is_write must stay optional so those
-    keep working unchanged."""
+    """The two tests above call raise_if_not_allowed with only resource_description, exactly as
+    every pre-existing call site outside the four file tools does; path/is_write must stay
+    optional so those keep working unchanged."""
     with pytest.raises(PermissionAskRequired) as exc_info:
         raise_if_not_allowed("ask", resource_description="x")
     assert exc_info.value.path is None
@@ -871,12 +856,9 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
 
 
 def _redirect_system_tempdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Point `tempfile.mkdtemp()` (and so `create_tempdir_for_session()`) at pytest's
-    auto-cleaned `tmp_path` instead of the real system temp directory, so these tests don't
-    leak real, never-removed directories onto the machine every run -- `create_tempdir_for_session`
-    never removes its own directory unless `remove_on_exit` fires (an `atexit` handler, which
-    doesn't run mid-test-suite), so without this every call here would otherwise persist past
-    the test."""
+    """Point `tempfile.mkdtemp()` at pytest's auto-cleaned `tmp_path` instead of the real
+    system temp directory, so these tests don't leak real, never-removed directories onto the
+    machine every run."""
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
 
 
@@ -937,11 +919,7 @@ def test_create_tempdir_for_session_does_not_mutate_a_shared_allow_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DirRules documents its lists as immutable after construction, since a SessionConfig
-    template's DirRules can be shared (via model_copy()'s shallow copy) across several cloned
-    sessions -- create_tempdir_for_session honors that by replacing session_config.read_dirs
-    with a new DirRules rather than appending to the existing allow list in place, so granting
-    one session a scratch directory can't silently widen every session sharing the template's
-    DirRules."""
+    template's DirRules can be shared across several cloned sessions."""
     _redirect_system_tempdir(monkeypatch, tmp_path)
     shared_allow = [tmp_path / "template-allow"]
     shared_rules = DirRules(allow=shared_allow)

@@ -1,17 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`PosixLockfile`: the macOS `klorb.lockfile.Lockfile` implementation, using a non-blocking
-classic (PID-associated, not Open-File-Description) advisory record lock via
-`fcntl.fcntl(fd, fcntl.F_SETLK, ...)` -- macOS has no `F_OFD_SETLK` equivalent. `fcntl.F_SETLK`/
-`fcntl.F_GETLK` are standard POSIX commands Python's `fcntl` module exposes directly (unlike the
-Linux-only OFD variants `klorb.lockfile._linux` has to define by raw number), so no custom
-command constants are needed here -- only the `l_type` values, which `fcntl` likewise doesn't
-expose. Imported lazily by `klorb.lockfile.create_lockfile` only on `sys.platform == "darwin"`.
-
-Being process-associated rather than descriptor-associated is an accepted limitation for this
-lock's actual usage pattern: a single klorb process only ever holds one `session.lock` (its one
-live `Session`) at a time, so the two locking semantics are indistinguishable in practice -- see
-docs/plans/ready/plan-017-multiple-sessions-per-workspace.md's "Locking" section.
-"""
+"""`PosixLockfile`: the macOS `klorb.lockfile.Lockfile` implementation using a non-blocking
+classic advisory record lock."""
 
 import logging
 import os
@@ -23,18 +12,16 @@ logger = logging.getLogger(__name__)
 F_RDLCK = 0
 F_WRLCK = 1
 F_UNLCK = 2
-"""`l_type` values for a `struct flock` -- not exposed by Python's `fcntl` module, so defined
-here as the standard BSD/Darwin `<fcntl.h>` values (identical to Linux's)."""
+"""`l_type` values for a `struct flock`."""
 
 _FLOCK_STRUCT_FORMAT = "hhqqi"
 """`struct flock` on 64-bit macOS: `short l_type, short l_whence, off_t l_start, off_t l_len,
-pid_t l_pid` -- `off_t` is 8 bytes on every 64-bit Darwin target klorb runs on."""
+pid_t l_pid`."""
 
 
 class PosixLockfile:
     """macOS `Lockfile`: a non-blocking, whole-file exclusive classic `fcntl` record lock via
-    `fcntl.fcntl(fd, fcntl.F_SETLK, ...)`. See `klorb.lockfile.Lockfile` for the interface
-    contract."""
+    `fcntl.fcntl(fd, fcntl.F_SETLK, ...)`."""
 
     def __init__(self, path: Path) -> None:
         self._path = path

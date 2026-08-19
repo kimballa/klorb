@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`Chunk`: one indexable unit of workspace content -- a class body, a method, a markdown
-section, a fixed-size line window -- as produced by a `klorb.search_index.chunkers.base.Chunker`
-and stored by `klorb.search_index.store.SearchIndexStore`.
+"""`Chunk`: one indexable unit of workspace content.
 """
 
 import hashlib
@@ -39,9 +37,7 @@ class Chunk(BaseModel):
         start_line: int, end_line: int, text: str,
     ) -> "Chunk":
         """Build a `Chunk`, deriving `chunk_id` from `(catalog, source_path, kind, start_line,
-        end_line)` -- stable across reindexing runs, so re-chunking an unchanged span upserts the
-        same row rather than creating a duplicate -- and `token_count`/`content_hash` from
-        `text`."""
+        end_line)` and `token_count`/`content_hash` from `text`."""
         chunk_id = f"{catalog}:{source_path}:{kind}:{start_line}-{end_line}"
         content_hash = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
         return cls(

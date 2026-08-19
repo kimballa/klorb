@@ -125,8 +125,7 @@ def test_find_by_capability_prefers_a_user_directory_model_over_a_packaged_one(
     tmp_path: Path,
 ) -> None:
     """A user can deterministically override which model klorb picks for a capability by
-    dropping a `klorb-model` JSON file into `$KLORB_DATA_DIR/models/` — even though the
-    packaged directory is scanned first, the user tier outranks it for this lookup."""
+    dropping a `klorb-model` JSON file into `$KLORB_DATA_DIR/models/`."""
     packaged_dir = tmp_path / "packaged"
     packaged_dir.mkdir()
     (packaged_dir / "aaa-packaged.json").write_text(json.dumps({

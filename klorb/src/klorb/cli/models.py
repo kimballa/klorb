@@ -23,7 +23,7 @@ built by `_model_table_row`. `--costs` appends `IN $/MTOK`/`OUT $/MTOK` after th
 
 def build_models_parser() -> argparse.ArgumentParser:
     """Build the argument parser for `klorb models`'s own flags
-    (`--json`/`--brief`/`--costs`) — see `run_models_cli()`.
+    (`--json`/`--brief`/`--costs`).
     """
     parser = argparse.ArgumentParser(
         prog=f"klorb {MODELS_SUBCOMMAND}",
@@ -90,9 +90,9 @@ def _model_table_row(model: Model, pricing: ModelPricing | None, *, include_cost
 
 def _render_models_table(models: list[Model], costs: dict[str, ModelPricing | None] | None) -> str:
     """Render `models` as a column-aligned table with no vertical borders between columns and a
-    single horizontal rule under the header row (and nowhere else). `costs` (from `--costs`),
-    if given, appends an input/output $-per-MTok column pair; a model with no live pricing
-    available shows `-` in both.
+    single horizontal rule under the header row (and nowhere else). `costs`, if given, appends
+    an input/output $-per-MTok column pair; a model with no live pricing available shows `-` in
+    both.
     """
     headers = list(_MODELS_TABLE_HEADERS)
     if costs is not None:
@@ -124,9 +124,8 @@ def _render_models_table(models: list[Model], costs: dict[str, ModelPricing | No
 def _model_to_dict(model: Model, pricing: ModelPricing | None, *, include_costs: bool) -> dict[str, Any]:
     """Return `model`'s data as a plain JSON-serializable dict, in the same shape as its source
     `klorb-model` JSON file's data (minus the `schema` envelope, which describes the file, not
-    the model). When `include_costs` is set (`--json --costs`), adds a `costs` key: `None` if
-    no live pricing could be found for this model, otherwise its per-MTok input/output cost —
-    see `run_models_cli`.
+    the model). When `include_costs` is set, adds a `costs` key: `None` if no live pricing
+    could be found for this model, otherwise its per-MTok input/output cost.
     """
     data: dict[str, Any] = {
         "name": model.name(),
@@ -147,18 +146,14 @@ def _model_to_dict(model: Model, pricing: ModelPricing | None, *, include_costs:
 
 def run_models_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb models`) and print every model
-    `ModelRegistry` discovers (built-in and user-added, see docs/specs/model-framework.md) to
+    `ModelRegistry` discovers (built-in and user-added) to
     stdout, sorted by name: a column-aligned table by default, a JSON array of each model's
     data with `--json`, or just each model's OpenRouter name and no other fields with
-    `--brief` — one per line as plain text, or (combined with `--json`) as a JSON array of
-    name strings.
+    `--brief`.
 
     `--costs` looks up each model's live per-token pricing from OpenRouter
-    (`klorb.models.openrouter_pricing.fetch_openrouter_pricing_for_models`, throttled to
-    `MAX_PRICING_REQUESTS_PER_SECOND` requests/second) and folds it into whichever output
-    format was chosen — an extra column pair in the table, or a `"costs"` key in each `--json`
-    object. It's a no-op with `--brief`, which never fetches pricing since it never prints
-    anything but names. Always returns `0`.
+    and folds it into whichever output format was chosen. It's a no-op with `--brief`,
+    which never fetches pricing since it never prints anything but names. Always returns `0`.
     """
     parser = build_models_parser()
     args = parser.parse_args(argv)

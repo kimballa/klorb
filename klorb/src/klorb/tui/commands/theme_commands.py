@@ -1,7 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Command palette provider and modal for picking a Textual theme, mirroring
-`klorb.tui.commands.thinking_commands`'s command-plus-modal shape but sourcing its option list from
-`App.available_themes` instead of a fixed tuple.
+"""Command palette provider and modal for picking a Textual theme.
 """
 
 from typing import Protocol, cast
@@ -85,9 +83,7 @@ class ThemeSelectionScreen(ModalScreen[None]):
 
 class ThemeCommandProvider(Provider):
     """Offers a single `"Change theme (<current>)"` command via the command palette that opens
-    `ThemeSelectionScreen`. Supersedes Textual's own built-in "Theme" system command — see
-    `ReplApp.get_system_commands`, which drops that entry so there's exactly one theme-changing
-    command instead of two competing pickers.
+    `ThemeSelectionScreen`.
     """
 
     async def search(self, query: str) -> Hits:
@@ -101,14 +97,7 @@ class ThemeCommandProvider(Provider):
         yield DiscoveryHit(self._label(), self._show_theme_screen, text=SELECT_THEME_LABEL)
 
     def _label(self) -> str:
-        """`SELECT_THEME_LABEL` plus the currently-active theme's name in parentheses.
-
-        `canonical_text` (see `search`/`discover`'s `text=` argument) deliberately stays the
-        undecorated `SELECT_THEME_LABEL` root rather than this decorated label — a
-        palette-from-prompt recall (see `docs/specs/command-palette-from-prompt.md`) needs to
-        match this same command again later, and the parenthetical current-theme suffix changes
-        with `get_current_theme_name()`, so recording it verbatim wouldn't reliably do that.
-        """
+        """`SELECT_THEME_LABEL` plus the currently-active theme's name in parentheses."""
         current = cast(SupportsThemeSelection, self.app).get_current_theme_name()
         return f"{SELECT_THEME_LABEL} ({current})"
 

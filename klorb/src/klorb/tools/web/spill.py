@@ -1,10 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""WebFetch-specific spill-file naming, built on the shared session-scoped tmpdir mechanism in
-`klorb.tools.util.spill.SpillDir` — see that module for the directory lifecycle and
-permission-grant half of the mechanism this reuses. When a `WebFetch` response exceeds
-`tools.webFetch.spillBytes`, the body is written to a file inside this session-scoped tmpdir
-rather than returned inline; the model can then `ReadFile`/`Grep` the spilled file via the
-normal file tools.
+"""WebFetch-specific spill-file naming built on the session-scoped tmpdir mechanism in
+`klorb.tools.util.spill.SpillDir`.
 """
 
 import re

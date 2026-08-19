@@ -71,22 +71,17 @@ _PromptContentBlock = (
 _McpServerSpec = HttpMcpServer | SseMcpServer | McpServerStdio
 
 _NOTICE_EXT_NOTIFICATION = "klorb/notice"
-"""The `_klorb/notice` extension notification name, with the leading `_` stripped -- see
-`klorb.server.turn_bridge._RAISE_TOOL_CALL_LIMIT_EXT_METHOD`'s own docstring for why. Sent
+"""The `_klorb/notice` extension notification name, with the leading `_` stripped. Sent
 unconditionally (no capability gate), same as every other `_klorb/*` extension notification.
-Carries one hook firing's `HookOutput.log` -- see `Session.register_notice_handler` and
-docs/specs/hooks-and-events.md's "Debugging: `HookOutput.log`" section."""
+Carries one hook firing's `HookOutput.log`."""
 
 
 class KlorbAcpAgent(acp.Agent):
     """Implements the ACP `Agent` protocol on top of a single live `Session`.
 
     Owns at most one `Session` at a time: `new_session()`/`load_session()` each tear down
-    (`Session.close()`) and replace any prior one, the same `/clear` semantics the interactive
-    TUI already has -- see docs/specs/klorb-server.md's "Single top-level session" section. The
-    `ApiProvider`/`ModelRegistry` outlive any one `Session` and are reused across every
-    replacement, mirroring how [[terminal-repl]]'s `/clear` reuses `Session.provider`/`Session.
-    model_registry`.
+    (`Session.close()`) and replace any prior one. The `ApiProvider`/`ModelRegistry` outlive
+    any one `Session` and are reused across every replacement.
 
     The ACP `sessionId` handed back to the client from `new_session()`/`load_session()` is
     `self._session.id`.
@@ -108,8 +103,7 @@ class KlorbAcpAgent(acp.Agent):
         self._trust_manager = trust_manager if trust_manager is not None else TrustManager()
         self._config_flag_path = config_flag_path
         """The `--config` path (if any) `klorb server`'s own CLI was started with -- threaded
-        through to `load_process_config()` by `_apply_workspace_config()`, the same way
-        `klorb.tui.ReplApp` keeps its own `_config_flag_path` for the same purpose."""
+        through to `load_process_config()` by `_apply_workspace_config()`."""
         self._client: acp.Client | None = None
         self._client_capabilities: ClientCapabilities | None = None
         self._session: Session | None = None
@@ -119,8 +113,7 @@ class KlorbAcpAgent(acp.Agent):
     @property
     def session(self) -> Session | None:
         """The live `Session`, or `None` before the first `session/new` request -- exposed
-        read-only for a test harness to inspect (e.g. `session.messages`) without a separate
-        injection seam."""
+        read-only for a test harness to inspect without a separate injection seam."""
         return self._session
 
     def on_connect(self, conn: acp.Client) -> None:
@@ -172,7 +165,7 @@ class KlorbAcpAgent(acp.Agent):
     async def new_session(
         self, cwd: str, mcp_servers: list[_McpServerSpec], **kwargs: Any,
     ) -> acp.NewSessionResponse:
-        """Build a fresh `Session` for `cwd`, replacing any live one -- see class docstring.
+        """Build a fresh `Session` for `cwd`, replacing any live one.
         `mcp_servers` is accepted but never acted on: klorb has no MCP support."""
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         session_config = self._process_config.session.model_copy()
@@ -209,10 +202,8 @@ class KlorbAcpAgent(acp.Agent):
         """Send one `plan` `session/update` for the just-built session's chainlink issues, but
         only if a `.chainlink/issues.db` already exists for `workspace_path` -- never triggers
         `chainlink init`'s scaffolding just to report an empty plan. A no-op if chainlink isn't
-        available at all, or the fetch fails (`TurnBridge.fetch_plan_update` returns `None`).
-        Runs the fetch off the event loop (`asyncio.to_thread`) since chainlink shells out
-        synchronously -- see docs/specs/klorb-server.md's "Chainlink task-plan updates"
-        section."""
+        available at all, or the fetch fails. Runs the fetch off the event loop since chainlink
+        shells out synchronously."""
         if not (chainlink_available() and chainlink_db_exists(workspace_path)):
             return
         assert self._turn_bridge is not None
@@ -230,8 +221,7 @@ class KlorbAcpAgent(acp.Agent):
         """Dispatch one turn, then persist the session's resulting state (`Session.
         persist_state()` -- a no-op for an untrusted workspace, or if the session never
         successfully claimed a directory) whether the turn finished normally or was cancelled,
-        so a saved session stays current without requiring an explicit save request. See
-        docs/specs/session-persistence.md."""
+        so a saved session stays current without requiring an explicit save request."""
         self._validate_session(session_id)
         if self._turn_in_flight:
             raise acp.RequestError(-32000, "A prompt is already in progress for this session")
@@ -281,7 +271,7 @@ class KlorbAcpAgent(acp.Agent):
             cancel_event.set()
 
     def close(self) -> None:
-        """Close any live session -- called by `AcpServer.run()` once the client disconnects."""
+        """Close any live session."""
         if self._session is not None:
             logger.debug("Closing live ACP session %s on server shutdown", self._session.id)
             self._session.close()
@@ -318,9 +308,9 @@ class KlorbAcpAgent(acp.Agent):
         session.register_wake_handler(wake)
 
     async def _drain_and_submit_woken_turn(self, session_id: str) -> None:
-        """Handles a wake ping (see `_wire_session_wake_handler`): drains whatever an
+        """Handles a wake ping: drains whatever an
         idle-triggered event or `reset_session` just queued and resubmits it via `TurnBridge.
-        run_turn`, mirroring `prompt()`'s own dispatch and error handling."""
+        run_turn`."""
         if self._turn_in_flight or self._session is None or self._session.id != session_id:
             return
         text = self._session.drain_next_turn_text()
@@ -348,8 +338,8 @@ class KlorbAcpAgent(acp.Agent):
         self._session.persist_state()
 
     async def _send_notice(self, session_id: str, text: str) -> None:
-        """Send one `_klorb/notice` extension notification, best-effort -- a failure (e.g. the
-        client already disconnected) is logged at `debug` rather than raised, since nothing is
+        """Send one `_klorb/notice` extension notification, best-effort -- a failure
+        is logged at `debug` rather than raised, since nothing is
         awaiting this fire-and-forget call's outcome."""
         try:
             await self._require_client().ext_notification(
@@ -380,10 +370,7 @@ class KlorbAcpAgent(acp.Agent):
 
     def _apply_workspace_config(self, workspace: Workspace) -> None:
         """Recompute the layered config now that `workspace`'s trust/registration state may
-        have just changed, and apply it in place to the live session/process config --
-        mirrors `klorb.tui.mixins.workspace_bootstrap.WorkspaceBootstrapMixin.
-        _apply_workspace_config`, minus its TUI-only history-notice/header side effects. See
-        `_klorb/trustWorkspace` in docs/specs/klorb-server.md."""
+        have just changed, and apply it in place to the live session/process config."""
         assert self._session is not None
         reloaded = load_process_config(
             config_flag_path=self._config_flag_path, cwd=workspace.path, workspace=workspace)
@@ -449,8 +436,6 @@ class KlorbAcpAgent(acp.Agent):
 
     def _ext_set_session_title(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply a user-driven session rename.
-
-        See docs/specs/klorb-server.md.
         """
         self._require_session_id(params)
         assert self._session is not None
@@ -513,8 +498,7 @@ class KlorbAcpAgent(acp.Agent):
     def _find_subagent(self, subagent_id: str) -> tuple[Session, SubagentHandle] | None:
         """Look up `subagent_id` (a non-root `Session.id`) anywhere in the live tree, returning
         its `Session` and the `SubagentHandle` its creator tracks it under, or `None` if no node
-        in the tree (other than the root, which has no handle) matches -- used by both
-        `_ext_subagent_transcript` and `_ext_subagent_cancel`."""
+        in the tree (other than the root, which has no handle) matches."""
         assert self._session is not None
         for node in walk_session_tree(self._session):
             if node.session.id == subagent_id and node.handle is not None:
@@ -602,14 +586,12 @@ class KlorbAcpAgent(acp.Agent):
         self, cwd: str, mcp_servers: list[_McpServerSpec], session_id: str, **kwargs: Any,
     ) -> LoadSessionResponse | None:
         """Replace the live session (if any) with the one recorded under `session_id` in
-        `cwd`'s workspace `sessions.json`, mirroring `new_session()`'s "replace, don't add"
-        semantics and reply shape. Raises `invalid_params` -- rather than restoring nothing and
-        silently starting fresh -- if `session_id` isn't in the index at all, or its
+        `cwd`'s workspace `sessions.json`. Raises `invalid_params` -- rather than restoring
+        nothing and silently starting fresh -- if `session_id` isn't in the index at all, or its
         `sessions/<subdir>/` directory is currently locked by another live process or its
         `session.json` is missing/corrupt (`try_restore_session` returns `None`): per this
         method's design, it's the *client*'s job to fall back to `session/new` on a failed load,
-        not this server's (see docs/plans/ready/plan-017-multiple-sessions-per-workspace.md's
-        "ACP server changes" section). `mcp_servers` is accepted but never acted on, same as
+        not this server's. `mcp_servers` is accepted but never acted on, same as
         `new_session`."""
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         index = read_sessions_index(workspace)
@@ -677,8 +659,7 @@ class KlorbAcpAgent(acp.Agent):
     # concrete, type-checked implementation) requires overriding every member, so mypy treats
     # each unimplemented one as abstract. None of these are ever dispatched by a compliant
     # client: `initialize()` never advertises auth methods/model selection (`session/set_model`
-    # stays unimplemented -- see `session_config_json`'s docstring for why model selection rides
-    # `_klorb/setSessionConfig` instead)/fork/resume -- rejecting explicitly here, rather than an
+    # stays unimplemented)/fork/resume -- rejecting explicitly here, rather than an
     # inherited no-op returning `None`, is what a client would see if it tried anyway.
 
     async def set_session_model(
@@ -728,7 +709,7 @@ class KlorbAcpAgent(acp.Agent):
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         """Unrecognized extension notifications are ignored, per the ACP extensibility rules
-        klorb follows -- see the plan overview's "Extensibility rules" section."""
+        klorb follows."""
 
 
 def _extract_prompt_content(
@@ -737,13 +718,10 @@ def _extract_prompt_content(
 ) -> tuple[str, list[MessageFragment]]:
     """Split `blocks` into the concatenated text of every `text` block and one `MessageFragment`
     per `image` block, resizing/transcoding each image for `active_model` via `klorb.images.
-    prepare.prepare_image_for_model` using `image_pipeline_config` (the calling `Session`'s own
-    `image_pipeline_config` property -- the same settings `resolve_at_mentions()` uses for an
-    @mentioned image, see docs/specs/at-mention-file-inlining.md). Raises a JSON-RPC
+    prepare.prepare_image_for_model` using `image_pipeline_config`. Raises a JSON-RPC
     `invalid params` error on the first `image` block if `active_model` is `None` or its
     `capabilities()["vision"]` is falsy, or if `prepare_image_for_model` raises
-    `ImageTooLargeError`; audio/resource blocks keep raising `invalid_params` unconditionally --
-    unchanged, out of scope here. See docs/specs/vision-image-input.md.
+    `ImageTooLargeError`; audio/resource blocks keep raising `invalid_params` unconditionally.
     """
     texts: list[str] = []
     image_fragments: list[MessageFragment] = []

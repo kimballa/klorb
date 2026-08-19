@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""A `Model` implementation driven entirely by a parsed `klorb-model` JSON document (see
-docs/specs/model-framework.md), so a new model is registered by dropping in a JSON file
-rather than writing a dedicated `Model` subclass — see
-docs/adrs/00099-back-models-with-json-resource-files-not-python-classes.md."""
+"""A `Model` implementation driven entirely by a parsed `klorb-model` JSON document, so a new
+model is registered by dropping in a JSON file rather than writing a dedicated `Model`
+subclass."""
 
 from typing import Any
 
@@ -31,11 +30,8 @@ class _ConfiguredModelData(BaseModel):
 
 
 class ConfiguredModel(Model):
-    """Describes a model entirely from JSON data (see `_ConfiguredModelData`) rather than
-    from a hand-written `Model` subclass. `klorb.models.registry.ModelRegistry` constructs one
-    per `klorb-model` JSON file it discovers, passing the file's already-parsed,
-    envelope-stripped data plus a human-readable `source` (the file's path or packaged
-    resource name) used only for error messages and debugging.
+    """Describes a model entirely from JSON data rather than
+    from a hand-written `Model` subclass.
     """
 
     def __init__(self, data: dict[str, Any], *, source: str) -> None:

@@ -1,8 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`MessageSubagentTool`: sends a follow-up message to an already-finished subagent, resuming
-its turn asynchronously on a background thread. See docs/specs/subagents.md's
-"MessageSubagent" section.
-"""
+"""Sends a follow-up message to an already-finished subagent, resuming its turn asynchronously."""
 
 from typing import Any
 
@@ -21,9 +18,7 @@ class MessageSubagentParameters(BaseModel):
 
 
 class MessageSubagentTool(Tool):
-    """Resumes a finished subagent's conversation: looks up its `SubagentHandle` on the calling
-    session's own `subagent_tracker`, requires it to be in the `"finished"` state, then runs
-    the follow-up turn on a background thread like `CreateSubagentTool` ran the first one."""
+    """Resumes a finished subagent's conversation by sending it a follow-up message."""
 
     def name(self) -> str:
         return "MessageSubagent"

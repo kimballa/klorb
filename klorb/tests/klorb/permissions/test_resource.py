@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.resource: the PermissionResource hierarchy (PathResource/
-CommandResource/SkillResource/DomainResource/MemoryResource/StructuralResource) that replaces
-the flat path/command/skill/url optional-field bag on PermissionAskItem/PermissionAskContext. See
-docs/plans/archive/014-permission-resource-hierarchy.md.
+CommandResource/SkillResource/DomainResource/MemoryResource/StructuralResource).
 """
 
 from pathlib import Path
@@ -271,9 +269,7 @@ def test_structural_resource_grant_preview_is_none(tmp_path: Path) -> None:
 
 
 def test_structural_resource_apply_grant_is_a_noop(tmp_path: Path) -> None:
-    """A structural item has no persistable rule -- `apply_grant` must not raise or mutate
-    anything, matching `Session._retry_after_multi_permission_decisions`'s silent no-op
-    fallthrough for a structural item's persistent-scope decision."""
+    """A structural item has no persistable rule."""
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     process_config = ProcessConfig()
     before_command_rules = session_config.command_rules

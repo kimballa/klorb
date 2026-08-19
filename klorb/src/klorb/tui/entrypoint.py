@@ -16,22 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def _handle_repl_crash(app: ReplApp, crash_tee: CrashLogTee) -> None:
-    """Called by `run_repl()` once `App.run()` returns with `app.return_code == 1` —
-    `App._handle_exception` sets that on an unhandled exception, and never raises it back out
-    of `run()` itself (Textual prints the traceback and exits the app instead).
-
-    Prints a pointer to the crash log file `crash_tee` captured (see `CrashLogTee`), or a
-    fallback line if the file couldn't be opened. Then, if the crashed session's workspace is
-    trusted, also persists its state (`Session.persist_state()` -- a no-op if untrusted, per
-    that method's own gate) since there's no modal to confirm through once the app has already
-    crashed and the conversation would otherwise just be lost. Uses `app._session`, the app's
-    live session at crash time, rather than whatever `Session` `run_repl()` was originally
-    called with, since `/clear` (and workspace-trust changes) can replace or mutate it over the
-    app's lifetime. Deliberately calls `persist_state()`, not `close()`: the process is about to
-    exit uncleanly, so `session.lock` is left held rather than released -- see
-    `KeyActionsMixin._collect_hang_diagnostics`, which makes the same choice for the force-exit
-    path.
-    """
+    """Handle a REPL crash by printing the crash log location and saving session state."""
     log_path = crash_tee.opened_log_path()
     if log_path is not None:
         print(f"klorb crashed; full stack trace written to {log_path}", file=sys.stderr)
@@ -60,20 +45,7 @@ def run_repl(
     skip_session_restore: bool = False,
     quit_on_success: bool = False,
 ) -> None:
-    """Launch the interactive klorb REPL, optionally submitting `initial_message` first.
-
-    On an unhandled exception, Textual prints a full traceback to stderr and exits the app
-    rather than raising out of `App.run()` (see `App._handle_exception`), so that traceback is
-    also captured to a `/tmp` crash log file — via `CrashLogTee` standing in for `App.
-    error_console`'s output stream — before `_handle_repl_crash` reports the crash (and saves
-    session state, where possible) once `run()` returns.
-
-    If `quit_on_success` made `ReplApp` exit on its own (`PromptSubmissionMixin._finish_turn`),
-    `app._final_turn_response` holds that turn's response text; once `App.run()` has returned
-    and the TUI has fully torn down, it's printed to stdout via a plain `print()` (not the
-    logger) so the agent's final answer is still visible on the terminal -- otherwise the
-    process would just vanish with no trace of what it actually said.
-    """
+    """Launch the interactive klorb REPL, optionally submitting `initial_message` first."""
     workspace_root = session.config.workspace.path if session is not None else Path.cwd()
     crash_tee = CrashLogTee(sys.stderr, crash_log_path(workspace_root))
     app = ReplApp(
@@ -94,7 +66,7 @@ def run_repl(
     finally:
         # Belt-and-suspenders alongside `ReplApp.on_unmount`: make sure the liveness watchdog
         # can't fire during post-run crash handling / save once the event loop has stopped
-        # snoozing it (see docs/specs/interrupt-and-liveness-watchdog.md).
+        # snoozing it.
         app._watchdog.stop()
         crash_tee.close()
     if app._final_turn_response is not None:

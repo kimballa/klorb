@@ -21,33 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 class EditMemoryTool(Tool):
-    """Replaces a block of a memory file's current content with `new_text` — delegating that
-    mechanic to `self.edit_file_core` (a `klorb.tools.util.EditFileCore`), the same one
-    `EditFileTool`/`EditScratchpadTool` use. See your system prompt's guidance on
-    `EditFile`/`EditScratchpad` for the `old_text`/`old_text_start`/`old_text_end` conventions
-    and "Ambiguous match" handling -- identical here.
+    """Replaces a block of a memory file's current content with `new_text`.
 
-    A memory's first line is its topic (see docs/specs/memories.md's file-format rule) and must
-    never end up blank. Since `EditFileCore.apply()` resolves the match and writes the file in
-    one step, there's no way to predict the resulting first line without either duplicating its
-    matching algorithm or checking after the fact -- this delegates as normal, then re-reads the
-    file's first line and, if it's now blank, either rewrites the file's pre-edit content back
-    (an existing memory) or deletes it (one this call itself just auto-created, per the next
-    paragraph -- there's no pre-edit content to restore), and raises `ValueError`, rather than
-    leaving a memory with no topic on disk.
+    A memory's first line is its topic and must never end up blank. A nonexistent memory
+    doesn't need a separate `CreateMemory` call first: `old_text=""` auto-creates it. Any
+    other shape against a nonexistent memory raises `FileNotFoundError`.
 
-    A nonexistent memory doesn't need a separate `CreateMemory` call first: `old_text=""`
-    auto-creates it, same as `EditFileTool` -- see `EditFileCore.apply()`. Any other shape
-    against a nonexistent memory raises `FileNotFoundError` naming `CreateMemory` as the tool to
-    use instead.
-
-    `namespace`/`filename` are validated (see `klorb.tools.memory.common.
-    validate_memory_filename`) and checked against the untrusted-workspace gate before any disk
-    I/O; a `workspace`-namespace edit is additionally gated by `tools.memory.writePermission` --
-    a `global`-namespace edit is always allowed.
-
-    Editing `MEMORY.md` to 45+ lines attaches a `warning` to the result urging the model to
-    compact it down (see `klorb.tools.memory.common.memory_toc_overflow_warning`).
+    A `workspace`-namespace edit is gated by `tools.memory.writePermission`; a `global`-
+    namespace edit is always allowed. Editing `MEMORY.md` to 45+ lines attaches a `warning`
+    to the result urging compaction.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -150,9 +132,7 @@ class EditMemoryTool(Tool):
         return result
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        """`"Edit memory: namespace/foo.md (+A/-R)"`, where the added/removed line counts come
-        from `result`'s `replaced_lines` and the call's `new_text` -- only available on success,
-        since a failed match never resolves a location to count lines removed from."""
+        """Return a one-line summary with added/removed line counts on success."""
         namespace = args.get("namespace", "?")
         filename = args.get("filename", "?")
         diff = ""

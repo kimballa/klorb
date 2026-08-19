@@ -1,8 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Inline `@`-mention fuzzy file finder rendered above the prompt input, driven by an active
 `@mention` at the cursor rather than a leading prefix like `klorb.tui.widgets.palette`'s `>`
-command palette. See docs/specs/at-mention-file-inlining.md's "Interactive fuzzy finder"
-section.
+command palette. See docs/specs/at-mention-file-inlining.md.
 """
 
 from dataclasses import dataclass
@@ -19,41 +18,30 @@ from klorb.tui.constants import PROMPT_INPUT_ID
 
 FILE_FINDER_ID = "file-finder"
 MAX_FILE_FINDER_MATCHES = 25
-"""How many ranked matches the popup keeps, scrollable within its fixed on-screen height (see
-`FileFinderPanel.DEFAULT_CSS`'s `max-height`) -- well beyond what fits on screen at once, so a
-broad query still surfaces distant matches instead of hiding them outright."""
+"""How many ranked matches the popup keeps, scrollable within its fixed on-screen height."""
 
 _DIRECTORY_SCORE_BUMP = 0.1
-"""Added to a directory candidate's fuzzy-match score (`textual.fuzzy.Matcher.match` returns
-0..1) before ranking, so a directory whose name matches about as well as a file surfaces above
-it -- letting the user drill into a subtree via `FileFinderPanel`'s directory rows instead of
-only ever seeing leaf files."""
+"""Added to a directory candidate's fuzzy-match score before ranking, so a directory whose
+name matches about as well as a file surfaces above it."""
 
 _DIRECTORY_DEPTH_DECAY = 0.85
-"""Multiplies a directory candidate's score once per `/` in its path (e.g. a candidate three
-levels deep is scaled by `0.85 ** 3`), so among similarly-scored directories the one nearest
-the workspace root outranks one nested many levels deep (e.g. a top-level `docs` beats
-`.claude/skills/some-skill/references`). Multiplicative rather than a flat subtraction because
-`Matcher.match`'s real output isn't normalized to a fixed range (an exact substring match can
-score well above 1 for a multi-character query) -- a flat penalty sized for one query length
-would be negligible for another."""
+"""Multiplies a directory candidate's score once per `/` in its path, so among
+similarly-scored directories the one nearest the workspace root outranks one nested many
+levels deep. Multiplicative rather than a flat subtraction because `Matcher.match`'s real
+output isn't normalized to a fixed range."""
 
 _ROW_WIDTH_PADDING = 4
 """Estimated horizontal space `FileFinderPanel`'s `OptionList` chrome (a scrollbar, plus each
-`Option`'s own internal padding) consumes around a row's rendered text -- subtracted from the
-panel's own width before splitting a row's path into a truncatable dir part and fixed file
-part (see `split_finder_row`), mirroring `InteractionsMixin`'s
-`_COMMAND_PREVIEW_WIDTH_PADDING`."""
+`Option`'s own internal padding) consumes around a row's rendered text."""
 _MIN_ROW_WIDTH = 20
-"""Floor for the width estimate above, so a very narrow terminal still gets a usable (if
-aggressively truncated) row instead of a degenerate near-zero width."""
+"""Floor for the width estimate above, so a very narrow terminal still gets a usable row
+instead of a degenerate near-zero width."""
 
 
 @dataclass(frozen=True)
 class MentionQuery:
     """Where the currently active `@mention` starts on the prompt's current line (the column
-    of `@` itself) and what's been typed after it up to the cursor -- the finder's search
-    query."""
+    of `@` itself) and what's been typed after it up to the cursor."""
 
     start_column: int
     query: str
@@ -62,11 +50,7 @@ class MentionQuery:
 def detect_mention_query(line: str, cursor_column: int) -> MentionQuery | None:
     """Find the `@mention` (if any) `cursor_column` sits inside of on `line`: scans backward
     for the nearest `@` not separated from it by whitespace, itself preceded by the start of
-    the line or whitespace (so `user@example.com` mid-word doesn't trigger). Mirrors
-    `klorb.session.mixins.mentions._AT_MENTION_RE`'s unquoted-mention boundary rule --
-    restricting the scan to one line is equivalent, since a newline satisfies that regex's own
-    `\\s` boundary check the same way a line start does here, and neither branch of the regex
-    can match text containing a newline.
+    the line or whitespace.
     """
     for i in range(cursor_column - 1, -1, -1):
         ch = line[i]
@@ -82,9 +66,8 @@ def detect_mention_query(line: str, cursor_column: int) -> MentionQuery | None:
 @dataclass(frozen=True)
 class FinderMatch:
     """One row the fuzzy finder can show: a workspace-relative path plus whether it names a
-    directory rather than a file. A file row is a leaf mention target (see
-    `build_mention_insertion`); a directory row instead narrows the active query into that
-    subtree when selected (`PromptInput.select_finder_match`), since a bare directory isn't a
+    directory rather than a file. A file row is a leaf mention target; a directory row instead
+    narrows the active query into that subtree when selected, since a bare directory isn't a
     valid `@mention` target."""
 
     path: str
@@ -92,9 +75,7 @@ class FinderMatch:
 
 
 def _ancestor_directories(paths: Sequence[str]) -> set[str]:
-    """Every directory (as a POSIX-style, workspace-relative string) that contains, directly or
-    transitively, one of `paths` -- the finder's directory candidates, since `paths` itself only
-    ever lists files (`WorkspaceFileIndex` never indexes directories)."""
+    """Every directory that contains, directly or transitively, one of `paths`."""
     directories: set[str] = set()
     for path in paths:
         parts = path.split("/")[:-1]
@@ -105,10 +86,8 @@ def _ancestor_directories(paths: Sequence[str]) -> set[str]:
 
 def _split_query_directory(query: str) -> tuple[str, str]:
     """Split `query` at its last `/` into a literal directory prefix (including the trailing
-    `/`, or `""` if `query` has no `/`) and the remaining fuzzy-match text -- e.g. `"klorb/sr"`
-    splits into `("klorb/", "sr")`, and a query fresh off selecting a directory match (which
-    always ends in `/`, see `PromptInput.select_finder_match`) splits into a prefix and an
-    empty remainder."""
+    `/`, or `""` if `query` has no `/`) and the remaining fuzzy-match text. A query fresh off
+    selecting a directory match splits into a prefix and an empty remainder."""
     idx = query.rfind("/")
     if idx == -1:
         return "", query
@@ -118,15 +97,11 @@ def _split_query_directory(query: str) -> tuple[str, str]:
 def _breadth_first_matches(
     candidates: set[str], directories: set[str], dir_prefix: str, limit: int,
 ) -> list[FinderMatch]:
-    """Order `candidates` (a mix of files and directories, all real descendants of `dir_prefix`)
-    with the immediate contents of `dir_prefix` first -- its own subdirectories, then its own
-    files, all of them regardless of `limit` -- followed by everything nested deeper (again
-    subdirectories before files, then shallower before deeper, then alphabetically), which fills
-    in only up to `limit` total. Used when there's no fuzzy-match text to rank by, so browsing a
-    directory (or the workspace root, for which `dir_prefix` is `""`) always shows everything
-    sitting directly in it instead of letting a large subtree's grandchildren -- which a plain
-    depth-then-alphabetical sort could rank ahead of a sibling file, since nothing before this
-    capped `limit` at the boundary between the two groups -- crowd it out of the truncated list.
+    """Order `candidates` with the immediate contents of `dir_prefix` first, followed by
+    everything nested deeper, which fills in only up to `limit` total. Used when there's no
+    fuzzy-match text to rank by, so browsing a directory always shows everything sitting
+    directly in it instead of letting a large subtree's grandchildren crowd it out of the
+    truncated list.
     """
     def relative_depth(path: str) -> int:
         return path[len(dir_prefix):].count("/")
@@ -145,17 +120,12 @@ def filter_workspace_files(
     paths: Sequence[str], query: str, *, limit: int = MAX_FILE_FINDER_MATCHES,
 ) -> list[FinderMatch]:
     """Return up to `limit` files and ancestor directories from `paths` that match `query`.
-    `query` splits at its last `/` (`_split_query_directory`) into a literal directory prefix
-    and a remaining fuzzy-match fragment: candidates are first narrowed to real descendants of
-    that prefix (a plain string-prefix check, not fuzzy), so a query built by selecting a
-    directory match -- which always ends in `/` -- actually scopes to that subtree instead of
-    fuzzy-matching the directory's name against every workspace path (which could resurface an
-    unrelated path that merely happens to contain the same text, e.g. `.klorb/` for a `klorb/`
-    prefix). Within that scope, an empty fragment (nothing to rank) falls back to
-    `_breadth_first_matches`; otherwise candidates rank by descending `textual.fuzzy.Matcher`
-    score of the fragment against each candidate's path *relative to the prefix* (directories
-    get `_DIRECTORY_SCORE_BUMP` added, then `_DIRECTORY_DEPTH_DECAY` applied per path segment).
-    Mirrors `klorb.tui.commands.model_commands.filter_model_names`.
+    `query` splits at its last `/` into a literal directory prefix and a remaining fuzzy-match
+    fragment: candidates are first narrowed to real descendants of that prefix, so a query built
+    by selecting a directory match actually scopes to that subtree instead of fuzzy-matching the
+    directory's name against every workspace path. Within that scope, an empty fragment falls back
+    to `_breadth_first_matches`; otherwise candidates rank by descending `textual.fuzzy.Matcher`
+    score of the fragment against each candidate's path *relative to the prefix*.
     """
     directories = _ancestor_directories(paths)
     universe = set(paths) | directories
@@ -181,7 +151,7 @@ def filter_workspace_files(
 def escape_mention_path(rel_path: str) -> str:
     r"""Escape `rel_path` for insertion right after an `@` in the prompt: backslash first (so
     the escapes this introduces aren't re-escaped by the later replacements), then double
-    quotes, then spaces -- e.g. `foo bar.txt` -> `foo\ bar.txt`. The exact inverse of
+    quotes, then spaces. The exact inverse of
     `klorb.session.mixins.mentions.unescape_mention_filename`.
     """
     return rel_path.replace("\\", "\\\\").replace('"', '\\"').replace(" ", "\\ ")
@@ -189,7 +159,7 @@ def escape_mention_path(rel_path: str) -> str:
 
 def _escape_quoted_mention_path(rel_path: str) -> str:
     r"""Escape `rel_path` for insertion inside an `@"..."` quoted mention: backslash first, then
-    double quotes -- unlike `escape_mention_path`, spaces need no escaping inside the quotes."""
+    double quotes."""
     return rel_path.replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -216,9 +186,8 @@ def split_finder_row(rel_path: str, available_width: int) -> tuple[str, str]:
     visible file part (with its own leading `/` whenever a directory is present), so a deeply
     nested path reads as `".../path/to/file.txt"` instead of overflowing `available_width`.
     Truncation (when the full path doesn't fit) drops characters off the *front* of the
-    directory part and prepends `"..."`, keeping the segment immediately before the file part --
-    the most differentiating context when several matches share a long, generic leading prefix
-    (e.g. several rows all under the same top-level directory); `available_width <= 0` means the
+    directory part and prepends `"..."`, keeping the segment immediately before the file part;
+    `available_width <= 0` means the
     width is unknown and no truncation is applied.
     """
     idx = rel_path.rfind("/")
@@ -250,7 +219,7 @@ def _row_content(match: FinderMatch, available_width: int) -> Content:
 
 
 class FinderOption(Option):
-    """Base class for `OptionList` rows used by `FinderPanel` subclasses. Carries the match
+    """Base class for `OptionList` rows. Carries the match
     datum (a `FinderMatch`, `SkillMatch`, or any other typed object) so the panel can recover
     it from a highlighted or clicked row."""
 

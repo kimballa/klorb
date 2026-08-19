@@ -1,9 +1,9 @@
 # © Copyright 2026 Aaron Kimball
-"""Shared recursive, permission-aware directory walk used by `GrepTool` and `FindFileTool`.
+"""Recursive, permission-aware directory walk.
 
-Both tools need to walk a whole directory tree rather than list a single level (unlike
-`klorb.tools.list_dir.ListDirTool`), so the permission-aware resolution logic that decides which
-subdirectories a walk may descend into lives here once rather than being duplicated between them.
+Both tools need to walk a whole directory tree rather than list a single level, so the
+permission-aware resolution logic that decides which subdirectories a walk may descend into
+lives here once rather than being duplicated between them.
 """
 
 import logging
@@ -23,8 +23,7 @@ GIT_DIR_NAME = ".git"
 def _is_descendable(context: ToolSetupContext, subdir: Path) -> bool:
     """Whether `subdir` (an already-listed child directory) may be recursed into: its own
     `resolve_and_evaluate_read()` verdict must be `"allow"`. Anything else — `"deny"`, `"ask"`,
-    or a `PermissionError` (e.g. a symlink resolving outside the workspace root) — makes it
-    non-descendable, silently, rather than propagating an exception out of the walk.
+    or a `PermissionError` — makes it non-descendable, silently.
     """
     try:
         _, verdict = resolve_and_evaluate_read(context, str(subdir))
@@ -60,32 +59,26 @@ def walk_readable_tree(
     unsearched. When `use_gitignore` is false, no filtering happens at all: every file and
     directory is in `file_names`/`subdir_names` and both gitignored lists are always empty.
     `.gitignore` files are read from the workspace root down through every directory walked, with
-    a nested file overriding those above it (see `klorb.tools.util.gitignore.GitignoreFilter`).
-    See docs/specs/gitignore-aware-tree-walk.md and
-    docs/adrs/00131-gitignore-walk-surfaces-ignored-files-instead-of-deciding-hidden.md.
+    a nested file overriding those above it.
+    See docs/specs/gitignore-aware-tree-walk.md.
 
-    `dirname` is resolved and checked exactly like `ListDirTool`
-    (`klorb.permissions.workspace.resolve_and_evaluate_read`), so a denied or ask-required root
+    `dirname` is resolved and checked exactly like `ListDirTool`, so a denied or ask-required root
     raises `PermissionError`/`PermissionAskRequired` just like a single-directory tool call. Once
     inside the tree, though, each subdirectory encountered is independently re-checked before
     being descended into: one restricted subtree is pruned — excluded from `subdir_names` and
     never yielded itself — rather than aborting the whole walk or raising, since one directory
     somewhere under a large tree being denied or ask-gated shouldn't stop a bulk search from
-    covering the rest of it. See
-    docs/adrs/00049-prune-non-allow-subdirs-during-recursive-tree-walk.md.
+    covering the rest of it.
 
     A subdirectory that is itself a symlink is also excluded from `subdir_names` and never
-    descended into, regardless of its permission verdict — mirroring `os.walk`'s
-    `followlinks=False` default — so a symlink cycle can't recurse forever. See
-    docs/adrs/00050-recursive-tree-walk-does-not-follow-symlinked-dirs.md.
+    descended into, regardless of its permission verdict, so a symlink cycle can't recurse forever.
 
     Every subdirectory named `.git` encountered anywhere below the walk's root is skipped
     unconditionally: it is never listed in `subdir_names`, never yielded, and never counted
     toward `gitignored_file_names` or a "hidden matches" note, regardless of `use_gitignore` or
     `readDirs` permissions. This is a hard-coded exclusion, not a filtering decision either tool
     surfaces to the agent. Only the walk's own root is exempt — a caller that explicitly names a
-    `.git` directory (or a path beneath one) as `dirname` searches it normally. See
-    docs/adrs/00141-hard-code-skip-dot-git-dirs-in-tree-walk.md.
+    `.git` directory (or a path beneath one) as `dirname` searches it normally.
     """
     root_path, verdict = resolve_and_evaluate_read(context, dirname)
     raise_if_not_allowed(
@@ -113,9 +106,8 @@ def _walk(
 ) -> Iterator[tuple[Path, list[str], list[str], list[str], list[str]]]:
     """Recursion helper for `walk_readable_tree`. `parent_ignored` is `True` once the walk is
     somewhere inside a gitignored directory: everything below an excluded directory is itself
-    excluded (git can't re-include a file whose parent directory is excluded), so within such a
-    subtree every file is reported as gitignored without consulting `gitignore` again — which is
-    also why an ignored subtree is descended with `gitignore=None`.
+    excluded, so within such a subtree every file is reported as gitignored without consulting
+    `gitignore` again — which is also why an ignored subtree is descended with `gitignore=None`.
     """
     subdirs: list[Path] = []
     files: list[str] = []

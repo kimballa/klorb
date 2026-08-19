@@ -1,19 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""`SessionBase`: attribute-only declarations shared by every `Session` mixin.
-
-`Session` itself (`klorb.session.__init__`) is composed from several mixins, each holding one
-cohesive slice of its methods, verbatim -- `self.foo(...)` resolves at runtime via MRO
-regardless of which mixin `foo` physically lives in, so no call site needs to change. But
-this repo's `make typecheck` runs mypy with `--disallow-untyped-calls` and
-`--disallow-untyped-globals`, so a mixin method referencing `self._some_attr` (set by
-`SessionCoreMixin.__init__`, which lives in a different file) needs `_some_attr` visible on
-`self`'s declared type from that mixin's own point of view -- mypy doesn't know that whichever
-concrete class eventually mixes this one in will also mix in the one that sets it.
-`SessionBase` is that shared point of view: every mixin declares `class FooMixin(SessionBase):`,
-and `Session(FooMixin, ..., SessionBase)` is the only class with a real `__init__` body. This
-class carries no behavior of its own. See `klorb.tui._base.ReplAppBase` for the precedent this
-mirrors.
-"""
+"""`SessionBase`: attribute-only declarations."""
 
 import threading
 from collections.abc import Callable
@@ -48,29 +34,22 @@ from klorb.tools.skill.model import Skill
 
 if TYPE_CHECKING:
     # isort: off
-    # `ToolRegistry` (via `ToolSetupContext`) depends on `ProcessConfig`, which itself
-    # depends on `SessionConfig` from `klorb.session.config` — importing it for real here
-    # would be circular. `Session` only stores and calls methods on a `ToolRegistry` it's
-    # handed, so a type-checking-only import is enough (see
-    # docs/adrs/00022-tool-setup-context-carries-process-and-session-config.md).
+    # `ToolRegistry` depends on `ProcessConfig`, which itself depends on `SessionConfig`
+    # from `klorb.session.config`.
     from klorb.tools.registry import ToolRegistry
     # `ProcessConfig` depends on `SessionConfig`/`ThinkingEffort`/`THINKING_EFFORT_TOKEN_BUDGETS`
-    # from `klorb.session`, so importing it for real here would be circular too. `Session`
-    # stores (and reads a couple of fields off) a `ProcessConfig` it's handed, but never
-    # constructs one itself, so a type-checking-only import is enough, same as `ToolRegistry`
-    # above.
+    # from `klorb.session`, so importing it for real here would be circular too.
     from klorb.process_config import ProcessConfig
     from klorb.tools.util.read_file_core import ReadFileCore
-    # `klorb.session` (this package's own `__init__.py`) assembles `Session` from this mixin,
-    # so importing it for real here would be circular; needed only to type `parent` below,
-    # since a subagent's `parent` is another `Session`.
+    # `klorb.session` assembles `Session` from this mixin, so importing it for real here
+    # would be circular; needed only to type `parent` below, since a subagent's `parent` is
+    # another `Session`.
     from klorb.session import Session
-    # `klorb.agents.runtime` imports `klorb.session.mixins.turns` (for `wrap_system_interjection`),
-    # which itself is part of assembling `Session` -- a real import here would be circular.
+    # `klorb.agents.runtime` imports `klorb.session.mixins.turns`, which itself is part of
+    # assembling `Session`.
     from klorb.agents.runtime import SubagentTracker
-    # `klorb.hooks.dispatcher` (which `_dispatch_hook` imports for real, deferred, where it's
-    # actually used) depends on `klorb.session.config`, so a real import here would be circular;
-    # needed only to type `_dispatch_hook`'s return value.
+    # `klorb.hooks.dispatcher` depends on `klorb.session.config`, so a real import here
+    # would be circular; needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.hook_api import HookOutput
     # isort: on
 
@@ -78,10 +57,7 @@ if TYPE_CHECKING:
 class SessionBase:
     """Attribute and cross-mixin method declarations for every field/method `Session` and its
     mixins reference on `self` from outside the file that actually defines it, so each mixin
-    file type-checks on its own despite referencing state or behavior a different mixin (or
-    `Session` itself) sets up. See the module docstring for why this class exists. Method
-    stubs here are never called -- every one is overridden by the mixin that actually owns it
-    once mixed into the concrete `Session`.
+    file type-checks on its own despite referencing state or behavior a different mixin sets up.
     """
 
     config: SessionConfig

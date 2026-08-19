@@ -127,8 +127,7 @@ def test_main_one_shot_registers_print_as_the_sessions_notice_handler(
     stub_process_config: MagicMock,
 ) -> None:
     """Headless execution has no TUI/webview to surface a hook's `HookOutput.log` in, so it
-    registers `print` directly on the one-shot `Session` -- see docs/specs/hooks-and-events.md's
-    "Debugging: `HookOutput.log`" section."""
+    registers `print` directly on the one-shot `Session`."""
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
     with patch("klorb.cli.main.Session", return_value=mock_session):
@@ -141,7 +140,7 @@ def test_main_one_shot_registers_print_as_the_sessions_notice_handler(
 def test_main_configures_minimal_logging_immediately_after_load_dotenv() -> None:
     """`configure_minimal_logging()` must run right after `load_dotenv()`, before argument
     parsing or subcommand dispatch, so a log call anywhere in that window still reaches
-    stderr -- see docs/specs/paths-and-logging.md."""
+    stderr."""
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "model reply"
     parent = MagicMock()
@@ -519,7 +518,7 @@ def test_main_one_shot_writes_session_log_when_requested() -> None:
 def test_main_one_shot_configures_tiktoken_cache_env() -> None:
     """A one-shot prompt has no `ReplApp` to defer to, so `main()` itself must call
     `configure_tiktoken_cache_env()` (after `configure_logging()`, so its log message is
-    visible) -- see docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    visible)."""
     mock_session = MagicMock()
     mock_session.run_one_shot.return_value = "reply"
     with patch("klorb.cli.main.Session", return_value=mock_session):
@@ -532,8 +531,7 @@ def test_main_one_shot_configures_tiktoken_cache_env() -> None:
 
 def test_main_repl_defers_tiktoken_cache_env_to_repl_app() -> None:
     """An interactive session's `configure_tiktoken_cache_env()` call is made by `ReplApp.
-    on_mount()` instead, once the Textual app is actually running -- not by `main()` -- see
-    docs/adrs/00107-configure-tiktoken-cache-env-after-repl-app-mounts.md."""
+    on_mount()` instead, once the Textual app is actually running."""
     mock_session = MagicMock()
     with patch("klorb.cli.main.Session", return_value=mock_session):
         with patch("klorb.cli.main.run_repl"):

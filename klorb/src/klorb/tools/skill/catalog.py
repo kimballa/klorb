@@ -1,30 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""The session-scoped skill catalog: two `SkillCatalog`s built once per `Session`, from a single
-disk scan across every tier, and reused by every subsequent skill lookup in that session instead
-of re-walking the filesystem per call. See docs/specs/skills.md.
-
-`SkillCatalogRegistry.canonical()` is keyed by every discovered skill's true `(namespace, name)`
-identity -- its directory basename. This is the only catalog `ActivateSkill`/`ReadSkillFile` may
-resolve against, and the only identity `skillRules` rules and approval decisions are ever keyed
-on.
-
-`SkillCatalogRegistry.typed()` additionally carries an alias entry `(namespace, <frontmatter
-name>)` for a skill whose `SKILL.md` frontmatter names it something other than its directory
-basename. This is the catalog a user's typed `/<name>` or `/<namespace>:<name>` reference is
-checked against, via `SkillCatalog.resolve_reference()`, before the harness treats it as a real
-skill mention.
-
-Each `Session` owns exactly one `SkillCatalogRegistry` instance (`Session.skill_catalog_registry`,
-built fresh in `SessionCoreMixin.__init__`) -- every catalog lookup goes through a method call on
-that instance rather than a scattered set of module-level globals and free functions (see
-AGENTS.md's "encapsulate singleton state in a class" principle). Both catalogs are built once,
-lazily, on first use (`SkillCatalogRegistry.ensure()`); `SkillCatalogRegistry.reload()` forces a
-fresh disk scan -- `Session.reload_skills()`'s implementation, itself the ">Reload skills" command
-palette action's implementation (see `klorb.tui.commands.skill_commands`). A skill added, removed,
-or edited on disk between then and now is invisible until the catalog is rebuilt; a brand-new
-`Session` always starts from a fresh, empty registry, so it rescans the disk on its own first use
-rather than inheriting whatever a previous session's catalog held.
-"""
+"""The session-scoped skill catalog: two `SkillCatalog`s built once per `Session` from a single
+disk scan across every tier, and reused by every subsequent skill lookup in that session.
+See docs/specs/skills.md."""
 
 import logging
 from pathlib import Path
@@ -56,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 class SkillCatalog(BaseModel):
     """One `(namespace, name) -> Skill` dict, plus the read-only views/lookups over it. Two
-    instances exist per `SkillCatalogRegistry` -- see module docstring -- with the same shape but
-    different contents: `SkillCatalogRegistry.canonical()`'s `skills` holds only true identities,
+    instances exist per `SkillCatalogRegistry` with the same shape but different contents:
+    `SkillCatalogRegistry.canonical()`'s `skills` holds only true identities,
     `SkillCatalogRegistry.typed()`'s also holds frontmatter-alias identities pointing at the same
     `Skill` objects.
     """
@@ -76,10 +53,10 @@ class SkillCatalog(BaseModel):
     def precedence_deduped(self) -> list[Skill]:
         """Every distinct skill `name` across all tiers, resolved to a single winning `Skill` by
         namespace precedence (`VALID_NAMESPACES` order: `user`, then `workspace`, then
-        `internal`) -- the same all-or-nothing shadowing `resolve_prompt_file()` uses. Sorted by
-        `name`. This is what the `AvailableSkills` interjection and `SearchSkills` enumerate: a
-        lower-precedence tier's same-named skill is still resolvable directly via its exact
-        `(namespace, name)` pair, just not listed as *the* meaning of that bare name.
+        `internal`). Sorted by `name`. This is what the `AvailableSkills` interjection and
+        `SearchSkills` enumerate: a lower-precedence tier's same-named skill is still resolvable
+        directly via its exact `(namespace, name)` pair, just not listed as *the* meaning of that
+        bare name.
         """
         rank: dict[str, int] = {namespace: index for index, namespace in enumerate(VALID_NAMESPACES)}
         winners: dict[str, Skill] = {}
@@ -98,11 +75,11 @@ class SkillCatalog(BaseModel):
         ]
 
     def resolve_reference(self, token: str) -> Skill | None:
-        """Resolve a user-typed skill reference -- a bare name (`foo`) or a colon-qualified fully-
-        qualified name (`namespace:foo`, see `klorb.permissions.skill_access.format_fqsn`).
+        """Resolve a user-typed skill reference — a bare name (`foo`) or a colon-qualified fully-
+        qualified name (`namespace:foo`).
 
         A colon-qualified token resolves only that exact `(namespace, name)` pair (which may be a
-        canonical name or a frontmatter alias), or nothing at all -- it never falls back to a bare
+        canonical name or a frontmatter alias), or nothing at all — it never falls back to a bare
         search. A bare name is checked across namespaces in precedence order (`user`, `workspace`,
         `internal`), returning the first tier with a match (canonical or alias)."""
         if ":" in token:
@@ -117,8 +94,8 @@ class SkillCatalog(BaseModel):
 
 class SkillCatalogs(BaseModel):
     """The `(typed, canonical)` catalog pair `build_catalogs()` produces together from one disk
-    scan -- a small named bundle rather than a positional tuple, since the two are always built
-    and consumed as a pair (see `SkillCatalogRegistry.reload()`)."""
+    scan — a small named bundle rather than a positional tuple, since the two are always built
+    and consumed as a pair."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -141,27 +118,23 @@ def build_catalogs(
     skill_rules: SkillRules,
 ) -> SkillCatalogs:
     """Scan every tier once and return the `(typed, canonical)` `SkillCatalog`s. Pure aside from
-    reading `skill_rules` -- touches no shared state, so it's independently testable and is what
-    `SkillCatalogRegistry.reload()` calls to actually populate a session's catalogs.
+    reading `skill_rules` — touches no shared state, so it's independently testable.
 
     A skill whose `(namespace, name)` verdict against `skill_rules` is already `"deny"` at scan
-    time is excluded from both catalogs entirely -- it never becomes resolvable, listable, or
-    even nameable by the model or a user's typed reference, since a `"deny"` verdict can never
-    become anything else for that identity within this catalog's lifetime. This is a stronger
-    exclusion than `SkillCatalog.discoverable()`'s runtime filter: a skill denied *after* the
-    catalog was already built (e.g. via an interactive ask answered "deny" mid-session) stays
-    resolvable in memory until an explicit reload, so its `skillRules` verdict is still checked
-    at every use -- see docs/specs/skills.md.
+    time is excluded from both catalogs entirely — it never becomes resolvable, listable, or
+    even nameable by the model or a user's typed reference. This is a stronger exclusion than
+    `SkillCatalog.discoverable()`'s runtime filter: a skill denied *after* the catalog was already
+    built stays resolvable in memory until an explicit reload, so its `skillRules` verdict is
+    still checked at every use.
 
     A skill whose frontmatter `name` disagrees with its directory basename logs a warning (it's
     still discoverable under its canonical basename; the frontmatter name is only ever added to
-    `typed` as an alias, never used as the skill's identity) -- see docs/specs/skills.md. The
-    canonical basename itself is lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH` -- the
-    identity both catalogs key on, and what's advertised to the model or a user-facing skill list,
-    is always this lowercased, length-capped form, so a name once advertised always resolves. The
-    full (untruncated) lowercased basename, and both the full and capped forms of a frontmatter
-    alias, are added to `typed` as additional aliases when they differ from the canonical name --
-    see `Skill.aliases`.
+    `typed` as an alias, never used as the skill's identity). The canonical basename itself is
+    lowercased and capped to `MAX_SKILL_NAME_DISPLAY_LENGTH` — the identity both catalogs key on,
+    and what's advertised to the model or a user-facing skill list, is always this lowercased,
+    length-capped form, so a name once advertised always resolves. The full (untruncated)
+    lowercased basename, and both the full and capped forms of a frontmatter alias, are added to
+    `typed` as additional aliases when they differ from the canonical name.
     """
     canonical: dict[SkillId, Skill] = {}
     typed: dict[SkillId, Skill] = {}
@@ -246,20 +219,19 @@ def resolve_and_gate_skill(
     override: PermissionOverride | None, namespace: object, name: object,
 ) -> Skill:
     """Validate `namespace`/`name`, resolve the pair against the session's canonical skill
-    `catalog` (see `SkillCatalogRegistry.canonical()`), and enforce its `skillRules` verdict --
-    the shared front half of `ActivateSkill` and `ReadSkillFile`. Raises `ValueError` for a malformed
-    argument or an unknown pair, and `PermissionError`/`PermissionAskRequired` per
-    `raise_if_skill_not_allowed`.
+    `catalog`, and enforce its `skillRules` verdict — the front half of `ActivateSkill` and
+    `ReadSkillFile`. Raises `ValueError` for a malformed argument or an unknown pair, and
+    `PermissionError`/`PermissionAskRequired` per `raise_if_skill_not_allowed`.
 
     `catalog` is always the *canonical* one, never the typed/alias one: `ActivateSkill`/
     `ReadSkillFile` only ever resolve a skill's true `(namespace, name)` identity, exactly as
-    given, never through a frontmatter-name alias -- see docs/specs/skills.md.
+    given, never through a frontmatter-name alias.
 
-    A `disable-model-invocation` skill is never in `catalog` (see `build_catalogs`), so it's
-    unresolvable here by construction -- except `typed_catalog` is also consulted, purely to
-    give a caller that guessed such a skill's name a specific `ValueError` explaining *why*
-    (rather than the generic "no such skill", which reads the same as a typo), directing it at
-    the one legitimate way in: the user's own message starting with `/<name>`.
+    A `disable-model-invocation` skill is never in `catalog`, so it's unresolvable here by
+    construction — except `typed_catalog` is also consulted, purely to give a caller that guessed
+    such a skill's name a specific `ValueError` explaining *why* (rather than the generic "no such
+    skill"), directing it at the one legitimate way in: the user's own message starting with
+    `/<name>`.
     """
     validated_namespace = validate_namespace(namespace)
     validated_name = validate_skill_name(name)
@@ -349,10 +321,10 @@ class SkillCatalogRegistry:
 
 def resolve_session_skill_catalog_registry(context: "ToolSetupContext") -> SkillCatalogRegistry:
     """Return `context.session`'s own `SkillCatalogRegistry`, ensuring its catalogs are built
-    against `context`'s live workspace/trust/compat settings first -- the common first step every
-    skill `Tool.apply()` needs. Raises `ValueError` if `context` wasn't built with a real `Session`
-    (e.g. a `ToolSetupContext` constructed directly, as most unit tests for other tools do): skill
-    catalogs are per-session state, so a skill `Tool` has nothing to resolve against without one.
+    against `context`'s live workspace/trust/compat settings first — the common first step every
+    skill `Tool.apply()` needs. Raises `ValueError` if `context` wasn't built with a real
+    `Session`: skill catalogs are per-session state, so a skill `Tool` has nothing to resolve
+    against without one.
     """
     if context.session is None:
         raise ValueError("skill tools require an active session")

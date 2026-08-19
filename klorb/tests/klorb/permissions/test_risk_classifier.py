@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.permissions.risk_classifier: LLM-driven risk scoring for BashTool asks. See
-docs/specs/bash-tool-and-command-permissions.md's "LLM risk classifier" section.
+docs/specs/bash-tool-and-command-permissions.md.
 """
 import json
 import threading
@@ -106,8 +106,7 @@ def test_classify_command_risk_keeps_a_suggested_pattern_that_matches_the_argv()
 
 
 def test_classify_command_risk_discards_a_suggested_pattern_that_does_not_match_the_argv() -> None:
-    """A hallucinated abstraction -- here the model dropped the trailing path argument, so the
-    pattern would never re-approve the very command it was proposed for -- is blanked, so the
+    """A hallucinated abstraction is blanked, so the
     caller falls back to the deterministic literal-argv grant."""
     items = [_command_item(["grep", "-rn", "TODO", "src/foo.py"])]
     provider = MagicMock()
@@ -156,9 +155,7 @@ def test_has_unsafe_wildcard_argv0_false_for_literal_or_version_help_argv0(patte
 
 
 def test_classify_command_risk_discards_a_wildcard_argv0_pattern() -> None:
-    """`["*", "-c", "*"]` matches the `bash -c ...` argv, so it survives the argv-match check --
-    but it wildcards the program name itself, which would grant an open-ended class of unrelated
-    commands, so it is blanked and the caller falls back to a literal-argv grant."""
+    """`["*", "-c", "*"]` matches the `bash -c ...` argv, so it survives the argv-match check."""
     items = [_command_item(["bash", "-c", "ls"])]
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(json.dumps({
@@ -177,8 +174,7 @@ def test_classify_command_risk_discards_a_wildcard_argv0_pattern() -> None:
 
 
 def test_classify_command_risk_keeps_a_wildcard_argv0_version_query() -> None:
-    """`["*", "--version"]` is the one accepted wildcard-argv0 shape -- asking any program for its
-    version is safe regardless of which program runs it -- so it is preserved."""
+    """`["*", "--version"]` is the one accepted wildcard-argv0 shape."""
     items = [_command_item(["cmake", "--version"])]
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(json.dumps({
@@ -197,12 +193,10 @@ def test_classify_command_risk_keeps_a_wildcard_argv0_version_query() -> None:
 
 
 def test_classify_command_risk_keeps_a_suffix_wildcard_suggested_pattern() -> None:
-    """The reported shape from the bash risk classifier bug (see
-    docs/adrs/00166-command-rule-tokens-support-trailing-star-suffix-wildcards.md): the classifier
+    """The reported shape from the bash risk classifier bug: the classifier
     proposes `["dd", "if=/dev/zero", "of=*", "bs=1", "count=*"]` for a `dd if=/dev/zero
     of=/home/aaron/zeros.bin bs=1 count=32` command, generalizing just the value half of `of=`/
-    `count=`. Now that `pattern_matches_argv` understands trailing suffix-wildcard tokens, this
-    pattern actually matches the command it was proposed for and is kept rather than discarded."""
+    `count=`. The pattern matches the command it was proposed for and is kept."""
     argv = ["dd", "if=/dev/zero", "of=/home/aaron/zeros.bin", "bs=1", "count=32"]
     items = [_command_item(argv)]
     provider = MagicMock()
@@ -222,9 +216,8 @@ def test_classify_command_risk_keeps_a_suffix_wildcard_suggested_pattern() -> No
 
 
 def test_classify_command_risk_discards_a_suffix_wildcard_argv0_pattern() -> None:
-    """A suffix-wildcard argv0 (`["py*", "test"]`) matches the candidate argv, so it survives the
-    argv-match check, but `_has_unsafe_wildcard_argv0` still rejects it -- it generalizes the
-    program name itself, exactly like a whole-token wildcard argv0 would."""
+    """A suffix-wildcard argv0 matches the candidate argv, so it survives the
+    argv-match check, but `_has_unsafe_wildcard_argv0` still rejects it."""
     items = [_command_item(["python3", "test"])]
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(json.dumps({
@@ -244,8 +237,7 @@ def test_classify_command_risk_discards_a_suffix_wildcard_argv0_pattern() -> Non
 
 def test_classify_command_risk_leaves_a_structural_items_pattern_untouched() -> None:
     """A structural (non-`command`) item has no argv to validate against, so even a non-empty
-    pattern the model returned for it is left as-is -- it's meaningless downstream regardless (the
-    consumer only reads `suggested_pattern` for an item whose own `command` is set)."""
+    pattern the model returned for it is left as-is."""
     items = [PermissionAskItem(
         "a non-literal argument", resource=StructuralResource(reason="a non-literal argument"),
         bash_context=BashCommandContext(command_text='cat "$f"', item_command_text='cat "$f"'))]
@@ -344,7 +336,7 @@ def test_classify_command_risk_returns_none_on_timeout_error() -> None:
 
 def test_classify_command_risk_passes_a_cancel_event_into_send_prompt() -> None:
     """`send_prompt` is handed a `threading.Event` so the end-to-end deadline can close an
-    in-flight stream (see `classify_command_risk`)."""
+    in-flight stream."""
     items = [_command_item(["echo", "hi"])]
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
@@ -357,11 +349,10 @@ def test_classify_command_risk_passes_a_cancel_event_into_send_prompt() -> None:
 
 
 def test_classify_command_risk_cancels_a_stream_that_exceeds_the_e2e_deadline() -> None:
-    """A reply that never arrives (a `send_prompt` that blocks until its `cancel_event` fires,
-    mimicking a stream that keeps the connection open without completing) is cut off by the
+    """A reply that never arrives is cut off by the
     end-to-end deadline and degraded to `None`, rather than blocking for the full per-read
     `timeout`. This is the behavior that keeps a slow classifier from starving the liveness
-    watchdog -- see `DEFAULT_BASH_RISK_CLASSIFIER_E2E_TIMEOUT_SECONDS`."""
+    watchdog."""
     items = [_command_item(["echo", "hi"])]
     provider = MagicMock()
 
@@ -386,8 +377,7 @@ def test_classify_command_risk_cancels_a_stream_that_exceeds_the_e2e_deadline() 
 
 
 def test_classify_command_risk_never_raises_on_a_completely_unmocked_provider() -> None:
-    """A bare `MagicMock()` provider (no `send_prompt` configured at all) is what a test that
-    doesn't care about the classifier -- e.g. a `ReplApp` test exercising an unrelated feature --
+    """A bare `MagicMock()` provider is what a test that doesn't care about the classifier
     naturally gets; the classifier must degrade to `None`, not raise, in that case."""
     items = [_command_item(["echo", "hi"])]
     provider = MagicMock()
@@ -580,7 +570,7 @@ def test_command_risk_report_round_trips_through_json_schema() -> None:
 
 def _find_object_schemas(node: object) -> list[dict]:
     """Every dict node with a `"properties"` key anywhere in `node` (recursing through nested
-    dicts and lists) -- both the top-level object schema and each entry under `"$defs"`."""
+    dicts and lists) for both the top-level object schema and each entry under `"$defs"`."""
     found: list[dict] = []
     if isinstance(node, dict):
         if "properties" in node:
@@ -595,10 +585,7 @@ def _find_object_schemas(node: object) -> list[dict]:
 
 def test_response_format_sets_additional_properties_false_on_every_object_schema() -> None:
     """`openai/gpt-5-nano`'s strict `json_schema` structured-output mode rejects any object
-    schema that omits `"additionalProperties": false` -- `model_json_schema()` doesn't set this
-    itself, so `_response_format()` must inject it into the top-level `CommandRiskReport` schema
-    and every nested `$defs` entry (here, `ItemRiskAssessment`), or every real classifier request
-    fails its schema validation before the model ever sees the prompt."""
+    schema that omits `"additionalProperties": false`."""
     schema = _response_format()["json_schema"]["schema"]
     object_schemas = _find_object_schemas(schema)
 
@@ -703,9 +690,7 @@ def test_resolve_item_risk_assessment_uses_the_capability_tagged_model_by_defaul
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """`ProcessConfig.bash_risk_classifier_model` unset (the default) means klorb picks a
-    model itself, by `klorb_capabilities` -- see `klorb.models.registry.ModelRegistry.
-    find_by_capability` and the packaged `openai/gpt-oss-120b:nitro` model, the only
-    built-in model that declares `"BASH_SAFETY_EVAL"`."""
+    model itself, by `klorb_capabilities`."""
     provider = MagicMock()
     provider.send_prompt.return_value = _reply(_valid_report_json(["item-0"]))
 

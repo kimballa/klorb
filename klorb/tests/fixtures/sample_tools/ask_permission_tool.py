@@ -16,8 +16,7 @@ from klorb.tools.tool import Tool
 class AskPermissionTool(Tool):
     """Evaluates `path` (`is_write` selects the write or read seam) and either succeeds with a
     `"granted:<path>"` marker, or raises whatever `PermissionError`/`PermissionAskRequired`
-    the real permission tables produce for the calling `Tool`'s `ToolSetupContext` — including
-    honoring a one-shot `permission_override`, exactly like `EditFile`/`ReadFile` do. Used only
+    the real permission tables produce for the calling `Tool`'s `ToolSetupContext`. Used only
     in tests.
     """
 

@@ -1,9 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""Structured, UI-agnostic diff computation shared by `EditFileCore`/`CreateFileCore`: turns an
-old/new pair of line lists into `DiffHunk`s a UI can render with a line-number gutter and
-add/delete coloring, without either side depending on the other (`klorb.tools` has no dependency
-on `klorb.tui`, or on any rendering library) -- see docs/specs/terminal-repl.md's tool-call
-preview section for how a `Tool`'s `diff_preview()` turns these back into something renderable.
+"""Structured, UI-agnostic diff computation that turns an old/new pair of line lists into
+`DiffHunk`s a UI can render with a line-number gutter and add/delete coloring.
+See docs/specs/terminal-repl.md.
 """
 
 import difflib
@@ -12,19 +10,16 @@ from typing import Literal
 from pydantic import BaseModel
 
 DIFF_CONTEXT_LINES = 8
-"""How many lines of unchanged context `build_diff_hunks` keeps on either side of a change --
-also the distance within which two changes are merged into a single hunk rather than kept as
-two separate ones (see `difflib.SequenceMatcher.get_grouped_opcodes`'s own `n` parameter, which
-this is passed into directly). The full amount only ever shows in a diff's expanded/click-to-
-overlay view -- the compact inline history preview starts much closer to the change itself; see
-`klorb.tui.formatting.render_diff_content`."""
+"""How many lines of unchanged context `build_diff_hunks` keeps on either side of a change, also
+the distance within which two changes are merged into a single hunk rather than kept as two
+separate ones. The full amount only ever shows in a diff's expanded/click-to-overlay view; the
+compact inline history preview starts much closer to the change itself."""
 
 
 class DiffLine(BaseModel):
     """One rendered line of a diff: `kind` is `"context"` (unchanged, present on both sides),
     `"add"` (present only in the new content, so `old_lineno` is `None`), or `"del"` (present
-    only in the old content, so `new_lineno` is `None`). `old_lineno`/`new_lineno` are 1-indexed,
-    matching the line numbers `EditFileCore`/`ReadFileCore` already show elsewhere."""
+    only in the old content, so `new_lineno` is `None`). `old_lineno`/`new_lineno` are 1-indexed."""
 
     kind: Literal["context", "add", "del"]
     old_lineno: int | None
@@ -35,8 +30,7 @@ class DiffLine(BaseModel):
 class DiffHunk(BaseModel):
     """A contiguous run of `DiffLine`s -- one or more changes plus up to `DIFF_CONTEXT_LINES` of
     surrounding unchanged lines on each side. Two changes closer together than
-    `2 * DIFF_CONTEXT_LINES` lines apart are merged into one hunk rather than kept separate, same
-    as a standard unified diff."""
+    `2 * DIFF_CONTEXT_LINES` lines apart are merged into one hunk rather than kept separate."""
 
     lines: list[DiffLine]
 
@@ -46,9 +40,7 @@ def build_diff_hunks(
 ) -> list[DiffHunk]:
     """Diff `old_lines` against `new_lines` and group the result into `DiffHunk`s, each carrying
     up to `context` lines of unchanged context on either side of a change (nearby changes merged
-    into one hunk when their context windows would overlap) -- delegates the grouping itself to
-    `difflib.SequenceMatcher.get_grouped_opcodes`, which already implements exactly this
-    hunk-with-context-and-merging behavior.
+    into one hunk when their context windows would overlap).
 
     `old_lines=[]` (a brand-new file/memory/scratchpad) yields a single hunk of nothing but
     `"add"` lines, with no context to show. `new_lines=[]` (the whole subject deleted) is the

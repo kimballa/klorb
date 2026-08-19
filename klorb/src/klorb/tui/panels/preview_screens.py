@@ -1,13 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Click-to-expand overlays for a diff/read preview in the history scroll (see
-`klorb.tui.mixins.rendering.RenderingMixin`'s `RenderedToolCall.on_click`) — full-screen,
-read-only, scrollable views modeled directly on `ExpandedCommandScreen`
-(`klorb.tui.panels.permission_ask_panel`): a `ModalScreen` pushed via `self.push_screen(...)`,
-dismissed with Escape, that doesn't disturb whatever is mounted underneath (a running turn, a
-`PermissionAskPanel`, ...) -- it's a screen-stack push, not a synchronous blocking call, so the
-agent keeps running and any interaction panel that needs to appear still does, in its usual
-place, and simply waits until this overlay is dismissed.
-"""
+"""Click-to-expand overlays for a diff/read preview in the history scroll."""
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -34,17 +26,12 @@ _BODY_CSS = """
         height: 1fr;
     }
     """
-"""Shared body layout for `DiffDetailScreen`/`ReadDetailScreen`: `#preview-detail-label` sits
-outside `#preview-detail-scroll` (a plain, non-scrolling `Static`, `height: auto`) so it stays
-pinned at the top of the overlay as a sticky header -- only `#preview-detail-scroll`'s own content
-scrolls beneath it, rather than the label scrolling away along with the rest of a long diff/file
-the way a single shared `VerticalScroll` would."""
+"""Shared body layout for `DiffDetailScreen`/`ReadDetailScreen`: `#preview-detail-label` stays
+pinned at the top as a sticky header while `#preview-detail-scroll` scrolls beneath it."""
 
 
 class DiffDetailScreen(ModalScreen[None]):
-    """Full-screen view of one edit/create call's complete diff (`RenderedToolCall.detail_content`
-    -- the same already-built `Content` Ctrl+O's detail view shows, just here full-screen and
-    scrollable rather than capped to the height of one history entry)."""
+    """Full-screen view of one edit/create call's complete diff."""
 
     CSS = "DiffDetailScreen { align: center middle; }\n" + _BODY_CSS
 
@@ -69,10 +56,8 @@ class DiffDetailScreen(ModalScreen[None]):
 
 
 class ReadDetailScreen(ModalScreen[None]):
-    """Full-screen view of a `Read*` call's whole subject (built lazily, at click time, by
-    `ReadPreview.open_full()` -- see `klorb.tools.tool.ReadPreview`), scrolled so
-    `scroll_to_line` starts at the top of the viewport, matching the range the call actually
-    read."""
+    """Full-screen view of a `Read*` call's whole subject, scrolled so `scroll_to_line`
+    starts at the top of the viewport."""
 
     CSS = "ReadDetailScreen { align: center middle; }\n" + _BODY_CSS
 

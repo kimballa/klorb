@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for the packaged `claude-compat` onSessionStart hook script
-(`klorb.resources/data/hooks/claude-compat/check.py`), run through `run_bash_handler` the same
-way `klorb.resources/default-config.json`'s `hooks.onSessionStart` entry invokes it.
+(`klorb.resources/data/hooks/claude-compat/check.py`), run through `run_bash_handler`.
 """
 
 import importlib.resources

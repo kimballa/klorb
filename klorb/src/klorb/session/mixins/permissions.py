@@ -28,7 +28,7 @@ from klorb.tools.response_envelope import classify_exception
 if TYPE_CHECKING:
     # `GrantAction`/`GrantScope` are simple `Literal` aliases living in `klorb.permissions.grant`,
     # which imports `SessionConfig` from `klorb.session.config` for real — so a type-checking-only
-    # import avoids the cycle while still letting `_apply_ask_grant` annotate its parameters.
+    # import avoids the cycle.
     from klorb.permissions.grant import GrantAction, GrantScope
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,7 @@ logger = logging.getLogger(__name__)
 
 class SessionPermissionsMixin(SessionBase):
     """Ask-exception resolution (permission asks, `AskUserQuestions`, `EscalatePrivileges`) and
-    tool-call safety-limit confirmation -- see `klorb.session.mixins.tool_execution` for the
-    dispatch loop that calls into these."""
+    tool-call safety-limit confirmation."""
 
     def _confirm_limit_increase(
         self,
@@ -49,12 +48,11 @@ class SessionPermissionsMixin(SessionBase):
         if given) whether to double it and keep going.
 
         Returns `False` without asking anything if `on_tool_call_limit_reached` is `None`,
-        since there's no way to interactively confirm outside e.g. the TUI (see
-        [[terminal-repl]]'s `ToolCallLimitScreen`) — a one-shot CLI prompt has nobody to ask.
-        Otherwise calls it with a human-readable prompt describing the limit reached, and:
-        on `True`, doubles `self.config.max_tool_calls_per_turn` for the rest of this
-        `Session`'s lifetime (not just this turn) and returns `True`; on `False`, returns
-        `False` without changing the limit.
+        since there's no way to interactively confirm outside a UI. Otherwise calls it with a
+        human-readable prompt describing the limit reached, and: on `True`, doubles
+        `self.config.max_tool_calls_per_turn` for the rest of this `Session`'s lifetime (not
+        just this turn) and returns `True`; on `False`, returns `False` without changing the
+        limit.
         """
         logger.warning("Turn tool-call limit reached (%d/%d).", current_count, current_limit)
         if on_tool_call_limit_reached is None:

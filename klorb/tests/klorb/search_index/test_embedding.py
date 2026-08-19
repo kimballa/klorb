@@ -28,8 +28,7 @@ from klorb.search_index.embedding import (
 @pytest.fixture(autouse=True)
 def _isolated_model_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point `embedding_model_target_dir()` at a real (empty) directory so `EmbeddingModel`'s
-    existence check passes without needing the real bundled model on disk -- every test here
-    also stubs out `fastembed.TextEmbedding` itself, so nothing tries to actually load it."""
+    existence check passes without needing the real bundled model on disk."""
     target = tmp_path / "embedding-model"
     target.mkdir()
     monkeypatch.setattr(embedding_module, "embedding_model_target_dir", lambda: target)
@@ -38,9 +37,7 @@ def _isolated_model_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 @pytest.fixture(autouse=True)
 def _no_real_library_preload(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every `use_gpu=True` test stubs `fastembed.TextEmbedding` too, so there's no real CUDA
-    provider to preload libraries for -- this keeps tests hermetic and fast regardless of
-    whether `nvidia-*` packages happen to be installed in the environment running the suite.
-    `test_preload_nvidia_cuda_libraries_*` tests the real function directly instead."""
+    provider to preload libraries for."""
     monkeypatch.setattr(embedding_module, "_preload_nvidia_cuda_libraries", lambda: None)
 
 
@@ -48,9 +45,7 @@ def _stub_text_embedding(
     monkeypatch: pytest.MonkeyPatch, *, actual_providers: list[str] | None = None,
 ) -> MagicMock:
     """Stub `fastembed.TextEmbedding` with a fake instance whose `.model.model.get_providers()`
-    chain -- what `EmbeddingModel`'s own post-construction check inspects, since neither
-    fastembed nor onnxruntime raise when a requested provider fails to load -- reports
-    `actual_providers` (default: CPU-only, as if no GPU provider was ever requested/loaded)."""
+    chain"""
     stub_instance = MagicMock()
     stub_instance.model.model.get_providers.return_value = (
         actual_providers if actual_providers is not None else ["CPUExecutionProvider"])
@@ -209,7 +204,7 @@ def test_embedding_model_use_gpu_raises_when_provider_fails_to_actually_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Simulates onnxruntime/fastembed silently falling back to CPU: the requested provider is
-    # compiled in (so the up-front check passes) but doesn't show up in the constructed
+    # compiled in but doesn't show up in the constructed
     # session's own get_providers() result.
     _stub_text_embedding(monkeypatch, actual_providers=["CPUExecutionProvider"])
     monkeypatch.setattr(sys, "platform", "linux")
@@ -349,9 +344,7 @@ def test_preload_nvidia_cuda_libraries_is_a_noop_without_the_nvidia_package(
 
 def _fake_nvidia_namespace_package(nvidia_dir: Path) -> types.ModuleType:
     """Build a fake `nvidia` module shaped like the real one: a PEP 420 namespace package with
-    no `__file__` (only `__path__`) -- `_preload_nvidia_cuda_libraries` must use `__path__`,
-    which is what broke in production the first time this used `__file__` instead (a namespace
-    package's `__file__` is always `None`, so that version silently found nothing to preload)."""
+    no `__file__` (only `__path__`)."""
     fake_nvidia = types.ModuleType("nvidia")
     fake_nvidia.__file__ = None
     fake_nvidia.__path__ = [str(nvidia_dir)]  # type: ignore[attr-defined]

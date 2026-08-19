@@ -1,7 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for `klorb.server.acp_server`/`klorb.server.klorb_agent`/`klorb.server.turn_bridge`:
-the ACP server core -- initialize, session/new, session/prompt streaming, session/cancel. See
-docs/specs/klorb-server.md."""
+the ACP server core."""
 
 import asyncio
 import threading
@@ -36,7 +35,7 @@ def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int
 @pytest.fixture
 async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
     """Factory fixture: `await make_harness(provider=...)` returns a running `AcpHarness`
-    wired to an isolated `TrustManager` (so no test touches the real `KLORB_DATA_DIR`), closed
+    wired to an isolated `TrustManager`, closed
     automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
 
@@ -255,9 +254,9 @@ async def test_prompt_streams_thinking_then_message_chunks_in_order(
         session_id=session_response.session_id, prompt=[acp.text_block("hi")])
 
     assert response.stop_reason == "end_turn"
-    # The session's first turn also fires a `session_info_update` (session naming -- see
-    # test_acp_server_session_controls.py) alongside the message/thought chunks this test is
-    # about; filtered out here rather than asserted on.
+    # The session's first turn also fires a `session_info_update` alongside the
+    # message/thought chunks this test is about; filtered out here rather than
+    # asserted on.
     updates = [
         update.update for update in harness.harness_client.session_updates
         if update.update.session_update in ("agent_thought_chunk", "agent_message_chunk")
@@ -295,8 +294,6 @@ async def test_update_ordering_matches_the_order_callbacks_fired(
 
     await harness.client.prompt(session_id=session_response.session_id, prompt=[acp.text_block("hi")])
 
-    # See test_prompt_streams_thinking_then_message_chunks_in_order for why session_info_update
-    # is filtered out here.
     kinds = [
         (update.update.session_update, update.update.content.text)
         for update in harness.harness_client.session_updates

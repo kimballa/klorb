@@ -1,15 +1,11 @@
 # © Copyright 2026 Aaron Kimball
-"""Gitignore-aware filtering for the shared recursive tree walk (`dir_walk.py`).
+"""Gitignore-aware filtering for the recursive tree walk.
 
-`FindFile` and `Grep` both skip files a project's `.gitignore` rules would hide (unless the
-caller opts out with `use_gitignore=false`), so an agent searching a repo isn't buried in
-`node_modules/`, build output, or virtualenv contents it almost never wants. The pattern
-matching itself is delegated to `pathspec`'s `GitIgnoreSpec`; this module layers on the
-*multi-file* precedence git actually uses — a `.gitignore` deeper in the tree overrides the
-rules of one nearer the root — which a single `GitIgnoreSpec` doesn't model on its own.
+The pattern matching is delegated to `pathspec`'s `GitIgnoreSpec`; this module layers on the
+multi-file precedence git actually uses, which a single `GitIgnoreSpec` doesn't model on its
+own.
 
-See docs/specs/gitignore-aware-tree-walk.md and
-docs/adrs/00125-find-and-grep-respect-gitignore-by-default.md.
+See docs/specs/gitignore-aware-tree-walk.md.
 """
 
 import logging
@@ -26,7 +22,7 @@ GITIGNORE_FILENAME = ".gitignore"
 @dataclass(frozen=True)
 class _ScopedSpec:
     """One `.gitignore` file's compiled rules together with the absolute directory those rules
-    are relative to (patterns in a `.gitignore` are anchored to the directory that contains it).
+    are relative to.
     """
 
     base: Path
@@ -35,7 +31,7 @@ class _ScopedSpec:
 
 def _load_dir_spec(dir_path: Path) -> _ScopedSpec | None:
     """Read `dir_path/.gitignore` and compile it, or return `None` if there is no readable
-    `.gitignore` there (a missing file, a directory by that name, or an undecodable one)."""
+    `.gitignore` there."""
     gitignore_path = dir_path / GITIGNORE_FILENAME
     try:
         lines = gitignore_path.read_text(encoding="utf-8").splitlines()
@@ -49,8 +45,7 @@ class GitignoreFilter:
 
     Rule sets are ordered outermost-first (nearest the workspace root) to innermost-last
     (the directory currently being walked). `is_ignored` evaluates a path against each in turn
-    and lets the *innermost* rule set that matches decide, mirroring git's rule that a nested
-    `.gitignore` overrides the directories above it — including re-inclusion via a `!` negation.
+    and lets the *innermost* rule set that matches decide.
 
     Instances are never mutated: `descend` returns a new filter with one more rule set appended,
     so a walk can hand each subdirectory its own filter without disturbing its parent's.
@@ -95,8 +90,7 @@ class GitignoreFilter:
     def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
         """Whether `path` (absolute) is excluded by the active `.gitignore` rules. `is_dir`
         must say whether `path` is a directory, since a trailing-slash pattern (`build/`)
-        matches directories only — the path is presented to `pathspec` with a trailing slash so
-        such patterns can fire."""
+        matches directories only."""
         suffix = "/" if is_dir else ""
         ignored = False
         for scoped in self._scoped:

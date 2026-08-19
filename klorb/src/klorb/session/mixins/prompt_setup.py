@@ -20,10 +20,9 @@ class SessionPromptSetupMixin(SessionBase):
 
     def _resolve_system_prompt(self) -> str:
         """Resolve the system prompt for the active turn by delegating to the session's
-        `SystemPrompt` (see `klorb.system_prompt.SystemPrompt.resolve`), which runs the
-        default and role walks and concatenates their results. Re-derived fresh each place
-        it's needed, so it always reflects the *current* active model — see
-        docs/specs/roles-and-system-prompts.md."""
+        `SystemPrompt`, which runs the default and role walks and concatenates their results.
+        Re-derived fresh each place it's needed, so it always reflects the *current* active
+        model."""
         return self._system_prompt.resolve()
 
     def _reasoning_params(self) -> dict[str, Any] | None:
@@ -46,30 +45,22 @@ class SessionPromptSetupMixin(SessionBase):
 
     def _drop_reasoning(self) -> bool:
         """Return whether the active model wants prior turns' thinking/reasoning content
-        stripped from the outgoing request rather than resent as-is (see
-        `Model.drop_reasoning`) -- `False`, matching that method's own default, if the active
-        model isn't registered."""
+        stripped from the outgoing request rather than resent as-is. Returns `False` if the
+        active model isn't registered."""
         model = self.active_model()
         return model.drop_reasoning() if model is not None else False
 
     def _cache_mgmt_style(self) -> CacheMgmtStyle:
-        """Return the cache management style for the active model (see
-        `Model.cache_mgmt_style`)."""
+        """Return the cache management style for the active model."""
         model = self.active_model()
         return model.cache_mgmt_style() if model is not None else "AUTOMATIC"
 
     def _ensure_system_message(self) -> None:
         """Insert a `role="system"` `Message` at the very front of `self._messages`,
-        recording the session's resolved system prompt (see `_resolve_system_prompt` —
-        resolution always produces a prompt, so one is always inserted), the first time a
-        turn is dispatched. A no-op if one is already present (so retries and later turns
-        don't insert a duplicate). This message is bookkeeping only: it's never replayed to
-        the model as a chat message (see `OpenRouterApiProvider._build_api_messages`) — the
-        live system prompt is sent via `send_prompt(system_prompt=...)` on every turn
-        instead (re-resolved fresh via `_resolve_system_prompt()` each time, so it reflects
-        the *current* active model even if the session's `config.model` changes after this
-        message was inserted), so this doesn't need to be kept in sync with such changes
-        after it's first inserted.
+        recording the session's resolved system prompt the first time a turn is dispatched.
+        A no-op if one is already present. This message is bookkeeping only: it's never
+        replayed to the model as a chat message, so this doesn't need to be kept in sync
+        with config changes after it's first inserted.
         """
         if any(message.role == "system" for message in self._messages):
             return
@@ -87,11 +78,8 @@ class SessionPromptSetupMixin(SessionBase):
         this session — right after the `role="system"` message if `_ensure_system_message()`
         inserted one, otherwise at the very front of `self._messages` — the first time a turn
         is dispatched with a non-empty `tool_registry`. A no-op if `tool_registry` is
-        unset/empty, or if one is already present (so retries and later turns don't insert a
-        duplicate). This message is bookkeeping only: it's never sent to the model as a chat
-        message (see `OpenRouterApiProvider._build_api_messages`) — the live tool definitions
-        are sent via `send_prompt(tools=...)` on every turn instead, so this doesn't need to
-        be kept in sync with config changes after it's first inserted.
+        unset/empty, or if one is already present. This message is bookkeeping only: it's
+        never sent to the model as a chat message.
         """
         if self._tool_registry is None:
             return

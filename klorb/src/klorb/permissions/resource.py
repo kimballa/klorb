@@ -6,19 +6,7 @@
 rule of its own). `klorb.permissions.table.PermissionAskItem`/`PermissionAskRequired` and
 `klorb.session.events.PermissionAskContext` each carry exactly one `PermissionResource` instance
 rather than a set of mutually-exclusive optional fields, so a caller acts on whichever concrete
-resource it has via these methods instead of branching on which field happens to be set. See
-docs/plans/archive/014-permission-resource-hierarchy.md for the design this module implements.
-
-`PermissionOverride` (a one-shot "Allow (once)" bypass) lives here too, alongside the resource
-kinds its six fields mirror one-for-one.
-
-Every concrete subclass's `apply_grant`/`grant_preview` bodies import their kind's grant module
-(`klorb.permissions.grant`/`command_grant`/`skill_grant`/`domain_grant`/`memory_grant`) locally,
-inside the method, rather than at module scope: those modules import `SessionConfig` from
-`klorb.session`, which itself imports `klorb.permissions.table` (for `PermissionAskItem`) -- and
-`table.py` imports this module for `PermissionResource` -- so a module-level import here would be
-circular. The same applies to `klorb.permissions.domain_access.parse_domain`, imported locally
-inside `DomainResource`, since `domain_access.py` itself imports `klorb.permissions.table`.
+resource it has via these methods instead of branching on which field happens to be set.
 """
 
 from abc import ABC, abstractmethod
@@ -46,23 +34,7 @@ class GrantPreview:
 
 
 class PermissionOverride:
-    """A one-shot "Allow (once)" bypass for a single retried tool call -- the runtime counterpart
-    to `klorb.session.events.PermissionDecision(action="allow", scope="once")` -- persisting no
-    rule-table entry, so the identical resource asks again the next time it's encountered.
-
-    A single tool call can carry several once-scoped resources at once (see
-    `klorb.permissions.table.MultiPermissionAskRequired`), so each field is a set rather than a
-    single value: `paths` mirrors `PathResource.path` (checked via membership, e.g.
-    `klorb.permissions.workspace.evaluate_write`), `commands` mirrors `CommandResource.argv`
-    (each entry the exact argv tuple that was asked about, not a pattern -- checked via
-    membership in `klorb.tools.bash.BashTool._classify`), `reasons` mirrors
-    `StructuralResource.reason` (the deterministic forced-ask reason text
-    `klorb.permissions.shell_parse.parse_command` produces for the same command on every parse,
-    since a structural item has no other stable identifier to bypass by), `skills` mirrors
-    `SkillResource.skill_id` (checked via membership in
-    `klorb.tools.skill.common.raise_if_skill_not_allowed`), `domains` mirrors
-    `DomainResource.domain` (checked via membership in `klorb.tools.web.fetch`), and `memories`
-    mirrors `MemoryResource`'s own `(access, filename)` pair.
+    """A one-shot "Allow (once)" bypass for a single retried tool call.
     """
 
     def __init__(
@@ -103,18 +75,13 @@ class PermissionOverride:
 class BashCommandContext:
     """Display context every ask item from one `BashTool` call shares identically, regardless of
     that item's own `PermissionResource` kind: `command_text` is the full, unparsed command
-    string; `is_compound` is `True` when the parsed command contains more than one simple command
-    (`foo && bar`, `foo; bar`, `foo | bar`, etc.); `item_command_text` is the exact source text of
-    just the one statement this particular item is about, distinct from `command_text`'s whole
-    raw command -- `klorb.tui.panels.permission_ask_panel.PermissionAskPanel`'s command-preview
-    logic prefers this over `command_text`, falling back to `command_text` when unset; `intent`
-    is the model's own short statement of what the whole command is trying to accomplish (see
-    docs/specs/bash-tool-and-command-permissions.md's "Agent-stated intent" section), shown as an
-    "Intent: ..." line only when set. `BashTool` always supplies `command_text`/`item_command_text`
-    (required) and `intent` (a required tool argument), so `item_command_text`/`intent` are
-    optional here only for a caller with no real BashTool item to describe. `None` on a
-    `PermissionAskItem`/`PermissionAskContext` for any ask that didn't originate from `BashTool`
-    at all.
+    string; `is_compound` is `True` when the parsed command contains more than one simple command;
+    `item_command_text` is the exact source text of just the one statement this particular item is
+    about, distinct from `command_text`'s whole raw command. `BashTool` always supplies
+    `command_text`/`item_command_text` (required) and `intent` (a required tool argument), so
+    `item_command_text`/`intent` are optional here only for a caller with no real BashTool item to
+    describe. `None` on a `PermissionAskItem`/`PermissionAskContext` for any ask that didn't
+    originate from `BashTool` at all.
     """
 
     command_text: str
@@ -135,17 +102,14 @@ class PermissionResource(ABC):
     @abstractmethod
     def preview_text(self) -> str | None:
         """The one-line resource preview `PermissionAskPanel` shows below the header when this
-        ask has no `BashCommandContext` of its own to preview instead (a path, a
-        "/<name> (<namespace>)" skill reference, or a URL). `None` for a resource with nothing of
-        its own to preview: `CommandResource` (previewed via `BashCommandContext` instead, since
-        every command-kind ask originates from `BashTool`) and `StructuralResource`."""
+        ask has no `BashCommandContext` of its own to preview instead. `None` for a resource with
+        nothing of its own to preview: `CommandResource` and `StructuralResource`."""
 
     @property
     def is_persistable(self) -> bool:
         """Whether this resource has a rule a `"session"`/`"workspace"`/`"homedir"` grant can be
         recorded against. `True` for every kind except `StructuralResource`, which names no
-        filesystem path, command pattern, skill, or domain -- only `"once"`/deny make sense for
-        it."""
+        filesystem path, command pattern, skill, or domain."""
         return True
 
     @abstractmethod
@@ -160,11 +124,7 @@ class PermissionResource(ABC):
         session_config: "SessionConfig", process_config: "ProcessConfig | None",
         *, grant_patterns: list[list[str]] | None = None,
     ) -> None:
-        """Persist `action`/`scope` for this resource. `grant_patterns` is meaningful only for
-        `CommandResource` -- `klorb.session.events.PermissionDecision.grant_patterns` threaded
-        straight through when a UI's own displayed grant pattern (e.g. a risk-classifier
-        suggestion) must be recorded verbatim instead of recomputed; every other kind ignores it.
-        A no-op for `StructuralResource`."""
+        """Persist `action`/`scope` for this resource. A no-op for `StructuralResource`."""
 
     @abstractmethod
     def added_to_override(self, override: PermissionOverride) -> PermissionOverride:
@@ -280,13 +240,10 @@ class DomainResource(PermissionResource):
     """A domain-access ask: `url` is the full URL a tool is trying to reach, shown verbatim to
     the user; `domain` (derived, not stored, since it's cheap to recompute and storing it
     separately would risk drifting out of sync with `url`) is what grant/override checks
-    actually key on, matching `domain_grant.py`/`PermissionOverride.domains`, which are
-    domain-keyed rather than URL-keyed.
+    actually key on.
 
     `rule_set` says which independent `DomainRules` table this ask is evaluated against and
-    should be granted into: `"web"` (the default — `WebFetch`, `SessionConfig.web_domain_rules`)
-    or `"bash"` (sandboxed `Bash` network egress, `SessionConfig.bash_domain_rules`) — see that
-    field's docstring for why the two tables are kept separate rather than shared.
+    should be granted into: `"web"` (the default) or `"bash"` (sandboxed `Bash` network egress).
     `PermissionOverride.domains` stays a single shared set regardless of `rule_set`: a once-scope
     override is only ever checked back against the one retried tool call that raised it, so there
     is no cross-tool ambiguity to a domain string appearing in it twice."""
@@ -328,8 +285,7 @@ class DomainResource(PermissionResource):
 class StructuralResource(PermissionResource):
     """A `BashTool` ask item the shell walker couldn't classify into a specific path or command
     rule: `reason` is the walker's own deterministic forced-ask explanation, doubling as this
-    resource's override identity (see `PermissionOverride.reasons`). Has no persistable rule of
-    its own -- only `"once"`/deny make sense for it, never a session/workspace/homedir grant."""
+    resource's override identity. Has no persistable rule of its own."""
 
     reason: str
 
@@ -364,9 +320,7 @@ class StructuralResource(PermissionResource):
 class MemoryResource(PermissionResource):
     """A workspace-memory write/delete ask: `access` is `"write"` (covers both `CreateMemory` and
     `EditMemory`, sharing one config knob and one persistent grant) or `"delete"`
-    (`ForgetMemory`); `filename` is the target memory file. The `global` namespace and every
-    `read` operation never raise this ask at all -- see docs/specs/memories.md -- so there is no
-    `namespace` field; every instance is implicitly about the `workspace` namespace."""
+    (`ForgetMemory`); `filename` is the target memory file."""
 
     access: Literal["write", "delete"]
     filename: str

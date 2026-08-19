@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Tests for the ACP server's `_klorb/notice` extension notification -- see
-docs/specs/klorb-server.md's "Extension methods" section and `HookOutput.log`."""
+"""Tests for the ACP server's `_klorb/notice` extension notification."""
 
 import asyncio
 from collections.abc import Callable
@@ -51,9 +50,8 @@ async def test_new_session_sends_klorb_notice_for_a_hooks_log(
     response = await harness.client.new_session(cwd=str(tmp_path), mcp_servers=[])
 
     # `_wire_session_notice_handler`'s callback schedules `_send_notice` via
-    # `asyncio.run_coroutine_threadsafe` (thread-safe even though this test never actually
-    # crosses threads) rather than awaiting it inline, so it may not have run yet the instant
-    # `new_session()` returns -- poll briefly rather than asserting immediately.
+    # `asyncio.run_coroutine_threadsafe` rather than awaiting it inline, so it
+    # may not have run yet the instant `new_session()` returns.
     notices: list[dict[str, Any]] = []
     for _ in range(500):
         notices = [

@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`WindowedChunker`: a fixed-size, overlapping sliding window over a file's raw lines,
-independent of any structural or markdown boundaries -- a fallback recall net for content that
-doesn't parse cleanly, or that spans structural boundaries a structural chunker splits apart.
-Applied unconditionally alongside every other chunker.
+independent of any structural or markdown boundaries.
 """
 
 from klorb.search_index.chunk import Chunk

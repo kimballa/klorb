@@ -1,8 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """`CreateSubagentTool`: launches a new subagent session running a specialist role, with its
-own turn dispatched asynchronously on a background thread. See
-docs/specs/subagents.md's "CreateSubagent" section.
-"""
+own turn dispatched asynchronously on a background thread. See docs/specs/subagents.md."""
 
 import logging
 from typing import Any
@@ -48,17 +46,11 @@ class CreateSubagentParameters(BaseModel):
 
 
 class CreateSubagentTool(Tool):
-    """
-    Validates and launches a subagent session.
+    """Validates and launches a subagent session.
 
-    Verifies that the agent has permission to launch the requested subagent. Verifies the subagent
-    role is valid to launch. Populates a set of skills and tools the subagent is permitted to use,
-    by taking the intersection of the approved set for the subagent role and the current agent's own
-    skill/tool sets.
-
-    Creates a new background session, starts the subagent's the first turn asynchronously. and
-    returns immediately. The caller is expected to keep working and either receive the subagent's
-    output opportunistically (a `SystemInterjection`) or call `WaitForSubagent` to wait for it.
+    Verifies the caller has permission and the role is valid, computes the skill/tool intersection
+    between the role and the current agent's own sets, then starts the subagent's first turn
+    asynchronously and returns immediately.
     """
 
     def name(self) -> str:
@@ -68,9 +60,7 @@ class CreateSubagentTool(Tool):
         return SUBAGENT_TOOL_CATEGORY
 
     def is_read_only(self) -> bool:
-        """`True`: this tool doesn't mutate any file or environment state directly -- a
-        subagent's actual capabilities are bounded by the tool/skill intersection computed for
-        it, not by whether this tool itself is offered under `enforce_readonly_tools`."""
+        """`True`: this tool doesn't mutate any file or environment state directly."""
         return True
 
     def description(self) -> str:

@@ -75,9 +75,7 @@ class SearchSkillsTool(Tool):
     case-insensitive substring against the skill's `name` and every markdown file in its
     directory, plus high-confidence semantic hits when a skills search index is available.
     `namespace` optionally restricts the search to `internal`, `user`, or `workspace`; defaults to
-    `all`. Returns a flat list of `{namespace, name, description}` for every skill with a hit --
-    never file content or a path, since the only way to read a skill's content is
-    `ActivateSkill`.
+    `all`. Returns a flat list of `{namespace, name, description}` for every skill with a hit.
 
     Respects the workspace-trust gate and excludes any skill whose `(namespace, name)` evaluates to
     `"deny"`. See docs/specs/skills.md.

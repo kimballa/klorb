@@ -21,8 +21,7 @@ class ActivateSkillTool(Tool):
 
     Gated by the skill's `skillRules` verdict: `"deny"` raises, `"ask"` interrupts for approval,
     `"allow"` proceeds. An unknown `(namespace, name)` is a plain `ValueError`. Once gated, also
-    dispatches the `onActivateSkill` hook (`Session.fire_activate_skill_hook`); a denial there
-    raises `ToolCallError`. See docs/specs/skills.md and docs/specs/hooks-and-events.md.
+    dispatches the `onActivateSkill` hook; a denial there raises `ToolCallError`.
     """
 
     def name(self) -> str:

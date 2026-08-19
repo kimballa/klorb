@@ -1,6 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Sub-main entry points for `klorb index`'s actions (`search`/`scan`/`stats`), dispatched to by
-`klorb.cli.index.run_index_cli`. See docs/specs/local-search-index.md.
+"""Sub-main entry points for `klorb index`'s actions (`search`/`scan`/`stats`).
 """
 
 import argparse
@@ -24,7 +23,7 @@ _NEEDS_INIT_MESSAGE = "Embedding model not installed; run `klorb init` first."
 
 
 def build_search_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb index search`'s own flags -- see `run_search_cli()`."""
+    """Build the argument parser for `klorb index search`'s own flags."""
     parser = argparse.ArgumentParser(
         prog="klorb index search",
         description="Search the workspace's local semantic search index, the same hybrid "
@@ -56,7 +55,7 @@ def build_search_parser() -> argparse.ArgumentParser:
 
 
 def build_scan_parser(*, default_gpu: bool = True) -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb index scan`'s own flags -- see `run_scan_cli()`.
+    """Build the argument parser for `klorb index scan`'s own flags.
     `default_gpu` sets `--gpu`'s default when neither `--gpu` nor `--no-gpu` is passed."""
     parser = argparse.ArgumentParser(
         prog="klorb index scan",
@@ -81,7 +80,7 @@ def build_scan_parser(*, default_gpu: bool = True) -> argparse.ArgumentParser:
 
 
 def build_stats_parser() -> argparse.ArgumentParser:
-    """Build the argument parser for `klorb index stats`'s own flags -- see `run_stats_cli()`."""
+    """Build the argument parser for `klorb index stats`'s own flags."""
     parser = argparse.ArgumentParser(
         prog="klorb index stats",
         description="Show summary statistics for the workspace's local search index.",
@@ -119,9 +118,8 @@ def _chunk_to_file_entry(chunk: Chunk, score: float) -> dict[str, Any]:
 
 
 def _hits_to_file_entries(hits: list[tuple[Chunk, float]]) -> list[dict[str, Any]]:
-    """Group `hits` (chunk/score pairs, already ranked) by file in the same shape the
-    SemanticSearch tool's result carries: each entry's `lines` are dense-format (`*line|text`,
-    every line of a matched chunk marked), and `score` is the file's best-scoring chunk."""
+    """Group `hits` (chunk/score pairs, already ranked) by file, returning each entry's `lines`
+    in dense-format (`*line|text`) and `score` as the file's best-scoring chunk."""
     entries_by_path: dict[str, dict[str, Any]] = {}
     for chunk, score in hits:
         entry = entries_by_path.get(chunk.source_path)

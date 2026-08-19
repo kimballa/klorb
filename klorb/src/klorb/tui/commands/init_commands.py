@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Command palette provider offering "Init local klorb config", the interactive equivalent of
-`klorb init --user` — see docs/specs/klorb-init.md.
+`klorb init --user`. See docs/specs/klorb-init.md.
 """
 
 from typing import Protocol, cast
@@ -16,17 +16,16 @@ class SupportsShowNotice(Protocol):
     """Structural interface for an App that can append a status message to its history."""
 
     def show_notice(self, message: str, *, error: bool = False) -> None:
-        """Show `message` to the user, e.g. as a `.notice`/`.error` item in the history scroll."""
+        """Show `message` to the user."""
 
 
 class InitCommandProvider(Provider):
     """Offers "Init local klorb config" via the command palette (`ctrl+p` or by typing
-    `>init` in the prompt) — runs `klorb.klorb_init.run_init("user", force=False)` for the
-    user running this REPL, then reports the outcome via `App.show_notice()`. Yields no
+    `>init` in the prompt), running `klorb.klorb_init.run_init("user", force=False)` for the
+    user running this REPL, then reporting the outcome via `App.show_notice()`. Yields no
     hits at all when `klorb.klorb_init.is_user_scope_initialized()` is `True` (both the
     user-scope config file and the `klorb` symlink already exist), since the command would
-    be a pure no-op in that case — a hidden command rather than a confusing "already
-    exists" notice.
+    be a pure no-op in that case.
     """
 
     async def search(self, query: str) -> Hits:

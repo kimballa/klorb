@@ -17,7 +17,7 @@ _ACTIONS: dict[str, Callable[[list[str]], int]] = {
 
 def run_index_cli(argv: list[str]) -> int:
     """Parse `argv` (the arguments following `klorb index`) and dispatch to the sub-main
-    function for the given action (`search`/`scan`/`stats`) in `klorb.search_index.cli`,
+    function for the given action in `klorb.search_index.cli`,
     passing along the rest of `argv`. Prints usage and returns 2 if no action, or an
     unrecognized one, was given.
     """

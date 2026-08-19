@@ -1,14 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Generic single-table permission-rule persistence: the "load a config file's one
 `sessionDefaults` rules key, mutate one `deny`/`ask`/`allow` category, write it back" scaffolding
-shared by every simple rules kind with that shape -- see `klorb.permissions.command_grant`/
-`klorb.permissions.skill_grant`, which each instantiate a `RuleGrantWriter` parameterized on
-their own rules type, config key, and (de)serializers.
-
-`klorb.permissions.grant` (directory rules) is not built on this: a directory grant must keep
-`readDirs` and `writeDirs` in sync together as a pair, and dedupes by canonicalized-path
-equality rather than plain equality -- a two-table, canonicalizing shape this single-table,
-plain-equality base doesn't cover.
+for every simple rules kind with that shape.
 """
 
 from pathlib import Path
@@ -37,11 +30,8 @@ def apply_decision_to_rules(
 ) -> RulesT:
     """Return a NEW rules object (built via `make(deny, ask, allow)`): every entry in `granted`
     appended to `action`'s own category (deduped against its existing entries), and any `ask`
-    entry equal to one of `granted` removed. The *other* category is left untouched -- an
-    "Allow, always" decision never strips an existing `deny` entry (which would be a security
-    regression if a stricter admin-level deny already existed -- `deny` still wins via category
-    order regardless), and a "Deny, always" decision never strips an existing `allow` entry (the
-    new `deny` entry already wins on its own). Never mutates `rules` in place.
+    entry equal to one of `granted` removed. The *other* category is left untouched. Never
+    mutates `rules` in place.
     """
     target = rules.allow if action == "allow" else rules.deny
     new_target = list(target)
@@ -91,15 +81,12 @@ class RuleGrantWriter(Generic[RulesT]):
             path, new_contents, schema_name=CONFIG_SCHEMA_NAME, schema_version=CONFIG_SCHEMA_VERSION)
 
     def apply_decision(self, rules: RulesT, granted: list[Any], action: GrantAction) -> RulesT:
-        """Return a NEW rules object with `action`'s decision for `granted` applied in memory
-        (see `apply_decision_to_rules`), without touching any file -- what
-        `apply_command_permission_grant`/`apply_skill_permission_grant` use to update the live
-        `SessionConfig`/`ProcessConfig` before (for a persistent scope) also persisting to disk."""
+        """Return a NEW rules object with `action`'s decision for `granted` applied in memory,
+        without touching any file."""
         return apply_decision_to_rules(rules, granted, action, self._make)
 
     def apply_grant_to_file(self, path: Path, granted: list[Any], action: GrantAction) -> None:
-        """Load `path`'s rules, apply `action`'s decision for `granted` (see
-        `apply_decision_to_rules`), and write the result back."""
+        """Load `path`'s rules, apply `action`'s decision for `granted`, and write the result back."""
         raw, rules = self.load_file_rules(path)
         new_rules = apply_decision_to_rules(rules, granted, action, self._make)
         self.write_file_rules(path, raw, new_rules)

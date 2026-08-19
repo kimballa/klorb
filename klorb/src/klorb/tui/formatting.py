@@ -66,9 +66,7 @@ def format_token_count(count: int) -> str:
 
 
 def _readable_entry_text(entry: dict[str, Any]) -> str | None:
-    """One `reasoning_details` entry's own human-readable text, if it has one -- `text` if it's a
-    `str`, else `summary` if *that's* a `str`, else `None` (an opaque entry, e.g. OpenRouter's
-    `reasoning.encrypted` type)."""
+    """One `reasoning_details` entry's own human-readable text, if it has one."""
     text = entry.get("text")
     if isinstance(text, str):
         return text
@@ -80,16 +78,9 @@ def resolve_thinking_body_text(content: str, reasoning_details: list[dict[str, A
     """The text a `<Thinking>` block should actually show: `content` (the model's plain-text
     `reasoning` delta) if it has anything, else every `reasoning_details` entry's own `text`/
     `summary` field joined together. A provider can stream reasoning *only* via structured
-    `reasoning_details` fragments, with no matching plain-text `reasoning` delta ever sent --
-    leaving `content` empty even though real, human-readable reasoning text exists in
-    `reasoning_details`. Returns `content` unchanged (including empty) when there's nothing in
-    `reasoning_details` to fall back to -- a `Message` with genuinely no reasoning of either kind.
-
-    Guaranteeing the `<Thinking>` block shows every entry's own `text`/`summary` is what makes
-    `summarize_reasoning_details`'s own assumption (that such entries are "content the `<Thinking>`
-    block already shows in full") actually hold; call this first, then pass the *original*
-    `reasoning_details` to `summarize_reasoning_details` for the separate "N preserved, M
-    encrypted" note.
+    `reasoning_details` fragments, with no matching plain-text `reasoning` delta ever sent.
+    Returns `content` unchanged (including empty) when there's nothing in `reasoning_details`
+    to fall back to.
     """
     if content.strip():
         return content
@@ -100,12 +91,9 @@ def resolve_thinking_body_text(content: str, reasoning_details: list[dict[str, A
 
 
 def summarize_reasoning_details(entries: list[dict[str, Any]]) -> str | None:
-    """Return a compact indicator string for a turn's `reasoning_details` payload (see
-    `klorb.message.Message.reasoning_details`), or `None` if every entry carries its own
-    human-readable `text`/`summary` string -- content the `<Thinking>` block already shows in
-    full, since a provider's plain-text `reasoning` delta is itself composed from those same
-    entries. An entry with neither field (e.g. OpenRouter's opaque `reasoning.encrypted`
-    type) carries information the `<Thinking>` block can't display, so any such entry makes
+    """Return a compact indicator string for a turn's `reasoning_details` payload, or `None` if
+    every entry carries its own human-readable `text`/`summary` string. An entry with neither
+    field carries information the `<Thinking>` block can't display, so any such entry makes
     the whole payload worth a one-line note confirming it was captured and will be resent on
     a later turn.
     """
@@ -126,7 +114,7 @@ def format_workspace_path(
     path: Path, max_chars: int = _WORKSPACE_PATH_DISPLAY_MAX_CHARS,
 ) -> str:
     """Render `path` for the header: the full path if it's at most `max_chars` characters long,
-    else just its last two components prefixed with `"..."` (e.g. `".../last/two_parts"`).
+    else just its last two components prefixed with `"..."`.
     """
     full = str(path)
     if len(full) <= max_chars or len(path.parts) < 2:
@@ -157,12 +145,8 @@ def _idle_ticks() -> int:
 def crawl_animation_text(word: str, position: int) -> Text:
     """One frame of the "still working" pulse animation: a bright_white cursor sweeps left
     to right across `word` one character per tick, starting at the first character and
-    continuing until it has swept past the last character and off the
-    right edge; `word` then sits at default style, unhighlighted, for `_idle_ticks()` ticks
-    before the sweep restarts. `position` is the caller's tick counter, incremented once per
-    `ANIMATION_TICK_SECONDS` interval -- e.g. `RunningToolCallStatic`'s "Running..." while a
-    tool call executes, or `TurnWaitingStatic`'s "still working" text while a submitted turn is
-    under way.
+    continuing until it has swept past the last character and off the right edge; `word` then
+    sits at default style, unhighlighted, for `_idle_ticks()` ticks before the sweep restarts.
     """
     sweep_ticks = _sweep_ticks(word)
     tick = position % (sweep_ticks + _idle_ticks())
@@ -184,14 +168,7 @@ def crawl_animation_text(word: str, position: int) -> Text:
 
 def pinned_to_bottom(history: VerticalScroll) -> bool:
     """Whether `history`'s viewport is currently showing its bottom edge, i.e. whether the
-    user hasn't scrolled away from the latest content.
-
-    Only `ReplApp._on_history_scroll_changed` should call this: it's accurate exactly when
-    `history`'s `scroll_y` has just changed (mounting a widget doesn't itself update
-    `max_scroll_y` until the next layout refresh, so calling this at an arbitrary other time
-    can read a stale comparison). Everywhere else that needs to know whether to follow new
-    content to the bottom reads the cached `ReplApp._history_pinned_to_bottom` instead.
-    """
+    user hasn't scrolled away from the latest content."""
     return history.is_vertical_scroll_end
 
 
@@ -219,30 +196,21 @@ def _diff_gutter_width(hunks: list[DiffHunk]) -> int:
 
 _COMPACT_CONTEXT_BEFORE_LINES = 2
 """How many lines of unchanged context `render_diff_content`'s compact (`max_lines`-capped) view
-keeps immediately before the first changed line -- deliberately much less than the full
-`DIFF_CONTEXT_LINES` a hunk actually carries (and shows in full in the uncapped/overlay view):
-spending most of an already-short `max_lines` budget on leading context that isn't the change
-itself would otherwise crowd the actual edit out of the compact preview -- or, for a change with
-a full context window ahead of it, out entirely, leaving a compact view that shows nothing but
-context and a trailing `"..."`."""
+keeps immediately before the first changed line: spending most of an already-short `max_lines`
+budget on leading context that isn't the change itself would otherwise crowd the actual edit
+out of the compact preview."""
 
 
 def render_diff_content(hunks: list[DiffHunk], *, max_lines: int | None) -> Content:
-    """Render `hunks` (see `klorb.tools.util.diff_lines.build_diff_hunks`) as a `Content` with a
-    right-aligned `old_lineno new_lineno` gutter, a `+`/`-`/` ` marker, and the line's text --
-    `add` lines styled `green`, `del` lines `red`, `context` lines unstyled. A muted `"⋮"`
-    separator line is inserted between two hunks that aren't adjacent (i.e. whenever there's more
-    than one hunk at all -- `build_diff_hunks` only ever splits into multiple hunks when they're
-    too far apart to share one another's context).
+    """Render `hunks` as a `Content` with a right-aligned `old_lineno new_lineno` gutter, a
+    `+`/`-`/` ` marker, and the line's text. A muted `"⋮"` separator line is inserted between
+    two hunks that aren't adjacent.
 
     `max_lines` caps how many diff lines (not counting the `"⋮"` separator) are rendered before
-    appending a gutter-less `"..."` line and stopping -- `8` for the inline preview, `None`
-    (uncapped) for the full-diff detail/overlay view, which is already naturally bounded by
-    however much context `build_diff_hunks` kept on each side. When capped, rendering also starts
+    appending a gutter-less `"..."` line and stopping. When capped, rendering also starts
     `_COMPACT_CONTEXT_BEFORE_LINES` lines before the first changed line rather than at the very
-    start of the first hunk's own (much longer) leading context -- otherwise, for a change with a
-    full context window ahead of it, an 8-line cap would show nothing but that context-before and
-    never reach the change itself. The full leading context is still there for the uncapped view.
+    start of the first hunk's own (much longer) leading context. The full leading context is
+    still there for the uncapped view.
     """
     width = _diff_gutter_width(hunks)
     flat: list[DiffLine | None] = []
@@ -284,30 +252,20 @@ def render_diff_content(hunks: list[DiffHunk], *, max_lines: int | None) -> Cont
 
 
 def render_read_preview_content(preview_lines: list[tuple[int, str]], truncated: bool) -> Content:
-    """Render a `ReadPreview.preview_lines` (already capped to the inline preview's line count by
-    the `Tool.read_preview()` override that built it) as a plain, numbered-gutter `Content`, with
-    a trailing gutter-less `"..."` line when `truncated` -- the read-tool counterpart to
-    `render_diff_content`'s inline (capped) form, but with no add/delete coloring since a read
-    has nothing to compare against."""
+    """Render `ReadPreview.preview_lines` as a plain, numbered-gutter `Content`, with a trailing
+    gutter-less `"..."` line when `truncated`.
+    """
     return _render_numbered_lines(preview_lines, truncated=truncated)
 
 
 def render_full_file_content(lines: list[tuple[int, str]]) -> Content:
-    """Render every line of a `FullFileView.lines` as a plain, numbered-gutter `Content` -- the
-    full-file counterpart to `render_read_preview_content`, for the read click-to-expand
-    overlay. Never truncated: this is the whole subject."""
+    """Render every line of a `FullFileView.lines` as a plain, numbered-gutter `Content`.
+    Never truncated: this is the whole subject."""
     return _render_numbered_lines(lines, truncated=False)
 
 
 def prefix_with_header(header: str, content: Content) -> Content:
-    """Prepend `header` as its own plain (unstyled -- matching how `Tool.summary()`'s one-line
-    text has always rendered) line above `content`, e.g. `"Edit file: foo.py (+1/-1)"` above the
-    diff itself, or `"Read file: foo.py (lines 1-165 of 165)"` above the numbered preview --
-    used for a `DiffPreview`/`ReadPreview`'s inline `summary_content`/`detail_content` in the
-    history scroll, which otherwise show only the diff/content with no indication of which call
-    or file they belong to. Not used for the click-to-expand overlay's body: `DiffDetailScreen`/
-    `ReadDetailScreen` already show the label as their own separate header `Static`, so prefixing
-    it into their content too would show it twice."""
+    """Prepend `header` as its own plain line above `content`."""
     return Content.assemble(header, "\n", content)
 
 
@@ -321,8 +279,7 @@ def _render_numbered_lines(pairs: list[tuple[int, str]], *, truncated: bool) -> 
 
 def _assemble_lines(lines: list[str | tuple[str, str]]) -> Content:
     """Join `lines` (each a plain string or a `(text, style)` pair, one per rendered row) into a
-    single `Content` with a `"\\n"` between every pair of rows -- shared by every preview
-    renderer above so none of them has to reason about trailing-newline bookkeeping itself."""
+    single `Content` with a `"\\n"` between every pair of rows."""
     if not lines:
         return Content("")
     parts: list[str | tuple[str, str]] = [lines[0]]
@@ -342,13 +299,7 @@ closing tag) including the trailing newline, so stripping leaves no orphan blank
 
 def strip_system_interjections(text: str) -> str:
     """Remove every `<SystemInterjection>` block from `text`, collapsing any resulting
-    runs of blank lines down to at most one, and stripping leading/trailing whitespace.
-
-    Used by `_mount_restored_history` to cull harness-injected interjections from
-    persisted user messages before displaying them in the TUI history scroll — the
-    interjections belong in the agent's context but not in the human-facing conversation
-    view.
-    """
+    runs of blank lines down to at most one, and stripping leading/trailing whitespace."""
     cleaned = _SYSTEM_INTERJECTION_RE.sub("", text)
     # Collapse runs of blank lines (including the gaps left by removed blocks).
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
@@ -360,16 +311,13 @@ _USER_SKILL_ACTIVATION_RE = re.compile(
     re.DOTALL,
 )
 """Matches the one `UserSkillActivation` block `strip_system_interjections` would otherwise
-elide entirely, capturing its JSON payload -- see `extract_skill_activation_notice`."""
+elide entirely, capturing its JSON payload."""
 
 
 def extract_skill_activation_notice(text: str) -> str | None:
-    """If `text` (a stored user message's raw content, before `strip_system_interjections`)
-    carries a `UserSkillActivation` interjection, return a one-line "Activated skill: <namespace>/
-    <name>" notice for it -- so a restored history scroll still shows that a leading `/<name>`
-    mention activated a skill, even though the interjection body itself is stripped from the
-    displayed message. `None` if `text` carries no such interjection, or its payload doesn't
-    parse (never raises)."""
+    """If `text` carries a `UserSkillActivation` interjection, return a one-line "Activated skill:
+    <namespace>/<name>" notice for it. `None` if `text` carries no such interjection, or its
+    payload doesn't parse."""
     match = _USER_SKILL_ACTIVATION_RE.search(text)
     if match is None:
         return None

@@ -99,10 +99,8 @@ def test_session_scope_deny(tmp_path: Path) -> None:
 def test_explicit_patterns_are_recorded_as_is_instead_of_the_literal_argv_fallback(
     tmp_path: Path,
 ) -> None:
-    """Regression test: a caller with its own precomputed patterns (e.g. a risk-classifier
-    `suggested_pattern` threaded through `PermissionDecision.grant_patterns`) must have that
-    exact pattern persisted -- not `compute_command_grant_patterns()`'s literal-argv fallback,
-    which would silently narrow a wildcard grant a UI already showed the user."""
+    """Regression test: a caller with its own precomputed patterns must have that
+    exact pattern persisted."""
     session_config = SessionConfig(workspace=Workspace(path=tmp_path))
     argv = ["grep", "-rn", "TODO", "src/foo.py"]
 

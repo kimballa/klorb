@@ -36,7 +36,7 @@ def _fake_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexer_module, "get_embedding_model", lambda **kwargs: _FakeEmbeddingModel())
     monkeypatch.setattr(indexer_module, "EmbeddingModel", _FakeEmbeddingModel)
     # No real GPU in these tests regardless of what's actually installed on the machine running
-    # the suite -- scan/search/stats tests exercise the CPU fallback path deterministically.
+    # the suite.
     monkeypatch.setattr(indexer_module, "try_gpu_embedding_model", lambda **kwargs: None)
     monkeypatch.setattr(cli_module, "embedding_model_available", lambda: True)
 

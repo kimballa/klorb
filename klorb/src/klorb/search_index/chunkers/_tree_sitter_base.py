@@ -1,10 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""`TreeSitterChunker`: the tree-sitter-driven structural chunker shared by `code_python.py` and
-`code_typescript.py`, parameterized per language by a `LanguageSpec` rather than subclassed --
-the two languages' grammars differ in node-type names, but the walk (top-level declarations,
-class members, export wrappers, leftover-statement runs) is the same shape for both. A file that
-fails to parse (tree-sitter reports an error node covering the whole tree) contributes no
-structural chunks at all; the windowed chunker still covers it.
+"""`TreeSitterChunker`: a tree-sitter-driven structural chunker parameterized per language by a
+`LanguageSpec` rather than subclassed. A file that fails to parse contributes no structural
+chunks at all; the windowed chunker still covers it.
 """
 
 import threading
@@ -24,21 +21,17 @@ class LanguageSpec:
     method_types: frozenset[str]
     field_types: frozenset[str]
     """Node types within a class body, other than `method_types`, whose verbatim text is folded
-    into the class's synopsis chunk -- Python assignment statements and its docstring alike (both
-    are `expression_statement` nodes), and TS field declarations."""
+    into the class's synopsis chunk."""
     export_wrapper_types: frozenset[str] = field(default_factory=frozenset)
-    """Node types (e.g. TypeScript's `export_statement`) that wrap a single real declaration as
-    their sole named child -- unwrapped to classify the declaration, but the *outer* wrapper's
-    span is still what gets chunked, so `export`/`export default` stays in the chunk's text."""
+    """Node types that wrap a single real declaration as their sole named child -- unwrapped to
+    classify the declaration, but the outer wrapper's span is still what gets chunked."""
     class_body_field: str = "body"
     def_body_field: str = "body"
 
 
 def _effective_node(node: Node, spec: LanguageSpec) -> Node:
-    """`node` itself, or -- if `node` is an export/decorator wrapper -- its wrapped declaration
-    (the first named child that isn't itself a `decorator`), used only to classify `node`; the
-    wrapper's own span is still what gets chunked, so a decorator or `export` keyword stays in
-    the chunk's text."""
+    """`node` itself, or its wrapped declaration if `node` is an export or decorator wrapper,
+    used only to classify `node`; the wrapper's own span is still what gets chunked."""
     if node.type not in spec.export_wrapper_types:
         return node
     for candidate in node.named_children:
@@ -48,8 +41,8 @@ def _effective_node(node: Node, spec: LanguageSpec) -> Node:
 
 
 def _signature_text(outer: Node, effective: Node, body_field: str, source: bytes) -> str:
-    """`outer`'s text (decorator included, if `outer` wraps `effective`) up to but not including
-    `effective`'s body block -- the `def`/method signature line(s) without the implementation."""
+    """`outer`'s text up to but not including `effective`'s body block -- the signature line(s)
+    without the implementation."""
     body = effective.child_by_field_name(body_field)
     end = body.start_byte if body is not None else outer.end_byte
     return source[outer.start_byte:end].decode("utf-8", errors="replace").rstrip()
@@ -64,10 +57,7 @@ def _line_span(node: Node) -> tuple[int, int]:
 
 
 class TreeSitterChunker(Chunker):
-    """A `tree_sitter.Parser` isn't safe for concurrent use, so each thread that calls `chunk()`
-    gets its own lazily-constructed instance (`self._local`) rather than one shared per
-    `TreeSitterChunker` -- the router that owns this chunker is itself a single shared instance
-    across every thread of a multi-threaded `klorb index scan`."""
+    """Thread-safe chunker: each thread gets its own lazily-constructed `Parser` instance."""
 
     def __init__(self, spec: LanguageSpec) -> None:
         self._spec = spec

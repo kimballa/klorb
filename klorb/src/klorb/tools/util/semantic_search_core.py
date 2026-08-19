@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
-"""`SemanticSearchCore`: shared mechanics behind `SemanticSearch`/`SearchMemories`'s semantic-hit
-handling. See docs/specs/local-search-index.md.
+"""Semantic-hit handling for `SemanticSearch` and `SearchMemories`.
+See docs/specs/local-search-index.md.
 """
 
 from pathlib import Path

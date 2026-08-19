@@ -1,10 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""Pure functions mapping a session's chainlink issues onto an ACP `plan` session update -- see
-docs/specs/klorb-server.md's "Chainlink task-plan updates" section. Kept free of I/O: the
-chainlink fetch itself (`ChainlinkClient`/`fetch_and_sort_issues`) stays in
-`klorb.server.turn_bridge.TurnBridge`, which passes the already-fetched, already-sorted issue
-list to `build_plan_update` here.
-"""
+"""Pure functions mapping a session's chainlink issues onto an ACP `plan` session update."""
 
 from typing import Any
 
@@ -20,16 +15,14 @@ _ACP_PRIORITY_MAP: dict[str, PlanEntryPriority] = {
 }
 """Collapses chainlink's four-level `klorb.tools.tasks.common.PRIORITY_ORDER` onto ACP's
 three-level `PlanEntryPriority` -- `critical` and `high` both become `"high"`, since ACP has no
-finer grade above it. Recorded here (rather than derived) since the collapse itself, not just
-the source priority set, is the durable contract a client can depend on."""
+finer grade above it."""
 
 
 def build_plan_update(issues: list[dict[str, Any]], cur_task_id: int | None) -> AgentPlanUpdate:
     """Map `issues` -- already fetched and sorted by `klorb.tools.tasks.common.
-    fetch_and_sort_issues` (this function never re-sorts) -- onto an ACP `plan` session update:
+    fetch_and_sort_issues` -- onto an ACP `plan` session update:
     one `PlanEntry` per issue, in the same order, plus `_meta.klorb` detail at both the entry and
-    update level so a klorb-aware client can render the task panel without re-deriving it (see
-    docs/specs/klorb-server.md)."""
+    update level so a klorb-aware client can render the task panel without re-deriving it."""
     open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
     entries: list[PlanEntry] = []
     open_count = 0

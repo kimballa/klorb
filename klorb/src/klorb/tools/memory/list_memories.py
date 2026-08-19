@@ -1,5 +1,5 @@
 # © Copyright 2026 Aaron Kimball
-"""A Tool that enumerates the memory files available in the global and workspace namespaces."""
+"""Enumerates memory files in the global and workspace namespaces."""
 
 import logging
 from collections.abc import Sequence
@@ -17,13 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class ListMemoriesTool(Tool):
-    """Enumerates every memory file in the `global` and `workspace` namespaces (see
-    `klorb.tools.memory.common`), returning each one's `filename` and `topic` (its first line,
-    or `""` if the file is empty or that line is blank).
+    """Enumerates every memory file in both namespaces, returning each one's `filename` and `topic`.
 
-    The `workspace` namespace is reported as `[]` -- without touching disk -- whenever the
-    current workspace is untrusted; `global` is unaffected by workspace trust. Otherwise always
-    allowed, with no further permission check.
+    The `workspace` namespace is reported as `[]` without touching disk whenever the current
+    workspace is untrusted; `global` is unaffected by workspace trust.
     """
 
     def name(self) -> str:

@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for the ACP server's `session/request_permission`/`_klorb/raiseToolCallLimit` surfaces:
 `on_permission_ask`/`on_escalate_privileges`/`on_tool_call_limit_reached` wired through
-`TurnBridge` against real klorb tools (`CreateFile`, `Bash`, `EscalatePrivileges`, `ReadFile`).
+`TurnBridge` against real klorb tools.
 See docs/specs/klorb-server.md."""
 
 import json
@@ -56,7 +56,7 @@ def _allow_once(option_id: str = "allow:once") -> RequestPermissionResponse:
 
 @pytest.fixture
 async def make_harness(tmp_path: Path, make_session_config: Callable[..., SessionConfig]):
-    """Factory fixture, mirroring the other `server/` test modules' own: `await make_harness(
+    """Factory fixture: `await make_harness(
     provider=..., process_config=...)` returns a running `AcpHarness` wired to an isolated
     `TrustManager`, closed automatically at teardown if the test hasn't already closed it."""
     harnesses: list[AcpHarness] = []
@@ -120,10 +120,7 @@ async def test_permission_ask_synthesizes_a_tool_call_when_none_in_flight(
     make_harness: Callable[..., Any], tmp_path: Path,
 ) -> None:
     """Defensive path: `permission_ask_tool_call_update` synthesizes a fresh `toolCallId` when
-    `TurnBridge`'s in-flight call stack is empty -- exercised here only through the pure-function
-    unit test (`test_update_mapping.py`), since every real klorb tool call always has one
-    in-flight by the time it can raise an ask. This test instead pins that the stack is populated
-    from the real call in flight, i.e. the non-defensive path, end to end."""
+    `TurnBridge`'s in-flight call stack is empty."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     mock_provider = MagicMock()

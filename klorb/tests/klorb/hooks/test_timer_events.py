@@ -13,19 +13,13 @@ from klorb.hooks.hook_api import EventInput
 from klorb.hooks.timer_events import TimerScheduler, clamp_timer_intervals, compute_next_fire
 
 _SHORT_INTERVAL_MINUTES = 0.002
-"""~120ms -- fast enough for a test. Deliberately below the production
-`MIN_EVENT_DEBOUNCE_SECONDS` floor: these tests construct `TimerEventConfig` instances
-directly, bypassing `clamp_timer_intervals` (a config-load-time concern exercised by
-`klorb.tests.klorb.test_process_config` instead)."""
+"""~120ms."""
 
 
 @pytest.fixture
 def _fast_debounce_floor(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`_schedule_next`'s own `MIN_EVENT_DEBOUNCE_SECONDS` delay floor (see
-    `test_schedule_next_clamps_delay_to_the_debounce_floor`) would otherwise force every
-    real-timer test below to wait a genuine 10 seconds per fire -- lowered here the same way
-    `_SHORT_INTERVAL_MINUTES` bypasses `clamp_timer_intervals`, for tests that exercise
-    scheduler mechanics rather than the floor itself."""
+    """`_schedule_next`'s own `MIN_EVENT_DEBOUNCE_SECONDS` delay floor would otherwise force every
+    real-timer test below to wait a genuine 10 seconds per fire."""
     monkeypatch.setattr("klorb.hooks.timer_events.MIN_EVENT_DEBOUNCE_SECONDS", _SHORT_INTERVAL_MINUTES * 60)
 
 
@@ -105,8 +99,7 @@ def test_clamp_timer_intervals_is_idempotent() -> None:
 
 class _Recorder:
     """Captures every `dispatch` call, signaling an `asyncio.Event` so a test can `await` the
-    next background-thread delivery instead of polling or sleeping a fixed duration -- mirrors
-    `klorb.tests.klorb.hooks.test_fs_events._Recorder`."""
+    next background-thread delivery instead of polling or sleeping a fixed duration."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[TimerEventConfig], EventInput]] = []
@@ -124,8 +117,7 @@ class _Recorder:
 
 @pytest.fixture
 async def recorder() -> _Recorder:
-    """An async fixture so `_Recorder.__init__` captures the test's own running event loop --
-    see `test_fs_events.recorder`'s identical rationale."""
+    """An async fixture so `_Recorder.__init__` captures the test's own running event loop."""
     return _Recorder()
 
 
@@ -188,10 +180,7 @@ async def test_timer_scheduler_reschedules_after_dispatch_raises(
 ) -> None:
     """A dispatch failure (a hook handler error, or `Session.deliver_event_message` raising
     `ChainedHookMessageUndeliverableError` while idle) must not silently stop this entry from
-    ever firing again -- unlike `FileSystemWatcher`, `TimerScheduler` reschedules itself
-    (`_schedule_next`, called right after `self._dispatch(...)`), so skipping that call on an
-    uncaught exception would kill the entry permanently. See docs/adrs/00186 (chained-turn
-    delivery)."""
+    ever firing again."""
     call_count = 0
 
     def _raise_once_then_record(
@@ -219,10 +208,7 @@ async def test_timer_scheduler_reschedules_after_dispatch_raises(
 
 def test_schedule_next_clamps_delay_to_the_debounce_floor(tmp_path: Path) -> None:
     """`_schedule_next`'s own delay is clamped to `MIN_EVENT_DEBOUNCE_SECONDS`, not just
-    `clamp_timer_intervals`'s config-load-time floor on `interval_minutes` -- a fast cron
-    expression bypasses that floor entirely, so this is the backstop that still catches it.
-    Uses the real, unpatched floor and inspects the scheduled `threading.Timer` directly rather
-    than waiting for it to fire."""
+    `clamp_timer_intervals`'s config-load-time floor on `interval_minutes`."""
     entry = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
     scheduler = TimerScheduler(tmp_path, [entry], dispatch=_no_op_dispatch)
     try:
