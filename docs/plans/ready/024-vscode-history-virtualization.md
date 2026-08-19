@@ -1,5 +1,7 @@
 # Plan 024: VSCode plugin history virtualization
 
+**Current status: phases 1 and 2 complete; phase 3 pending.**
+
 ## Problem
 
 `HistoryView` (`vscode-plugin/src/webview/features/history/components/HistoryView.tsx`)
