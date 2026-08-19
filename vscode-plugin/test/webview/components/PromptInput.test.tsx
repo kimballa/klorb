@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 // © Copyright 2026 Aaron Kimball
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { VscodeButton, VscodeTextarea } from '@vscode-elements/elements';
 import { act, createRef } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -22,23 +23,18 @@ vi.mock('@chenglou/pretext', () => ({
 
 const NOOP = { onCancel: () => undefined, onCyclePermissionMode: () => undefined };
 
-function promptTextarea(container: HTMLElement): HTMLElement & { value: string } {
+function promptTextarea(container: HTMLElement): VscodeTextarea {
   // eslint-disable-next-line testing-library/no-node-access
   const textarea = container.querySelector('vscode-textarea');
   if (textarea === null) {
     throw new Error('vscode-textarea not rendered');
   }
-  return textarea as HTMLElement & { value: string };
+  return textarea as VscodeTextarea;
 }
 
 function typeText(container: HTMLElement, text: string): void {
   const textarea = promptTextarea(container);
   textarea.value = text;
-  // Position the cursor at end-of-text so caret-dependent features (file/skill finder sync)
-  // see the same state a real user keystroke would produce.
-  const el = textarea as HTMLTextAreaElement;
-  el.selectionStart = text.length;
-  el.selectionEnd = text.length;
   fireEvent(textarea, new Event('input', { bubbles: true }));
 }
 
@@ -48,7 +44,7 @@ describe('PromptInput', () => {
   it('disables the textarea and shows only Stop while a turn is in flight (no capability)', () => {
     const { container } = render(<PromptInput inFlight onSubmit={() => undefined} {...NOOP} />);
 
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+    expect(promptTextarea(container).disabled).toBe(true);
     expect(screen.queryByTitle('Send')).toBeNull();
     expect(screen.getByTitle('Stop')).toBeTruthy();
   });
@@ -58,7 +54,7 @@ describe('PromptInput', () => {
       <PromptInput inFlight enqueueMessageCapable onSubmit={() => undefined} {...NOOP} />
     );
 
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+    expect(promptTextarea(container).disabled).toBe(false);
     expect(screen.getByTitle('Send')).toBeTruthy();
     expect(screen.getByTitle('Stop')).toBeTruthy();
   });
@@ -68,11 +64,11 @@ describe('PromptInput', () => {
       <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
     );
 
-    expect(screen.getByTitle('Send').hasAttribute('disabled')).toBe(true);
+    expect((screen.getByTitle('Send') as VscodeButton).disabled).toBe(true);
 
     typeText(container, 'hello');
 
-    expect(screen.getByTitle('Send').hasAttribute('disabled')).toBe(false);
+    expect((screen.getByTitle('Send') as VscodeButton).disabled).toBe(false);
   });
 
   it('calls onSubmit with the trimmed text on Send while enqueueMessageCapable mid-turn', () => {
@@ -249,42 +245,37 @@ describe('PromptInput file finder', () => {
       />
     );
 
-    // Type text with the @mention in the middle.
+    const textarea = promptTextarea(container);
+    await textarea.updateComplete;
+
+    // Type text with the @mention in the middle, then wait for Lit's re-render to reach the
+    // real inner <textarea> before moving its selection. Setting `selectionStart` on it any
+    // earlier clamps against the stale, not-yet-updated value's length.
     typeText(container, 'see @App here');
+    await textarea.updateComplete;
 
     // Move the cursor to sit right after "@App" (position 8) so the finder sees a clean query.
-    const textarea = promptTextarea(container);
-    const ta = textarea as HTMLTextAreaElement;
-    ta.selectionStart = 8;
-    ta.selectionEnd = 8;
+    // Set directly on the real inner textarea (wrappedElement), which is what production code
+    // reads.
+    const wrapped = textarea.wrappedElement!;
+    wrapped.selectionStart = 8;
+    wrapped.selectionEnd = 8;
     fireEvent(textarea, new Event('input', { bubbles: true }));
 
-    // In production, <vscode-textarea> exposes wrappedElement (the inner <textarea> in shadow
-    // DOM) and updateComplete (a LitElement Promise that resolves after re-render).  jsdom
-    // doesn't register custom elements, so mock both to exercise the real code path.
-    Object.defineProperty(textarea, 'wrappedElement', {
-      get: () => textarea,
-      configurable: true,
-    });
-    Object.defineProperty(textarea, 'updateComplete', {
-      get: () => Promise.resolve(false),
-      configurable: true,
-    });
-
-    // Select the first match.
+    // Select the first match. The cursor is set inside an `updateComplete.then()` callback in
+    // `applyFinderSelection`, so flush both the re-render and that chained microtask.
     fireEvent.keyDown(textarea, { key: 'Enter' });
-
-    // The cursor is set inside an updateComplete .then() callback; flush the microtask.
     await act(async () => {
+      await textarea.updateComplete;
       await Promise.resolve();
     });
 
-    expect(ta.value).toBe('see @src/App.tsx  here');
+    expect(textarea.value).toBe('see @src/App.tsx  here');
     // The cursor should sit right after the inserted mention (after the trailing space),
     // not at the end of the full text.
     const expectedCursor = 'see @src/App.tsx '.length;
-    expect(ta.selectionStart).toBe(expectedCursor);
-    expect(ta.selectionEnd).toBe(expectedCursor);
+    expect(wrapped.selectionStart).toBe(expectedCursor);
+    expect(wrapped.selectionEnd).toBe(expectedCursor);
   });
 });
 

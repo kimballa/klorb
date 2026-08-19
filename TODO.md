@@ -152,11 +152,6 @@
 
 ## VSCode plugin
 
-### Bugs
-
-* jsdom does not register custom elements like the `<vscode-textarea>` so unit tests are not
-  a faithful representation of the in-vscode plugin environment. Can we fix this?
-
 ### Feature backlog
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.

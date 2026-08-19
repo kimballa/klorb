@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 // © Copyright 2026 Aaron Kimball
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { VscodeIcon } from '@vscode-elements/elements';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskInfo } from 'shared/webviewMessages';
@@ -123,9 +124,9 @@ describe('TaskPanel', () => {
     // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
     const summary = container.querySelector('.task-panel-summary');
     // eslint-disable-next-line testing-library/no-node-access
-    const chevron = summary?.firstElementChild;
+    const chevron = summary?.firstElementChild as VscodeIcon | undefined;
     expect(chevron?.className).toBe('task-panel-chevron');
-    expect(chevron?.getAttribute('name')).toBe('chevron-right');
+    expect(chevron?.name).toBe('chevron-right');
   });
 
   it('stars the current task, strikes closed tasks, and flags blocked ones', () => {

@@ -1,23 +1,11 @@
 // © Copyright 2026 Aaron Kimball
-// Importing these modules registers the <vscode-badge>/<vscode-button>/<vscode-context-menu>/
-// <vscode-context-menu-item>/<vscode-icon>/<vscode-progress-ring>/<vscode-textarea>/
-// <vscode-textfield> custom elements with the browser; the components themselves are rendered
-// from App.tsx/PromptInput.tsx/ToolCallChip.tsx/ApprovalPanel.tsx/QuestionPanel.tsx/
-// StatusMenu.tsx/TaskPanel.tsx.
-import '@vscode-elements/elements/dist/vscode-badge/index.js';
-import '@vscode-elements/elements/dist/vscode-button/index.js';
-import '@vscode-elements/elements/dist/vscode-context-menu/index.js';
-import '@vscode-elements/elements/dist/vscode-context-menu-item/index.js';
-import '@vscode-elements/elements/dist/vscode-icon/index.js';
-import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
-import '@vscode-elements/elements/dist/vscode-textarea/index.js';
-import '@vscode-elements/elements/dist/vscode-textfield/index.js';
 import { createRoot } from 'react-dom/client';
 
 import App from 'webview/App';
 import ErrorBoundary from 'webview/components/ErrorBoundary';
 import type { VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import { readPersistedState } from 'webview/features/sessionState';
+import 'webview/registerCustomElements';
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
