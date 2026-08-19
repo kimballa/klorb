@@ -7,12 +7,6 @@
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
-* I was able to [ESC] to cancel a running agent turn and submit a correction and get into the state
-  where there were two agent threads running simultaneously, both appending into the history view
-  and trying to run different commands. (Same thing I had happen much earlier where there is an
-  approval panel waiting for permission to run a bash cmd, but also there's a different bash command
-  also just running right above it in the historyview.)
-
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 

@@ -176,6 +176,13 @@ already finished the turn) so that even a `BaseException` — `asyncio.Cancelled
 cancellation, which slip past `except Exception` — still clears the flag whenever the worker
 unwinds at all.
 
+A terminal handler that drains a queued message (`_finish_turn`'s `drain_next_turn_text` call)
+starts a new turn — and a new `_cancel_event`/`_shell_cancel_event` — before returning control to
+the worker whose `finally` block is about to run `_ensure_turn_finished`. Checking `_turn_in_flight`
+alone can't tell that newer turn apart from the one this backstop is meant to guard, so
+`_ensure_turn_finished` also takes the worker's own cancel event and compares it by identity
+against the currently active one, no-oping unless they still match.
+
 What is deliberately **not** done is clearing `_turn_in_flight` from the event-loop thread while
 the worker is still alive. Python cannot kill a thread; a worker blocked forever inside
 `send_turn` (hang mode 1) cannot be terminated. If the flag were cleared and a new turn allowed
