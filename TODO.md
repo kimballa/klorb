@@ -7,10 +7,6 @@
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
-* (All python) Have an agent do a pass over all/most source (or do it in sections) to remove existing
-  over-explaining comments that recapitulate decisions already captured in ADRs, explain what a
-  function *doesn't* do, is overly-specific specific and brittle, etc.
-
 * I was able to [ESC] to cancel a running agent turn and submit a correction and get into the state
   where there were two agent threads running simultaneously, both appending into the history view
   and trying to run different commands. (Same thing I had happen much earlier where there is an
