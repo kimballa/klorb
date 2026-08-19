@@ -12,13 +12,6 @@
 
 ### Feature backlog
 
-* BUG: In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
-  either runaway threads or memory overrun.
-  * Definitely need to start pruning the rendered history in the DOM at a certain point. Phases 1
-    and 2 of `docs/plans/ready/023-tui-history-virtualization.md` are done; its Phase 3 (empirical
-    chunk-size/expand-threshold tuning) is still open. See also the VSCode-side counterpart,
-    `docs/plans/ready/024-vscode-history-virtualization.md`.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
