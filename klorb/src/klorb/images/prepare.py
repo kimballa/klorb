@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Resize/downsample/transcode pipeline for a raw image file headed into a vision model's
-prompt content.
+prompt content. See docs/specs/vision-image-input.md.
 """
 
 import base64
@@ -44,7 +44,7 @@ class ImageTooLargeError(Exception):
 
 class ImagePipelineConfig(BaseModel):
     """The `tools.images.*` settings `prepare_image_for_model` needs, extracted from
-    `klorb.process_config.ProcessConfig` by the caller rather than imported here directly."""
+    `klorb.process_config.ProcessConfig` by the caller."""
 
     default_max_dimension_px: int
     max_bytes_raw: int

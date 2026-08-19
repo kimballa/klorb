@@ -1,5 +1,7 @@
 # © Copyright 2026 Aaron Kimball
-"""`TimerScheduler`: the runtime counterpart to `klorb.hooks.config.TimerEventConfig`.
+"""`TimerScheduler`: the runtime counterpart to `klorb.hooks.config.TimerEventConfig`. Fires
+each configured entry's `action` on its own `interval_minutes`/`cron` schedule, best-effort
+only.
 """
 
 import logging

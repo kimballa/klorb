@@ -78,7 +78,7 @@ def _domain_matches(rule: str, candidate: str) -> bool:
     if rule.endswith(".*") and _is_ip_address(candidate):
         prefix = rule[:-2]  # strip ".*"
         try:
-            # Pad partial prefix to full IP
+            # Pad partial prefix to full IP (e.g. "172.16" -> "172.16.0.0")
             octets = prefix.split(".")
             while len(octets) < 4:
                 octets.append("0")

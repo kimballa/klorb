@@ -43,12 +43,14 @@ class HookInput(BaseModel):
     """The klorb process's own exit status, set only for `onProcessEnd`. Read-only: a handler's
     `HookOutput` cannot change it."""
     workspace_trusted: bool | None = None
-    """Whether the workspace is trusted, as of `onSessionStart` firing."""
+    """Whether the workspace is trusted, as of `onSessionStart` firing. Only set for
+    `onSessionStart`."""
     workspace_just_bootstrapped: bool | None = None
     """Whether this `onSessionStart` firing is what triggered a first-time workspace trust
     decision. `None` for every hook other than `onSessionStart`."""
     config: dict[str, Any] | None = None
-    """The entire resolved `ProcessConfig`, JSON-dumped."""
+    """The entire resolved `ProcessConfig`, JSON-dumped -- set only for `onProcessStart` and
+    `onSessionStart`, `None` for every other hook."""
 
 
 class HookOutput(BaseModel):
