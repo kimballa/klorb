@@ -497,9 +497,6 @@ class ReplApp(
         `_mount_subagent_status_notice` showing "Sending interrupt…" across every tick until
         the abort actually lands.
         """
-        self._queued_message_widgets: list[Static] = []
-        """History widgets for user messages queued during the agent turn, tracked so
-        `_finish_turn` can transition them from italics to regular once delivered."""
         self._active_turn_callbacks: TurnEventHandlers | None = None
         """The `TurnEventHandlers` built by `_send_prompt` for the turn currently in flight, or
         `None` between turns. `Session.drain_queued_messages()`'s `on_send_queued_message` hook

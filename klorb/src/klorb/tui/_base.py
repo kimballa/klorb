@@ -78,7 +78,6 @@ class ReplAppBase(App[None]):
     _history_pinned_to_bottom: bool
     _turn_waiting_widget: TurnWaitingStatic | None
     _active_sidebar: str | None
-    _queued_message_widgets: list[Static]
     _active_turn_callbacks: TurnEventHandlers | None
     _file_index: WorkspaceFileIndex | None
     _selected_session: Session

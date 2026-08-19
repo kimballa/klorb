@@ -278,9 +278,10 @@ config) has one place to live.
   tool-call round, it drains the queue (via `Session.deliver_queued_user_message`) and
   appends the drained text as a `role="user"` `Message` immediately after that round's
   `tool_response` messages, so the very next model request carries the tool results and the
-  user's message together and the model treats the latter as an ordinary user turn. When the
-  turn finishes, the TUI transitions the history widgets from italics to regular styling to
-  confirm delivery. Because the message is a real `role="user"` message,
+  user's message together and the model treats the latter as an ordinary user turn. As soon as
+  that mid-turn drain happens, the TUI drops the `<Queued message>` header and transitions the
+  message widget from italics to regular styling in place, confirming delivery without waiting
+  for the turn to finish. Because the message is a real `role="user"` message,
   `klorb.server.update_mapping.build_session_replay` renders it as a `"prompt"`-kind entry
   with no special handling.
 

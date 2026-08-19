@@ -150,11 +150,6 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-* When the agent is mid-turn and I type a phrase to enqueue a midturn prompt, I hit enter and the
-  queued up content shows up in italics (good) but after it is actually fed to the agent, it disappears
-  from the history view entirely. The agent responds to it so I know the msg was sent, but it's not
-  displaying on-screen after it's sent. (Possible regression after 5012aa32?)
-
 ## VSCode plugin
 
 ### Bugs

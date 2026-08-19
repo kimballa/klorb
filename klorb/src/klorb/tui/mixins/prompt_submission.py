@@ -258,7 +258,6 @@ class PromptSubmissionMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
         self._history_virtualizer = self._new_history_virtualizer(history)
-        self._queued_message_widgets.clear()
         self._mount_mascot_greeting(history)
         history.mount(Static("Session cleared.", classes="notice"))
 
@@ -403,11 +402,25 @@ class PromptSubmissionMixin(ReplAppBase):
             queued_msg.history_data = (header_widget, prompt_widget)
 
         def handle_send_queued_message(queued_msg: QueuedMessage) -> None:
-            """Remove `queued_msg`'s italics block from the history now that it's been drained."""
-            if queued_msg.history_data is not None:
-                header_widget, prompt_widget = queued_msg.history_data
-                call_on_app_thread(header_widget.remove)
-                call_on_app_thread(prompt_widget.remove)
+            """Finalize `queued_msg`'s italics block now that it's been drained. A mid-turn
+            drain (`deliver_queued_user_message`, fired while this turn's tool-call loop is
+            still running) folds the message into the same turn without a fresh echoed
+            widget, so de-italicize the block in place and leave it visible; an end-of-turn
+            drain is about to be re-echoed as a new turn's prompt by `_submit_prompt`, so
+            remove the block instead."""
+            if queued_msg.history_data is None:
+                return
+            header_widget, prompt_widget = queued_msg.history_data
+
+            def _finalize_widgets() -> None:
+                header_widget.remove()
+                if self._turn_in_flight:
+                    prompt_widget.remove_class("queued-prompt")
+                    prompt_widget.add_class("prompt")
+                else:
+                    prompt_widget.remove()
+
+            call_on_app_thread(_finalize_widgets)
 
         callbacks = TurnEventHandlers(
             on_chunk=handle_chunk, on_thinking_chunk=handle_thinking_chunk,
@@ -508,24 +521,12 @@ class PromptSubmissionMixin(ReplAppBase):
         if was_pinned:
             history.scroll_end(animate=False)
 
-    def _finalize_queued_message_widgets(self) -> None:
-        """Transition every history widget mounted by `_queue_prompt` from its queued
-        (italic) state to regular styling, confirming delivery."""
-        for widget in self._queued_message_widgets:
-            if "queued-prompt-header" in (widget.classes):
-                widget.remove()
-            elif "queued-prompt" in (widget.classes):
-                widget.remove_class("queued-prompt")
-                widget.add_class("prompt")
-        self._queued_message_widgets.clear()
-
     def _finish_turn(
         self, history: VerticalScroll, was_pinned: bool, *, agent_turn_succeeded: bool,
         response_text: str | None = None,
     ) -> None:
         """Scroll the history into view, refresh the token tally, re-enable the input, and
         drain any queued messages into a new turn."""
-        self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
         self._history_virtualizer.close_trailing_region()
