@@ -106,6 +106,10 @@ def _discover_binary() -> Path | None:
 
     return None
 
+def reset_cached_chainlink_path() -> None:
+    """Reset cached path so chainlink_available() et al re-scan possible chainlink locations."""
+    global _CHAINLINK_BIN_PATH
+    _CHAINLINK_BIN_PATH = None
 
 def chainlink_available() -> bool:
     """Return whether the `chainlink` binary can be found."""

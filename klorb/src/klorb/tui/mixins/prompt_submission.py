@@ -257,6 +257,7 @@ class PromptSubmissionMixin(ReplAppBase):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
+        self._history_virtualizer = self._new_history_virtualizer(history)
         self._queued_message_widgets.clear()
         self._mount_mascot_greeting(history)
         history.mount(Static("Session cleared.", classes="notice"))
@@ -287,6 +288,7 @@ class PromptSubmissionMixin(ReplAppBase):
             return
         self._turn_in_flight = True
 
+        self._history_virtualizer.begin_trailing_region()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         prompt_widget = Static(prompt_text, classes="prompt", markup=False)
         history.mount(prompt_widget)
@@ -526,6 +528,7 @@ class PromptSubmissionMixin(ReplAppBase):
         self._finalize_queued_message_widgets()
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
+        self._history_virtualizer.close_trailing_region()
         self._update_status_bar()
         self._session.persist_state()
         input_widget = self.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)

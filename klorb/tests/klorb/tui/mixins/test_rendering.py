@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from textual.containers import VerticalScroll
+from textual.pilot import Pilot
 from textual.widgets import Markdown, Static
 from tui.conftest import TEST_SESSION_ID, _reply, _session, _session_with_tools, _tool_call_reply, _wait_until
 
@@ -20,7 +21,27 @@ from klorb.tui.mixins.rendering import REASONING_DETAILS_LABEL, THINKING_LABEL, 
 from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
+from klorb.tui.widgets.virtualized_history import HistoryPlaceholder, VirtualizedHistoryContainer
 from klorb.workspace import Workspace
+
+
+def _shrink_chunk_size(app: ReplApp, history: VerticalScroll, chunk_size: int) -> None:
+    """Replace `app._history_virtualizer` with one using a small `chunk_size`, so a test can
+    exercise chunk-sealing/collapse behavior after a handful of turns instead of dozens."""
+    app._history_virtualizer = VirtualizedHistoryContainer(
+        history, lambda: len(app._session.messages),
+        lambda start, end: app._render_message_range(
+            app._session.messages[start:end], app._session.messages),
+        app.call_after_refresh, chunk_size=chunk_size)
+
+
+async def _submit_and_complete(
+    pilot: Pilot[None], app: ReplApp, prompt_input: PromptInput, text: str,
+) -> None:
+    prompt_input.text = text
+    await pilot.press("enter")
+    await app.workers.wait_for_complete()
+    await pilot.pause()
 
 
 def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Session:
@@ -606,3 +627,88 @@ async def test_detail_screen_header_label_stays_pinned_while_content_scrolls(
 
         assert scroll.scroll_y > 0
         assert label.region.y == label_y_before
+
+
+async def test_history_widget_count_stays_bounded_across_many_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    turn_count = 6
+    mock_provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(turn_count)]
+    session = _session(mock_provider, make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test(size=(80, 10)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        _shrink_chunk_size(app, history, chunk_size=4)
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+
+        for i in range(turn_count):
+            await _submit_and_complete(pilot, app, prompt_input, f"message {i}")
+
+        await _wait_until(pilot, lambda: bool(list(history.query(HistoryPlaceholder))), timeout=5.0)
+        placeholders = list(history.query(HistoryPlaceholder))
+        assert len(placeholders) >= 1
+        # Every turn mounts one prompt Static and one response Markdown; with chunking, some of
+        # those `2 * turn_count` widgets must have been replaced by the placeholder(s) above.
+        live_turn_widgets = list(history.query(Markdown)) + list(history.query(".prompt"))
+        assert len(live_turn_widgets) < 2 * turn_count
+
+
+async def test_scrolling_to_the_top_expands_a_collapsed_history_chunk(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    turn_count = 6
+    mock_provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(turn_count)]
+    session = _session(mock_provider, make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test(size=(80, 10)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        _shrink_chunk_size(app, history, chunk_size=4)
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+
+        for i in range(turn_count):
+            await _submit_and_complete(pilot, app, prompt_input, f"message {i}")
+        await _wait_until(pilot, lambda: bool(list(history.query(HistoryPlaceholder))), timeout=5.0)
+        placeholder_count_before = len(list(history.query(HistoryPlaceholder)))
+        topmost_placeholder = min(
+            history.query(HistoryPlaceholder).results(HistoryPlaceholder),
+            key=lambda widget: widget.virtual_region.y)
+
+        history.scroll_to(y=topmost_placeholder.virtual_region.y, animate=False, immediate=True)
+        await pilot.pause()
+
+        await _wait_until(
+            pilot, lambda: len(list(history.query(HistoryPlaceholder))) < placeholder_count_before,
+            timeout=5.0)
+
+
+async def test_ctrl_e_expands_the_nearest_collapsed_history_chunk(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    turn_count = 6
+    mock_provider.send_prompt.side_effect = [_reply(f"reply {i}") for i in range(turn_count)]
+    session = _session(mock_provider, make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test(size=(80, 10)) as pilot:
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        _shrink_chunk_size(app, history, chunk_size=4)
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+
+        for i in range(turn_count):
+            await _submit_and_complete(pilot, app, prompt_input, f"message {i}")
+        await _wait_until(pilot, lambda: bool(list(history.query(HistoryPlaceholder))), timeout=5.0)
+        placeholder_count_before = len(list(history.query(HistoryPlaceholder)))
+        assert app._history_virtualizer.has_collapsed_chunks()
+
+        history.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+e")
+
+        await _wait_until(
+            pilot, lambda: len(list(history.query(HistoryPlaceholder))) < placeholder_count_before,
+            timeout=5.0)

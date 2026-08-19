@@ -3,10 +3,12 @@
 history for ReplApp."""
 
 import json
+import logging
 from typing import Any
 
 from textual.containers import VerticalScroll
 from textual.content import Content
+from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 from klorb.message import Message as ChatMessage
@@ -40,6 +42,9 @@ from klorb.tui.widgets.tool_call_widgets import (
     ToolCallStatic,
     TurnWaitingStatic,
 )
+from klorb.tui.widgets.virtualized_history import DEFAULT_CHUNK_SIZE_MESSAGES, VirtualizedHistoryContainer
+
+logger = logging.getLogger(__name__)
 
 THINKING_LABEL = "<Thinking>"
 REASONING_DETAILS_LABEL = "<Reasoning>"
@@ -51,6 +56,15 @@ _DIFF_PREVIEW_MAX_LINES = 8
 
 class RenderingMixin(ReplAppBase):
     """Response, thinking, and tool-call rendering/mounting into the history scroll."""
+
+    def _new_history_virtualizer(self, history: VerticalScroll) -> VirtualizedHistoryContainer:
+        """Build a `VirtualizedHistoryContainer` bound to `history` and this app's currently
+        active session."""
+        return VirtualizedHistoryContainer(
+            history, lambda: len(self._session.messages),
+            lambda start, end: self._render_message_range(
+                self._session.messages[start:end], self._session.messages),
+            self.call_after_refresh)
 
     def _mount_response_widget(self, initial_text: str) -> Markdown:
         """Mount a new `Markdown` widget for a streaming response and return it."""
@@ -183,20 +197,26 @@ class RenderingMixin(ReplAppBase):
         self.push_screen(
             ReadDetailScreen(preview.label, content, scroll_to_line=full_view.scroll_to_line))
 
-    def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
-        """Mount a `<Tool use>` label followed by a `ToolCallStatic` for one finished tool call,
-        and return `(widget, label_widget)`. Applies the current detail-shown state so a call
-        rendered while detail mode is already active shows detail immediately. Refreshes the
-        status bar to include the tool response's token count."""
-        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = self._history_pinned_to_bottom
+    def _build_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
+        """Build (without mounting) a `<Tool use>` label followed by a `ToolCallStatic` for one
+        finished tool call, and return `(widget, label_widget)`. Applies the current
+        detail-shown state and tracks `widget` in `_tool_call_widgets` for the Ctrl+O toggle."""
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
-        history.mount(label_widget)
         widget = ToolCallStatic(rendered.summary_content, rendered.detail_content, rendered.on_click)
         widget.set_detail_shown(self._tool_call_detail_shown)
+        self._tool_call_widgets.append(widget)
+        return widget, label_widget
+
+    def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
+        """Build and mount a `<Tool use>` label followed by a `ToolCallStatic` for one finished
+        tool call, and return `(widget, label_widget)`. Refreshes the status bar to include the
+        tool response's token count."""
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        was_pinned = self._history_pinned_to_bottom
+        widget, label_widget = self._build_tool_call_widget(rendered)
+        history.mount(label_widget)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
-        self._tool_call_widgets.append(widget)
         self._update_status_bar()
         return widget, label_widget
 
@@ -278,53 +298,73 @@ class RenderingMixin(ReplAppBase):
         widget.set_detail_shown(self._tool_call_detail_shown)
         self._update_status_bar()
 
-    def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
-        """Re-render `messages` — a previous session's history — into the history scroll so
-        a restored conversation reads the same way it would have live.  System/tool_defs
-        bookkeeping messages are skipped.  Tool responses are rendered together with their
-        matching tool_use entry.  A tool_use message's non-empty content is rendered as a
-        response widget ahead of its tool calls."""
-        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+    def _render_message_range(
+        self, messages: list[ChatMessage], response_lookup: list[ChatMessage] | None = None,
+    ) -> list[Widget]:
+        """Build (without mounting) the widgets a live turn or `_mount_restored_history` would
+        show for `messages`. `response_lookup` resolves each `tool_use` message's tool response
+        by call id, defaulting to `messages` itself."""
+        lookup_messages = response_lookup if response_lookup is not None else messages
         responses_by_call_id = {
-            message.tool_call_id: message for message in messages
+            message.tool_call_id: message for message in lookup_messages
             if message.role == "tool_response" and message.tool_call_id is not None
         }
+        widgets: list[Widget] = []
         for message in messages:
             if message.role == "user":
                 display_content = strip_system_interjections(message.content)
-                history.mount(Static(display_content, classes="prompt", markup=False))
+                widgets.append(Static(display_content, classes="prompt", markup=False))
                 skill_notice = extract_skill_activation_notice(message.content)
                 if skill_notice is not None:
-                    history.mount(Static(skill_notice, classes="notice", markup=False))
+                    widgets.append(Static(skill_notice, classes="notice", markup=False))
             elif message.role == "assistant":
                 text = message.content
                 if message.processing_state == "aborted":
                     text = f"{text}\n\n*(interrupted)*"
-                self._mount_response_widget(text)
+                widgets.append(Markdown(text, classes="response"))
             elif message.role == "thinking":
                 text = resolve_thinking_body_text(message.content, message.reasoning_details)
                 if message.processing_state == "aborted":
                     text = f"{text}\n\n(interrupted)"
-                self._mount_thinking_widget(text)
+                widgets.append(Static(THINKING_LABEL, classes="thinking-label"))
+                widgets.append(Static(text, classes="thinking-body", markup=False))
                 if message.reasoning_details:
                     reasoning_details_text = summarize_reasoning_details(message.reasoning_details)
                     if reasoning_details_text is not None:
-                        self._mount_reasoning_details_widget(reasoning_details_text)
+                        widgets.append(Static(REASONING_DETAILS_LABEL, classes="reasoning-details-label"))
+                        widgets.append(
+                            Static(reasoning_details_text, classes="reasoning-details-body", markup=False))
             elif message.role == "tool_use":
                 if message.content.strip():
                     # A `tool_use`-role message can carry commentary alongside the tool calls it
                     # requested (`Session._send_and_receive` sets `content` before reclassifying
                     # the message to `tool_use`) -- e.g. the model's final answer, if that answer
                     # came in the same round as its last tool calls rather than a trailing
-                    # text-only round. See `klorb.agents.policy._assistant_authored_text`, which
-                    # relies on the same fact to relay a subagent's commentary to its creator.
-                    self._mount_response_widget(message.content)
+                    # text-only round.
+                    widgets.append(Markdown(message.content, classes="response"))
                 for call in message.tool_calls or []:
                     rendered = self._render_restored_tool_call(
                         call, responses_by_call_id.get(call.id))
-                    self._mount_tool_call_widget(rendered)
-        history.mount(Static(f"Restored previous session ({len(messages)} messages).", classes="notice"))
-        history.scroll_end(animate=False)
+                    tool_widget, label_widget = self._build_tool_call_widget(rendered)
+                    widgets.append(label_widget)
+                    widgets.append(tool_widget)
+        return widgets
+
+    async def _mount_restored_history(self, messages: list[ChatMessage]) -> None:
+        """Re-render `messages` into the history scroll so a restored conversation reads the
+        same way it would have live. Everything before the trailing
+        `DEFAULT_CHUNK_SIZE_MESSAGES` messages starts collapsed behind a placeholder, so
+        opening a long saved session stays fast."""
+        history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        trailing_start = await self._history_virtualizer.seed_collapsed_prefix(
+            len(messages), DEFAULT_CHUNK_SIZE_MESSAGES)
+        tail_widgets = self._render_message_range(messages[trailing_start:], messages)
+        tail_widgets.append(
+            Static(f"Restored previous session ({len(messages)} messages).", classes="notice"))
+        await history.mount(*tail_widgets)
+        self._history_virtualizer.force_layout()
+        history.scroll_end(animate=False, immediate=True)
+        logger.debug("Restored session history: %d messages, %d shown", len(messages), len(tail_widgets))
 
     def _render_restored_tool_call(
         self, call: ToolCallRequest, response: ChatMessage | None,

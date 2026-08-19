@@ -11,6 +11,7 @@ from typing import Any, Literal
 from textual import work
 from textual.app import App
 from textual.containers import VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Markdown, Static
 
 from klorb.agents.runtime import SubagentHandle, SubagentState
@@ -34,6 +35,7 @@ from klorb.tui.widgets.tool_call_widgets import (
     ToolCallStatic,
     TurnWaitingStatic,
 )
+from klorb.tui.widgets.virtualized_history import VirtualizedHistoryContainer
 from klorb.tui.workspace_file_index import WorkspaceFileIndex
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager, Workspace
@@ -90,6 +92,8 @@ class ReplAppBase(App[None]):
     _subagent_transcript_notice: Static | None
     _subagent_interrupt_pending: str | None
     _replacing_session: bool
+    _history_virtualizer: VirtualizedHistoryContainer
+    _subagent_history_virtualizer: VirtualizedHistoryContainer | None
 
     def _start_file_finder_index(self, workspace: Workspace) -> None: ...
 
@@ -106,7 +110,7 @@ class ReplAppBase(App[None]):
 
     def _update_palette_hint(self) -> None: ...
 
-    def _on_history_scroll_changed(self) -> None: ...
+    async def _on_history_scroll_changed(self) -> None: ...
 
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None: ...
@@ -120,14 +124,22 @@ class ReplAppBase(App[None]):
 
     def _submit_prompt(self, prompt_text: str) -> None: ...
 
-    def _mount_restored_history(self, messages: list[ChatMessage]) -> None: ...
+    async def _mount_restored_history(self, messages: list[ChatMessage]) -> None: ...
 
-    def _adopt_restored_session(self, restored: Session) -> None: ...
+    def _render_message_range(
+        self, messages: list[ChatMessage], response_lookup: list[ChatMessage] | None = None,
+    ) -> list[Widget]:
+        raise NotImplementedError
+
+    def _new_history_virtualizer(self, history: VerticalScroll) -> VirtualizedHistoryContainer:
+        raise NotImplementedError
+
+    async def _adopt_restored_session(self, restored: Session) -> None: ...
 
     def list_recent_sessions(self) -> list[RecentSession]:
         raise NotImplementedError
 
-    def load_recent_session(self, entry: RecentSession) -> None: ...
+    async def load_recent_session(self, entry: RecentSession) -> None: ...
 
     def show_notice(self, message: str, *, error: bool = False) -> None: ...
 
@@ -212,6 +224,6 @@ class ReplAppBase(App[None]):
 
     def _start_subagents_panel_timer(self) -> None: ...
 
-    def _on_subagent_history_scroll_changed(self) -> None: ...
+    async def _on_subagent_history_scroll_changed(self) -> None: ...
 
     def _note_subagent_interrupt_requested(self, handle: SubagentHandle) -> None: ...

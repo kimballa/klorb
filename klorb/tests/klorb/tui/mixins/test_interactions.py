@@ -1432,7 +1432,7 @@ async def test_permission_ask_panel_waits_for_its_subagent_to_be_selected(
         assert not app.query(PermissionAskPanel)
         assert handle.session.id in app._attention_needed
 
-        app._select_session(handle.session.id)
+        await app._select_session(handle.session.id)
         await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         assert handle.session.id not in app._attention_needed
@@ -1451,7 +1451,7 @@ async def test_queued_ask_re_verifies_selection_before_showing_its_panel(
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
-        app._select_session(handle.session.id)
+        await app._select_session(handle.session.id)
         await pilot.pause()
 
         # Stand in for another already-showing panel occupying the single interaction slot.
@@ -1462,7 +1462,7 @@ async def test_queued_ask_re_verifies_selection_before_showing_its_panel(
         await pilot.pause()
         assert handle.session.id not in app._attention_needed  # passed the initial check already
 
-        app._select_session(session.id)  # the user wanders off to the root while still queued
+        await app._select_session(session.id)  # the user wanders off to the root while still queued
         await pilot.pause()
 
         app._interaction_lock.release()
@@ -1472,7 +1472,7 @@ async def test_queued_ask_re_verifies_selection_before_showing_its_panel(
         assert not app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).disabled
         assert handle.session.id in app._attention_needed
 
-        app._select_session(handle.session.id)
+        await app._select_session(handle.session.id)
         await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
 
         await pilot.press("escape")

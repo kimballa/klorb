@@ -32,6 +32,7 @@ from klorb.tui.panels.confirm_screen import CONFIRM_NO_ID, CONFIRM_YES_ID, Confi
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.tool_call_widgets import ToolCallStatic
+from klorb.tui.widgets.virtualized_history import DEFAULT_CHUNK_SIZE_MESSAGES, HistoryPlaceholder
 from klorb.workspace import TrustManager, Workspace
 from klorb.workspace.session_store import (
     read_session_state,
@@ -662,6 +663,113 @@ async def test_restores_a_tool_use_messages_own_commentary_alongside_its_tool_ca
         responses = list(history.query(Markdown))
         assert any(widget.source == "Here is the final answer." for widget in responses)
         assert len(list(history.query(ToolCallStatic))) == 1
+
+
+async def test_restoring_a_long_session_collapses_everything_before_the_trailing_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A restored session longer than `DEFAULT_CHUNK_SIZE_MESSAGES` only mounts real widgets for
+    its trailing window; everything before that starts collapsed behind one placeholder, which
+    expands back into the original content."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    turn_count = DEFAULT_CHUNK_SIZE_MESSAGES  # 2 messages/turn, so comfortably over the threshold.
+    messages = []
+    for i in range(turn_count):
+        messages.append(_sample_message(f"prompt {i}", "user"))
+        messages.append(_sample_message(f"reply {i}", "assistant"))
+    _save_session(workspace, make_session_config(workspace=workspace), messages)
+
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+
+        placeholders = list(history.query(HistoryPlaceholder))
+        assert len(placeholders) == 1
+        responses = list(history.query(Markdown))
+        assert all(widget.source != "reply 0" for widget in responses)
+        assert any(widget.source == f"reply {turn_count - 1}" for widget in responses)
+
+        history.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        # Scrolling the placeholder into view can already auto-expand it; only invoke its click
+        # handler if it's still collapsed, so this tests expansion rather than which trigger wins.
+        remaining = list(history.query(HistoryPlaceholder))
+        if remaining:
+            await remaining[0].on_click()
+        await _wait_until(pilot, lambda: not list(history.query(HistoryPlaceholder)), timeout=5.0)
+
+        responses = list(history.query(Markdown))
+        assert any(widget.source == "reply 0" for widget in responses)
+
+
+async def test_ctrl_e_reveals_a_collapsed_prefix_scrolled_up_from_the_bottom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Regression test: expanding a placeholder via Ctrl+E must scroll to reveal what it hid,
+    not leave the same numeric `scroll_y` pointing at whatever content the expansion happens to
+    push underneath it."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    message_count = 200
+    messages = [
+        _sample_message(f"message {i}", "user" if i % 2 == 0 else "assistant")
+        for i in range(message_count)
+    ]
+    _save_session(workspace, make_session_config(workspace=workspace), messages)
+
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        placeholder = history.query_one(HistoryPlaceholder)
+        placeholder_y = placeholder.virtual_region.y
+
+        history.focus()
+        await pilot.pause()
+        await pilot.press("ctrl+e")
+        await _wait_until(pilot, lambda: not list(history.query(HistoryPlaceholder)), timeout=5.0)
+
+        assert history.scroll_y == pytest.approx(placeholder_y, abs=2)
+        responses = list(history.query(Markdown))
+        assert any(widget.source == "message 1" for widget in responses)
+
+
+async def test_scrolling_up_from_the_bottom_does_not_skip_to_the_start_of_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Regression test: setting `scroll_y` directly to scroll up toward a collapsed prefix must
+    expand it in place, not leave the viewport pointing at the very start of history."""
+    _isolated_data_dir(tmp_path, monkeypatch)
+    trust_manager = TrustManager(path=tmp_path / "projects.json")
+    workspace = trust_manager.register_project(tmp_path, trusted=True)
+    message_count = 200
+    messages = [
+        _sample_message(f"message {i}", "user" if i % 2 == 0 else "assistant")
+        for i in range(message_count)
+    ]
+    _save_session(workspace, make_session_config(workspace=workspace), messages)
+
+    app = _repl_app_for_workspace(workspace, make_session_config, trust_manager)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        history.focus()
+
+        for _ in range(400):
+            if not list(history.query(HistoryPlaceholder)):
+                break
+            history.scroll_y = max(0.0, history.scroll_y - history.size.height / 2)
+            await pilot.pause()
+
+        assert not list(history.query(HistoryPlaceholder))
+        assert history.scroll_y > 50
 
 
 async def test_restore_restores_session_id_and_name(

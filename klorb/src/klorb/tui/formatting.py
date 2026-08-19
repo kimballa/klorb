@@ -13,6 +13,7 @@ from typing import Any
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.content import Content
+from textual.widget import Widget
 
 from klorb.tools.util.diff_lines import DiffHunk, DiffLine
 
@@ -170,6 +171,28 @@ def pinned_to_bottom(history: VerticalScroll) -> bool:
     """Whether `history`'s viewport is currently showing its bottom edge, i.e. whether the
     user hasn't scrolled away from the latest content."""
     return history.is_vertical_scroll_end
+
+
+def capture_scroll_anchor(history: VerticalScroll) -> tuple[Widget, int] | None:
+    """Identify whichever direct child of `history` currently occupies the top of the
+    viewport, and how many of its own lines are already scrolled past."""
+    children = list(history.children)
+    if not children:
+        return None
+    scroll_y = int(history.scroll_y)
+    for child in children:
+        region = child.virtual_region
+        if region.y + region.height > scroll_y:
+            return child, max(0, scroll_y - region.y)
+    last = children[-1]
+    return last, max(0, last.virtual_region.height - 1)
+
+
+def restore_scroll_anchor(history: VerticalScroll, anchor_widget: Widget, line_offset: int) -> None:
+    """Scroll `history` so `anchor_widget` sits at the same on-screen line it held when
+    `capture_scroll_anchor` recorded `line_offset`."""
+    region = anchor_widget.virtual_region
+    history.scroll_to(y=region.y + line_offset, animate=False, immediate=True)
 
 
 _DIFF_ADD_STYLE = "green"

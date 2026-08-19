@@ -54,15 +54,25 @@ def embedding_model_available() -> bool:
     return embedding_model_target_dir().is_dir()
 
 
+def _ensure_onnx_logging_configured() -> None:
+    """Configure onnx logger output to errors only."""
+    global _ONNXRUNTIME_LOG_SEVERITY_ERROR
+    import onnxruntime
+    onnxruntime.set_default_logger_severity(  # type: ignore[attr-defined]
+        _ONNXRUNTIME_LOG_SEVERITY_ERROR)
+
+
 def cuda_available() -> bool:
     """Whether the installed `onnxruntime` build was compiled with `CUDAExecutionProvider`."""
     import onnxruntime
+    _ensure_onnx_logging_configured()
     return CUDA_PROVIDER in onnxruntime.get_available_providers()
 
 
 def coreml_available() -> bool:
     """Whether the installed `onnxruntime` build was compiled with `CoreMLExecutionProvider`."""
     import onnxruntime
+    _ensure_onnx_logging_configured()
     return COREML_PROVIDER in onnxruntime.get_available_providers()
 
 
@@ -133,11 +143,12 @@ class EmbeddingModel:
                 f"Embedding model not found at {target_dir}; run `klorb init` first.")
         providers: list[str] | None = None
         gpu_provider: str | None = None
+        import onnxruntime
+        _ensure_onnx_logging_configured()
         if use_gpu:
             gpu_provider = _gpu_provider_for_platform()
             if gpu_provider is None:
                 raise RuntimeError(f"GPU embedding isn't supported on {sys.platform!r}.")
-            import onnxruntime
             if gpu_provider not in onnxruntime.get_available_providers():
                 hint = (
                     " Run ./bin/install-cuda-nvidia.sh to install onnxruntime-gpu and matching "
@@ -151,11 +162,6 @@ class EmbeddingModel:
         previous_offline = os.environ.get(_HF_HUB_OFFLINE_ENV_VAR)
         os.environ[_HF_HUB_OFFLINE_ENV_VAR] = "1"
         try:
-            # Imported lazily so a process that never touches the search index never pays
-            # onnxruntime's import cost.
-            import onnxruntime
-            onnxruntime.set_default_logger_severity(  # type: ignore[attr-defined]
-                _ONNXRUNTIME_LOG_SEVERITY_ERROR)
             from fastembed import TextEmbedding
             self._model = TextEmbedding(
                 model_name=EMBEDDING_MODEL_NAME, cache_dir=str(target_dir), threads=threads,

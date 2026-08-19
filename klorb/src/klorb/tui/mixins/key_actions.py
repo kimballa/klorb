@@ -8,7 +8,6 @@ from typing import NoReturn
 from textual import events
 from textual.binding import Binding
 from textual.containers import VerticalScroll
-from textual.widget import Widget
 from textual.widgets import Static
 
 from klorb.diagnostics import dump_all_thread_stacks, thread_dump_path
@@ -17,10 +16,11 @@ from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, SUBAGENT_HISTORY_ID, TASK_SIDEBAR_ID
-from klorb.tui.formatting import random_greeting
+from klorb.tui.formatting import capture_scroll_anchor, random_greeting, restore_scroll_anchor
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.task_sidebar import TaskSidebar
+from klorb.tui.widgets.virtualized_history import VirtualizedHistoryContainer
 from klorb.watchdog import force_exit
 
 CONFIG_MISSING_MESSAGE = (
@@ -91,10 +91,25 @@ class KeyActionsMixin(ReplAppBase):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the `abort_response` binding from the footer unless something is currently
-        running for the selected session."""
+        running for the selected session, and `expand_history_placeholder` unless the visible
+        history actually has a collapsed chunk to expand."""
         if action == "abort_response":
             return self._something_abortable_for_selection()
+        if action == "expand_history_placeholder":
+            return self._active_history_virtualizer().has_collapsed_chunks()
         return True
+
+    def _active_history_virtualizer(self) -> VirtualizedHistoryContainer:
+        """The `VirtualizedHistoryContainer` for whichever history is currently on screen:
+        `#subagent-history`'s while a subagent is selected, else `#history`'s."""
+        if self._selected_handle is not None and self._subagent_history_virtualizer is not None:
+            return self._subagent_history_virtualizer
+        return self._history_virtualizer
+
+    async def action_expand_history_placeholder(self) -> None:
+        """Ctrl+E: expand whichever collapsed chunk sits closest to the current scroll
+        position in the visible history."""
+        await self._active_history_virtualizer().expand_nearest_to_viewport()
 
     def action_abort_response(self) -> None:
         """Escape: interrupt whatever is currently running for the selected session."""
@@ -181,7 +196,7 @@ class KeyActionsMixin(ReplAppBase):
         """Ctrl+O: flip every `ToolCallStatic` currently in the history between its one-line
         summary and its fuller detail view, all at once."""
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        anchor = self._capture_scroll_anchor(history)
+        anchor = capture_scroll_anchor(history)
 
         self._tool_call_detail_shown = not self._tool_call_detail_shown
         for widget in self._tool_call_widgets:
@@ -193,29 +208,7 @@ class KeyActionsMixin(ReplAppBase):
 
         if anchor is not None:
             anchor_widget, line_offset = anchor
-            self.call_after_refresh(self._restore_scroll_anchor, history, anchor_widget, line_offset)
-
-    @staticmethod
-    def _capture_scroll_anchor(history: VerticalScroll) -> tuple[Widget, int] | None:
-        """Identify whichever direct child of `history` currently occupies the top of the
-        viewport, and how many of its own lines are already scrolled past."""
-        children = list(history.children)
-        if not children:
-            return None
-        scroll_y = int(history.scroll_y)
-        for child in children:
-            region = child.virtual_region
-            if region.y + region.height > scroll_y:
-                return child, max(0, scroll_y - region.y)
-        last = children[-1]
-        return last, max(0, last.virtual_region.height - 1)
-
-    @staticmethod
-    def _restore_scroll_anchor(history: VerticalScroll, anchor_widget: Widget, line_offset: int) -> None:
-        """Scroll `history` so `anchor_widget` sits at the same on-screen line it held when
-        `_capture_scroll_anchor` recorded `line_offset`."""
-        region = anchor_widget.virtual_region
-        history.scroll_to(y=region.y + line_offset, animate=False, immediate=True)
+            self.call_after_refresh(restore_scroll_anchor, history, anchor_widget, line_offset)
 
     def on_mount(self) -> None:
         """Initialize the TUI: configure tiktoken cache, focus the input, set up scroll
@@ -245,6 +238,7 @@ class KeyActionsMixin(ReplAppBase):
         self._update_palette_hint()
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        self._history_virtualizer = self._new_history_virtualizer(history)
         self.watch(history, "scroll_y", self._on_history_scroll_changed, init=False)
 
         subagent_history = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)

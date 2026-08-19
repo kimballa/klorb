@@ -10,7 +10,8 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks import common as tasks_common
-from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, chainlink_available, open_blocker_count
+from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, chainlink_available, \
+    open_blocker_count
 from klorb.workspace import Workspace
 
 requires_chainlink = pytest.mark.skipif(
@@ -46,6 +47,7 @@ def test_construction_requires_a_session(tmp_path: Path) -> None:
 
 
 def test_binary_discovery_prefers_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks_common.reset_cached_chainlink_path()
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: "/usr/bin/chainlink")
     assert tasks_common._discover_binary() == Path("/usr/bin/chainlink")
 
@@ -53,6 +55,7 @@ def test_binary_discovery_prefers_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_binary_discovery_prefers_virtual_env_over_cargo_bin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    tasks_common.reset_cached_chainlink_path()
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
     venv_dir = tmp_path / "venv"
     (venv_dir / "bin").mkdir(parents=True)
@@ -70,6 +73,7 @@ def test_binary_discovery_prefers_virtual_env_over_cargo_bin(
 def test_binary_discovery_falls_back_to_cargo_bin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    tasks_common.reset_cached_chainlink_path()
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     fake_home = tmp_path / "home"
@@ -84,6 +88,7 @@ def test_binary_discovery_falls_back_to_cargo_bin(
 def test_binary_discovery_returns_none_when_not_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    tasks_common.reset_cached_chainlink_path()
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.setattr(tasks_common.Path, "home", lambda: tmp_path / "empty-home")
@@ -342,7 +347,8 @@ def test_teardown_is_only_registered_for_a_root_session(
     config = make_session_config(workspace=Workspace(path=workspace_root, trusted=True))
     root = Session(config=config, session_id="root-id")
     child = Session(config=config, session_id="child-id", parent=root, root_id=root.root_id)
-    child_context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=child)
+    child_context = ToolSetupContext(process_config=ProcessConfig(),
+                                     session_config=config, session=child)
 
     ChainlinkClient(child_context)
 

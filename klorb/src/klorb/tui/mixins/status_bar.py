@@ -39,11 +39,15 @@ class StatusBarMixin(ReplAppBase):
         else:
             hint.hide_hint()
 
-    def _on_history_scroll_changed(self) -> None:
+    async def _on_history_scroll_changed(self) -> None:
         """Keep `_history_pinned_to_bottom` in sync with the history viewport's actual scroll
-        position."""
+        position, and collapse/expand chunks for the new viewport. A no-op once the app has
+        started shutting down, since this can still fire after `#history` itself is gone."""
+        if not self.is_running:
+            return
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         self._history_pinned_to_bottom = pinned_to_bottom(history)
+        await self._history_virtualizer.refresh_visibility()
 
     def _update_status_bar(self) -> None:
         """Refresh both footer token tallies for whichever session is currently selected."""

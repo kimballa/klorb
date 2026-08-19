@@ -50,7 +50,7 @@ class SupportsSessionLoad(Protocol):
         """Return this workspace's saved sessions, most recently touched first."""
         ...
 
-    def load_recent_session(self, entry: RecentSession) -> None:
+    async def load_recent_session(self, entry: RecentSession) -> None:
         """Replace the active session with the one recorded by `entry`, or show a notice
         explaining why that wasn't possible (locked or no longer available)."""
         ...
@@ -111,9 +111,9 @@ class LoadSessionScreen(ModalScreen[None]):
             OptionList(*options, id=LOAD_SESSION_OPTION_LIST_ID),
         )
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    async def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         entry = self._entries[event.option_index]
-        cast(SupportsSessionLoad, self.app).load_recent_session(entry)
+        await cast(SupportsSessionLoad, self.app).load_recent_session(entry)
         self.dismiss()
 
 

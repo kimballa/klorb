@@ -67,6 +67,7 @@ from klorb.tui.widgets.status_widgets import PaletteHint, PermissionBadge
 from klorb.tui.widgets.subagents_panel import SubagentsPanel
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 from klorb.tui.widgets.tool_call_widgets import RunningToolCallStatic, ToolCallStatic, TurnWaitingStatic
+from klorb.tui.widgets.virtualized_history import VirtualizedHistoryContainer
 from klorb.tui.workspace_file_index import WorkspaceFileIndex
 from klorb.watchdog import LivenessWatchdog
 from klorb.workspace import TrustManager, Workspace
@@ -274,6 +275,12 @@ class ReplApp(
         margin: 1 0 0 0;
     }
 
+    .history-placeholder {
+        color: $text-muted;
+        text-style: italic;
+        margin: 1 0 0 0;
+    }
+
     .mascot {
         color: $accent;
         text-align: center;
@@ -288,6 +295,7 @@ class ReplApp(
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
         ("ctrl+t", "toggle_task_sidebar", "Tasks"),
         ("ctrl+g", "toggle_subagents_panel", "Agents"),
+        ("ctrl+e", "expand_history_placeholder", "Expand"),
         Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
     COMMANDS = App.COMMANDS | {
@@ -477,6 +485,11 @@ class ReplApp(
         """The trailing status notice currently mounted in `#subagent-history`, if any, tracked
         so the next render can remove it before mounting anything new, keeping it last. `None`
         before any subagent has ever been selected.
+        """
+        self._subagent_history_virtualizer: VirtualizedHistoryContainer | None = None
+        """Bounds `#subagent-history`'s live widget count for whichever subagent is currently
+        selected, rebuilt on every `_select_session` call since that fully replaces the
+        container's content. `None` before any subagent has ever been selected.
         """
         self._subagent_interrupt_pending: str | None = None
         """The id of a subagent whose turn was just aborted (Escape/Ctrl+C while it was

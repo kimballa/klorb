@@ -49,7 +49,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             return []
         return read_sessions_index(self._session.config.workspace).recent_sessions
 
-    def load_recent_session(self, entry: RecentSession) -> None:
+    async def load_recent_session(self, entry: RecentSession) -> None:
         """Replace the active session with the one recorded by `entry`. A no-op if `entry` is
         already the live session. If the saved session can't be loaded, reports why via
         `show_notice` and starts a fresh session."""
@@ -85,7 +85,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             session_name_widget = self.query_one(f"#{SESSION_NAME_ID}", Static)
             session_name_widget.update(NEW_SESSION_LABEL)
             return
-        self._adopt_restored_session(restored)
+        await self._adopt_restored_session(restored)
 
     @work()
     async def _run_startup_workspace_and_initial_message(self) -> None:
@@ -155,13 +155,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         self._start_file_finder_index(workspace)
         session_before_restore = self._session
         if workspace.trusted and not self._skip_session_restore:
-            self._maybe_restore_latest_session(workspace)
+            await self._maybe_restore_latest_session(workspace)
         resumed = self._session is not session_before_restore
         self._session.fire_session_start_hook(
             "ResumeSession" if resumed else "NewSession",
             workspace_just_bootstrapped=just_bootstrapped)
 
-    def _maybe_restore_latest_session(self, workspace: Workspace) -> None:
+    async def _maybe_restore_latest_session(self, workspace: Workspace) -> None:
         """If `workspace`'s `sessions.json` has a most-recently-touched entry, replace the
         freshly-constructed `Session` with one built from that saved state and re-render the
         history scroll. A no-op if `sessions.json` has no entries, or if the entry is locked
@@ -175,9 +175,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         if restored is None:
             return
         self._session.close()
-        self._adopt_restored_session(restored)
+        await self._adopt_restored_session(restored)
 
-    def _adopt_restored_session(self, restored: Session) -> None:
+    async def _adopt_restored_session(self, restored: Session) -> None:
         """Replace the live `Session` with `restored`, updating the header/status-line/
         session-name widgets and re-rendering the history scroll. The caller is responsible
         for closing the outgoing `Session` first."""
@@ -196,7 +196,7 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             session_name_widget.update(f"Session: {restored.name}")
         else:
             session_name_widget.update(NEW_SESSION_LABEL)
-        self._mount_restored_history(restored.messages)
+        await self._mount_restored_history(restored.messages)
 
     async def _bootstrap_new_workspace(self, workspace: Workspace) -> Workspace:
         """Ask the two workspace-bootstrap questions for a workspace with no `projects.json`

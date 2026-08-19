@@ -14,9 +14,10 @@
 
 * BUG: In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
   either runaway threads or memory overrun.
-  * Definitely need to start pruning the rendered history in the DOM at a certain point. See
-    `docs/plans/drafting/023-tui-history-virtualization.md` (and its VSCode-side counterpart,
-    `docs/plans/ready/024-vscode-history-virtualization.md`).
+  * Definitely need to start pruning the rendered history in the DOM at a certain point. Phases 1
+    and 2 of `docs/plans/ready/023-tui-history-virtualization.md` are done; its Phase 3 (empirical
+    chunk-size/expand-threshold tuning) is still open. See also the VSCode-side counterpart,
+    `docs/plans/ready/024-vscode-history-virtualization.md`.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
@@ -283,6 +284,16 @@
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
   * Easier MVP might be to surface stderr from the hook script via logger.warning().
 * `HookOutput.interrupt` is not respected / implemented.
+
+### Plan 023: TUI history virtualization
+
+* Empirically tune `DEFAULT_CHUNK_SIZE_MESSAGES`, the collapse-side hysteresis margin
+  (`VirtualizedHistoryContainer.refresh_visibility`'s `margin=self._container.size.height`), and
+  `ESTIMATED_LINES_PER_SEEDED_MESSAGE` against a real long session, rather than the values
+  Phase 1/2 shipped with.
+* Re-check TODO.md's "gets unusable and eventually crashes" entry above once this has run in a
+  real long session: if virtualization alone resolves the degradation, drop it from that entry;
+  if instability persists, it corroborates a separate non-DOM cause.
 
 ## Meta / dev environment
 

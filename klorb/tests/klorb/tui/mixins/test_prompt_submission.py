@@ -77,7 +77,7 @@ async def test_submitting_while_a_subagent_is_selected_addresses_it_not_the_root
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
-        app._select_session(handle.session.id)
+        await app._select_session(handle.session.id)
         await pilot.pause()
 
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
@@ -111,7 +111,7 @@ async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurr
     app = ReplApp(session=session, process_config=process_config)
 
     async with app.run_test() as pilot:
-        app._select_session(handle.session.id)
+        await app._select_session(handle.session.id)
         await pilot.pause()
 
         prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)

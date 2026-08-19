@@ -6,10 +6,9 @@ polls."""
 import asyncio
 
 from textual.containers import VerticalScroll
-from textual.widgets import Markdown, OptionList, Static
+from textual.widgets import OptionList, Static
 
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SessionTreeNode, SubagentHandle, walk_session_tree
-from klorb.message import Message as ChatMessage
 from klorb.process_config import persist_sidebar
 from klorb.session import Session
 from klorb.tui._base import ReplAppBase
@@ -23,14 +22,7 @@ from klorb.tui.constants import (
     SUBAGENTS_PANEL_ID,
     TASK_SIDEBAR_ID,
 )
-from klorb.tui.formatting import (
-    extract_skill_activation_notice,
-    pinned_to_bottom,
-    resolve_thinking_body_text,
-    strip_system_interjections,
-    summarize_reasoning_details,
-)
-from klorb.tui.mixins.rendering import REASONING_DETAILS_LABEL, THINKING_LABEL, TOOL_USE_LABEL
+from klorb.tui.formatting import pinned_to_bottom
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.subagents_panel import (
     SUBAGENTS_LIST_ID,
@@ -39,7 +31,8 @@ from klorb.tui.widgets.subagents_panel import (
     SubagentsPanel,
 )
 from klorb.tui.widgets.task_sidebar import TaskSidebar
-from klorb.tui.widgets.tool_call_widgets import CrawlAnimatedStatic, ToolCallStatic
+from klorb.tui.widgets.tool_call_widgets import CrawlAnimatedStatic
+from klorb.tui.widgets.virtualized_history import DEFAULT_CHUNK_SIZE_MESSAGES, VirtualizedHistoryContainer
 
 _PANEL_TICK_INTERVAL_SECONDS = 0.6
 """How often `_tick_subagents_panel` fires: blinks the `(!)` attention marker and refreshes the
@@ -77,7 +70,7 @@ class SubagentsPanelMixin(ReplAppBase):
         if self._active_sidebar != "agents":
             self._update_subagent_attention_status_line()
 
-    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+    async def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         """Switch the displayed transcript as soon as a row is highlighted. A no-op when the
         highlighted row already names the selected session, preventing `_tick_subagents_panel`'s
         periodic refresh from re-triggering `_select_session` indefinitely."""
@@ -87,7 +80,7 @@ class SubagentsPanelMixin(ReplAppBase):
         assert isinstance(option, SubagentPanelOption)
         if option.session_id == self._selected_session.id:
             return
-        self._select_session(option.session_id)
+        await self._select_session(option.session_id)
 
     def _find_tree_node(self, session_id: str) -> SessionTreeNode | None:
         """Locate `session_id`'s node in the live subagent tree rooted at this process's
@@ -97,7 +90,7 @@ class SubagentsPanelMixin(ReplAppBase):
                 return node
         return None
 
-    def _select_session(self, session_id: str) -> None:
+    async def _select_session(self, session_id: str) -> None:
         """Make `session_id` the currently displayed (sub)agent. A no-op if `session_id`
         doesn't name a live node."""
         node = self._find_tree_node(session_id)
@@ -113,9 +106,11 @@ class SubagentsPanelMixin(ReplAppBase):
             subagent_history.display = False
             history.display = True
         else:
-            self._render_full_subagent_transcript(node.session, node.handle)
+            # `_render_full_subagent_transcript` measures `subagent_history`'s own layout, which
+            # needs it visible already: a hidden (`display=False`) container measures as zero-sized.
             history.display = False
             subagent_history.display = True
+            await self._render_full_subagent_transcript(node.session, node.handle)
         prompt_input.text = self._subagent_drafts.get(node.session.id, "")
         self._update_prompt_input_disabled_state()
         self._update_status_bar()
@@ -132,10 +127,21 @@ class SubagentsPanelMixin(ReplAppBase):
         else:
             self.query_one(f"#{SESSION_NAME_ID}", Static).update(NEW_SESSION_LABEL)
 
-    def _render_full_subagent_transcript(self, session: Session, handle: SubagentHandle) -> None:
-        """Render a fresh snapshot of every message in `session.messages` into
-        `#subagent-history`, replacing whatever was there before. Always scrolls to the
-        bottom and resets `_subagent_history_pinned_to_bottom` to `True`."""
+    def _new_subagent_history_virtualizer(
+        self, container: VerticalScroll, session: Session,
+    ) -> VirtualizedHistoryContainer:
+        """Build a `VirtualizedHistoryContainer` bound to `container` and `session`."""
+        return VirtualizedHistoryContainer(
+            container, lambda: len(session.messages),
+            lambda start, end: self._render_message_range(
+                session.messages[start:end], session.messages),
+            self.call_after_refresh)
+
+    async def _render_full_subagent_transcript(self, session: Session, handle: SubagentHandle) -> None:
+        """Render a fresh snapshot of `session.messages` into `#subagent-history`, replacing
+        whatever was there before; everything except the trailing `DEFAULT_CHUNK_SIZE_MESSAGES`
+        messages starts collapsed behind a placeholder. Always scrolls to the bottom and resets
+        `_subagent_history_pinned_to_bottom` to `True`."""
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         container.remove_children()
         self._subagent_transcript_notice = None
@@ -144,12 +150,18 @@ class SubagentsPanelMixin(ReplAppBase):
         # keeps a message appended by the background turn thread mid-render from being silently
         # skipped forever.
         messages = session.messages
-        self._mount_subagent_messages(container, messages)
+        virtualizer = self._new_subagent_history_virtualizer(container, session)
+        self._subagent_history_virtualizer = virtualizer
+        trailing_start = await virtualizer.seed_collapsed_prefix(len(messages), DEFAULT_CHUNK_SIZE_MESSAGES)
+        tail_widgets = self._render_message_range(messages[trailing_start:], messages)
+        if tail_widgets:
+            await container.mount(*tail_widgets)
         self._subagent_history_rendered_count = len(messages)
         self._mount_subagent_status_notice(container, handle)
         self._subagent_history_rendered_state = handle.state
         self._subagent_history_pinned_to_bottom = True
-        container.scroll_end(animate=False)
+        virtualizer.force_layout()
+        container.scroll_end(animate=False, immediate=True)
 
     def _append_new_subagent_messages(self, session: Session, handle: SubagentHandle) -> None:
         """Catch `#subagent-history` up to `session.messages`/`handle.state` since the last
@@ -169,58 +181,17 @@ class SubagentsPanelMixin(ReplAppBase):
         was_pinned = self._subagent_history_pinned_to_bottom
         self._remove_subagent_transcript_notice()
         if new_message_count > 0:
-            self._mount_subagent_messages(
-                container, messages, start_index=self._subagent_history_rendered_count)
+            start = self._subagent_history_rendered_count
+            widgets = self._render_message_range(messages[start:], messages)
+            if widgets:
+                container.mount(*widgets)
+            assert self._subagent_history_virtualizer is not None
+            self._subagent_history_virtualizer.register_settled_range(start, len(messages), widgets)
             self._subagent_history_rendered_count = len(messages)
         self._mount_subagent_status_notice(container, handle)
         self._subagent_history_rendered_state = handle.state
         self._scroll_if_pinned(container, was_pinned)
         self._update_status_bar()
-
-    def _mount_subagent_messages(
-        self, container: VerticalScroll, messages: list[ChatMessage], start_index: int = 0,
-    ) -> None:
-        """Mount `messages[start_index:]` into `container`. `responses_by_call_id` is built
-        from the full `messages` list regardless of `start_index`. A tool_use message's
-        non-empty content is rendered as a response block ahead of its tool calls."""
-        responses_by_call_id = {
-            message.tool_call_id: message for message in messages
-            if message.role == "tool_response" and message.tool_call_id is not None
-        }
-        for message in messages[start_index:]:
-            if message.role == "user":
-                display_content = strip_system_interjections(message.content)
-                container.mount(Static(display_content, classes="prompt", markup=False))
-                skill_notice = extract_skill_activation_notice(message.content)
-                if skill_notice is not None:
-                    container.mount(Static(skill_notice, classes="notice", markup=False))
-            elif message.role == "assistant":
-                text = message.content
-                if message.processing_state == "aborted":
-                    text = f"{text}\n\n*(interrupted)*"
-                container.mount(Markdown(text, classes="response"))
-            elif message.role == "thinking":
-                text = resolve_thinking_body_text(message.content, message.reasoning_details)
-                if message.processing_state == "aborted":
-                    text = f"{text}\n\n(interrupted)"
-                container.mount(Static(THINKING_LABEL, classes="thinking-label"))
-                container.mount(Static(text, classes="thinking-body", markup=False))
-                if message.reasoning_details:
-                    reasoning_text = summarize_reasoning_details(message.reasoning_details)
-                    if reasoning_text is not None:
-                        container.mount(Static(REASONING_DETAILS_LABEL, classes="reasoning-details-label"))
-                        container.mount(
-                            Static(reasoning_text, classes="reasoning-details-body", markup=False))
-            elif message.role == "tool_use":
-                if message.content.strip():
-                    container.mount(Markdown(message.content, classes="response"))
-                for call in message.tool_calls or []:
-                    rendered = self._render_restored_tool_call(call, responses_by_call_id.get(call.id))
-                    container.mount(Static(TOOL_USE_LABEL, classes="tool-call-label"))
-                    widget = ToolCallStatic(
-                        rendered.summary_content, rendered.detail_content, rendered.on_click)
-                    widget.set_detail_shown(self._tool_call_detail_shown)
-                    container.mount(widget)
 
     def _mount_subagent_status_notice(self, container: VerticalScroll, handle: SubagentHandle) -> None:
         """Mount the trailing status `Static` as the last child of `container`, tracking it in
@@ -276,11 +247,17 @@ class SubagentsPanelMixin(ReplAppBase):
         self._subagent_transcript_notice = notice
         self._scroll_if_pinned(container, was_pinned)
 
-    def _on_subagent_history_scroll_changed(self) -> None:
+    async def _on_subagent_history_scroll_changed(self) -> None:
         """Keep `_subagent_history_pinned_to_bottom` in sync with `#subagent-history`'s actual
-        scroll position."""
+        scroll position, and collapse/expand chunks for the new viewport. A no-op once the app
+        has started shutting down, since this can still fire after the container itself is
+        gone."""
+        if not self.is_running:
+            return
         container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         self._subagent_history_pinned_to_bottom = pinned_to_bottom(container)
+        if self._subagent_history_virtualizer is not None:
+            await self._subagent_history_virtualizer.refresh_visibility()
 
     def _refresh_subagents_panel(self) -> None:
         """Rebuild the panel's rows from the live subagent tree and refresh the status-line
