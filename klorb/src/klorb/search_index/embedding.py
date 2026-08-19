@@ -39,6 +39,10 @@ COREML_PROVIDER = "CoreMLExecutionProvider"
 
 _HF_HUB_OFFLINE_ENV_VAR = "HF_HUB_OFFLINE"
 
+_ONNXRUNTIME_LOG_SEVERITY_ERROR = 3
+"""`onnxruntime.set_default_logger_severity()` level that mutes its native C++ logger's benign
+"no CUDA-capable device" WARNING, which it prints straight to stderr outside Python logging."""
+
 
 def embedding_model_target_dir() -> Path:
     """Where `install_embedding_model()` copies the packaged model tree to."""
@@ -149,6 +153,9 @@ class EmbeddingModel:
         try:
             # Imported lazily so a process that never touches the search index never pays
             # onnxruntime's import cost.
+            import onnxruntime
+            onnxruntime.set_default_logger_severity(  # type: ignore[attr-defined]
+                _ONNXRUNTIME_LOG_SEVERITY_ERROR)
             from fastembed import TextEmbedding
             self._model = TextEmbedding(
                 model_name=EMBEDDING_MODEL_NAME, cache_dir=str(target_dir), threads=threads,
