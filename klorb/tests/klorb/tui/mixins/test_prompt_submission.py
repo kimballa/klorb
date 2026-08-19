@@ -278,6 +278,57 @@ async def test_two_queued_messages_are_concatenated_into_one_turn_not_one_lost(
         assert prompt_widgets.last(Static).content == "second queued\n\nthird queued"
 
 
+async def test_mid_turn_queued_message_stays_visible_after_delivery(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A message queued while a turn is running can be delivered mid-turn -- folded into the
+    same turn's tool-call loop by `deliver_queued_user_message` between rounds, rather than
+    drained at end-of-turn and resubmitted as a new one -- and must stay visible in the history,
+    de-italicized, instead of vanishing once its `<Queued message>` block is cleared."""
+    mock_provider = MagicMock()
+    first_round_streaming = threading.Event()
+    release_first_round = threading.Event()
+    calls_made = 0
+
+    def fake_send_prompt(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls_made
+        calls_made += 1
+        if calls_made == 1:
+            first_round_streaming.set()
+            release_first_round.wait(timeout=5)
+            return _tool_call_reply([("call_1", "echo", '{"message": "hi"}')])
+        return _reply("done")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "please echo"
+        await pilot.press("enter")
+        await _wait_until(pilot, first_round_streaming.is_set)
+
+        app._queue_prompt("mid-turn note")
+        await pilot.pause()
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert history.query_one(".queued-prompt", Static).content == "mid-turn note"
+
+        release_first_round.set()
+        await _wait_until(pilot, lambda: mock_provider.send_prompt.call_count == 2)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Delivered mid-turn (folded into the same turn, not resubmitted as a new one) -- just
+        # the two rounds' worth of `send_prompt` calls, not a third one for a fresh turn.
+        assert mock_provider.send_prompt.call_count == 2
+        assert len(history.query(".queued-prompt-header")) == 0
+        assert len(history.query(".queued-prompt")) == 0
+        prompt_widgets = history.query(".prompt")
+        assert prompt_widgets.last(Static).content == "mid-turn note"
+
+
 async def test_ensure_turn_finished_backstop_does_not_finish_a_newer_turn_it_did_not_start(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
