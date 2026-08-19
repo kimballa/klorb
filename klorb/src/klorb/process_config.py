@@ -295,10 +295,6 @@ SESSION_KEY_MAP: dict[str, str] = {
     "tools.hooks.maxChainedTurns": "max_chained_hook_turns",
     "tools.memory.writePermission": "memory_write_permission",
     "tools.memory.deletePermission": "memory_delete_permission",
-    "search.workspaceIndex.enabled": "search_workspace_index_enabled",
-    "search.indexer.gpuEnabled": "search_indexer_gpu_enabled",
-    "search.memoriesIndex.enabled": "search_memories_index_enabled",
-    "search.skillsIndex.enabled": "search_skills_index_enabled",
 }
 """Maps each recognized key inside a `klorb-config.json` file's `sessionDefaults` object to
 the `SessionConfig` attribute it sets. `interactive` is deliberately absent: it's always
@@ -367,6 +363,10 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
     "compatibility.claudeMarkdown": "compatibility_claude_markdown",
     "compatibility.claudeSkills": "compatibility_claude_skills",
+    "search.workspaceIndex.enabled": "search_workspace_index_enabled",
+    "search.indexer.gpuEnabled": "search_indexer_gpu_enabled",
+    "search.memoriesIndex.enabled": "search_memories_index_enabled",
+    "search.skillsIndex.enabled": "search_skills_index_enabled",
     LOG_TOOL_CALLS_CONFIG_KEY: "log_tool_calls",
     THEME_CONFIG_KEY: "theme",
     SIDEBAR_CONFIG_KEY: "sidebar",
@@ -567,6 +567,21 @@ class ProcessConfig(BaseModel):
     sidebar (Ctrl+T), ``"agents"`` for the subagents panel (Ctrl+G), or ``None`` (the default)
     for none. Persisted to the per-user config file under `SIDEBAR_CONFIG_KEY` so it's restored
     on the next klorb session. Toggling either panel updates this setting for future sessions."""
+    search_workspace_index_enabled: bool = True
+    """Whether `Session` builds a local hybrid (BM25 + vector KNN) search index for the workspace.
+    """
+    search_indexer_gpu_enabled: bool = True
+    """Whether the background workspace search indexer may embed on GPU; false forces CPU-only
+    embedding for it."""
+    search_memories_index_enabled: bool = True
+    """Whether `WorkspaceIndexer` also covers the `memories-workspace`/`memories-global` catalogs
+    `SearchMemories` draws its semantic hits from. Independent of
+    `search_workspace_index_enabled` in name only: both catalogs share `WorkspaceIndexer` with
+    `workspace`, so this flag is moot unless the `workspace` catalog itself is also enabled and
+    the workspace is trusted."""
+    search_skills_index_enabled: bool = True
+    """Whether `WorkspaceIndexer` also covers the `skills-user`/`skills-workspace`/
+    `skills-internal` catalogs `SearchSkills` draws its semantic hits from."""
     hooks: dict[str, list[HookConfig]] = Field(default_factory=dict)
     """Handler lists keyed by hook name (`onProcessStart`, `onSessionStart`, ...), merged
     across the config-layer stack by named-list concatenation — a later layer's handlers for a

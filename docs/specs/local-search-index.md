@@ -165,9 +165,9 @@ part of `.klorb`), `memories-global` (`KLORB_DATA_DIR/memories/`, outside the wo
 entirely), and `skills-workspace`/`skills-user`/`skills-internal` (every discoverable skill's
 markdown files across all three skill tiers — see "Skills catalogs" below) — one indexer, one
 store, one owner lock, one thread pool for all six. `index_memories` (a constructor flag, `True`
-by default, threaded from `SessionConfig.search_memories_index_enabled`) turns the memories
+by default, threaded from `ProcessConfig.search_memories_index_enabled`) turns the memories
 catalogs off without affecting `workspace`; `index_skills`/`claude_skills_compat` (from
-`SessionConfig.search_skills_index_enabled`/`ProcessConfig.compatibility_claude_skills`)
+`ProcessConfig.search_skills_index_enabled`/`ProcessConfig.compatibility_claude_skills`)
 similarly govern the skills catalogs.
 
 * **Cross-process ownership.** A TUI session and a vscode-plugin ACP session both open on the same
@@ -276,13 +276,13 @@ session's instance already holds); every subagent shares it via its `parent` cha
 short-circuits to `None` — no directory created, no SQLite file opened, no thread spawned — unless
 **all** of:
 
-* `SessionConfig.search_workspace_index_enabled` is `true` (config key `search.workspaceIndex.enabled`,
+* `ProcessConfig.search_workspace_index_enabled` is `true` (config key `search.workspaceIndex.enabled`,
   default `true`).
 * `SessionConfig.workspace.trusted` is `true` — the same `.klorb`-writing trust gate `memories`/
   `skills` apply.
 * `klorb.search_index.embedding.embedding_model_available()` is `true` — `klorb init` has run.
 
-`SessionConfig.search_workspace_index_gpu_enabled` (config key `search.workspaceIndex.gpuEnabled`,
+`ProcessConfig.search_indexer_gpu_enabled` (config key `search.indexer.gpuEnabled`,
 default `true`) is passed as `WorkspaceIndexer(use_gpu=...)`; `false` forces the background scan
 and query embedding onto CPU-only embedding, regardless of GPU availability.
 
@@ -412,17 +412,17 @@ source-file catalog only) but can be narrowed or widened to any single real or v
 
 ## Configuration
 
-* `sessionDefaults.search.workspaceIndex.enabled` — `bool`, default `true`, backing
-  `SessionConfig.search_workspace_index_enabled`.
-* `sessionDefaults.search.workspaceIndex.gpuEnabled` — `bool`, default `true`, backing
-  `SessionConfig.search_workspace_index_gpu_enabled`.
-* `sessionDefaults.search.memoriesIndex.enabled` — `bool`, default `true`, backing
-  `SessionConfig.search_memories_index_enabled`, threaded into `WorkspaceIndexer`'s
+* `search.workspaceIndex.enabled` — `bool`, default `true`, backing
+  `ProcessConfig.search_workspace_index_enabled`.
+* `search.indexer.gpuEnabled` — `bool`, default `true`, backing
+  `ProcessConfig.search_indexer_gpu_enabled`.
+* `search.memoriesIndex.enabled` — `bool`, default `true`, backing
+  `ProcessConfig.search_memories_index_enabled`, threaded into `WorkspaceIndexer`'s
   `index_memories` constructor flag. Gates the `memories-workspace`/`memories-global` catalogs
   together; moot unless `search_workspace_index_enabled` is also on and the workspace is trusted,
   since all these catalogs share one `WorkspaceIndexer`.
-* `sessionDefaults.search.skillsIndex.enabled` — `bool`, default `true`, backing
-  `SessionConfig.search_skills_index_enabled`, threaded into `WorkspaceIndexer`'s `index_skills`
+* `search.skillsIndex.enabled` — `bool`, default `true`, backing
+  `ProcessConfig.search_skills_index_enabled`, threaded into `WorkspaceIndexer`'s `index_skills`
   constructor flag. Gates the `skills-user`/`skills-workspace`/`skills-internal` catalogs together;
   same moot-unless caveat as `search.memoriesIndex.enabled`. `compatibility.claudeSkills` (see
   docs/specs/skills.md) additionally governs whether the `skills-workspace` catalog's discovery

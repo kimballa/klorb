@@ -68,15 +68,24 @@ _LOCK_RETRY_ATTEMPTS = 4
 _LOCK_RETRY_BASE_DELAY_SECONDS = 0.25
 _LOCK_RETRY_JITTER_SECONDS = 0.025
 
+_CHAINLINK_BIN_PATH: Path|None = None
+"Path to resolved `chainlink` binary. Cached result from _discover_binary()."
+
 
 def _discover_binary() -> Path | None:
     """Return the `chainlink` binary's path: `PATH` first, then `$VIRTUAL_ENV/bin/chainlink`
     if a virtualenv is active, then `$HOME/.cargo/bin/chainlink` as a last resort. `None` if
     none of these resolve."""
+
+    global _CHAINLINK_BIN_PATH
+    if _CHAINLINK_BIN_PATH:
+        return _CHAINLINK_BIN_PATH # Cached
+
     on_path = shutil.which("chainlink")
     if on_path is not None:
         logger.debug("Found chainlink on PATH: %s", on_path)
-        return Path(on_path)
+        _CHAINLINK_BIN_PATH = Path(on_path)
+        return _CHAINLINK_BIN_PATH
     logger.debug("chainlink not found on PATH.")
 
     virtual_env = os.environ.get("VIRTUAL_ENV")
@@ -84,14 +93,17 @@ def _discover_binary() -> Path | None:
         venv_candidate = Path(virtual_env) / "bin" / "chainlink"
         if venv_candidate.is_file():
             logger.debug("Found chainlink in the active virtualenv: %s", venv_candidate)
-            return venv_candidate
+            _CHAINLINK_BIN_PATH = venv_candidate
+            return _CHAINLINK_BIN_PATH
         logger.debug("chainlink not found in the active virtualenv at %s.", venv_candidate)
 
     cargo_candidate = Path.home() / ".cargo" / "bin" / "chainlink"
     if cargo_candidate.is_file():
         logger.debug("Found chainlink at the cargo-install fallback path: %s", cargo_candidate)
-        return cargo_candidate
+        _CHAINLINK_BIN_PATH = cargo_candidate
+        return _CHAINLINK_BIN_PATH
     logger.debug("chainlink not found at the cargo-install fallback path %s either.", cargo_candidate)
+
     return None
 
 

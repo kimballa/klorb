@@ -205,7 +205,7 @@ def run_scan_cli(argv: list[str]) -> int:
     workspace = _resolve_workspace()
     process_config = load_process_config(cwd=cwd, workspace=workspace)
     parser = build_scan_parser(
-        default_gpu=process_config.session.search_indexer_gpu_enabled)
+        default_gpu=process_config.search_indexer_gpu_enabled)
     args = parser.parse_args(argv)
 
     if not embedding_model_available():
@@ -219,8 +219,8 @@ def run_scan_cli(argv: list[str]) -> int:
         num_threads = min(cpu_count, MAX_GPU_INDEXING_THREADS) if args.gpu else cpu_count
     indexer = WorkspaceIndexer(
         workspace.path,
-        index_memories=process_config.session.search_memories_index_enabled,
-        index_skills=process_config.session.search_skills_index_enabled,
+        index_memories=process_config.search_memories_index_enabled,
+        index_skills=process_config.search_skills_index_enabled,
         claude_skills_compat=process_config.compatibility_claude_skills)
     try:
         stats = indexer.run_foreground_scan(

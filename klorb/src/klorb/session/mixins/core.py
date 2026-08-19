@@ -263,7 +263,7 @@ class SessionCoreMixin(SessionBase):
         self._workspace_indexer = (
             parent.workspace_indexer if parent is not None
             else self._create_workspace_indexer(
-                config, claude_skills_compat=self._compatibility_claude_skills)
+                config, process_config, claude_skills_compat=self._compatibility_claude_skills)
         )
         """The local search index backing semantic search, or `None` if this is an untrusted
         workspace or construction failed. Built once per root session and shared with subagents. Not
@@ -328,7 +328,7 @@ class SessionCoreMixin(SessionBase):
 
     @staticmethod
     def _create_workspace_indexer(
-        config: SessionConfig, *, claude_skills_compat: bool,
+        config: SessionConfig, process_config: "ProcessConfig | None" = None, *, claude_skills_compat: bool,
     ) -> "WorkspaceIndexer | None":
         """Construct and `start()` a `WorkspaceIndexer` for `config.workspace.path`, or return
         `None` if `search_workspace_index_enabled` is off, the workspace is untrusted, the bundled
@@ -338,7 +338,12 @@ class SessionCoreMixin(SessionBase):
         `search_skills_index_enabled`) likewise governs the `skills-*` catalogs, and
         `claude_skills_compat` governs whether their `workspace` tier also covers
         `.claude/skills/`."""
-        if not config.search_workspace_index_enabled or not config.workspace.trusted:
+        if process_config is None:
+            from klorb.process_config import ProcessConfig as _ProcessConfig
+            pc = _ProcessConfig()
+        else:
+            pc = process_config
+        if not pc.search_workspace_index_enabled or not config.workspace.trusted:
             return None
         from klorb.search_index.embedding import embedding_model_available
         if not embedding_model_available():
@@ -350,9 +355,9 @@ class SessionCoreMixin(SessionBase):
         from klorb.search_index.indexer import WorkspaceIndexer
         try:
             indexer = WorkspaceIndexer(
-                config.workspace.path, use_gpu=config.search_indexer_gpu_enabled,
-                index_memories=config.search_memories_index_enabled,
-                index_skills=config.search_skills_index_enabled,
+                config.workspace.path, use_gpu=pc.search_indexer_gpu_enabled,
+                index_memories=pc.search_memories_index_enabled,
+                index_skills=pc.search_skills_index_enabled,
                 claude_skills_compat=claude_skills_compat)
         except OSError:
             logger.warning("Could not construct workspace search index.", exc_info=True)

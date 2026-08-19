@@ -16,10 +16,6 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* all 4 conf keys not recognized for semantic search enable/disable?
-  2026-08-18 08:54:30 - WARNING:klorb.process_config:Unrecognized klorb-config.json key 'search.skillsIndex.enabled'; ignoring.
-  2026-08-18 08:54:30 - WARNING:klorb.process_config:Unrecognized klorb-config.json key 'search.workspaceIndex.enabled'; ignoring.
-
 ### Feature backlog
 
 * BUG: In a long-enough session (2 hrs?) the TUI gets unusable and eventually crashes, probably  due to
@@ -165,6 +161,11 @@
   done by Textual's draw-over algorithm? This may not be fixable.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
+
+* When the agent is mid-turn and I type a phrase to enqueue a midturn prompt, I hit enter and the
+  queued up content shows up in italics (good) but after it is actually fed to the agent, it disappears
+  from the history view entirely. The agent responds to it so I know the msg was sent, but it's not
+  displaying on-screen after it's sent. (Possible regression after 5012aa32?)
 
 ## VSCode plugin
 
