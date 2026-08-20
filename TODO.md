@@ -279,5 +279,3 @@
   if instability persists, it corroborates a separate non-DOM cause.
 
 ## Meta / dev environment
-
-* Add a repo-level skill to move "#agent" items from TODO.md to the auto/ dir.
