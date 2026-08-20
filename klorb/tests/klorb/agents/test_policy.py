@@ -224,7 +224,7 @@ def test_explorer_plan_session_config_carries_the_explorer_role(
     plan = plan_subagent_creation(context, "explorer", None, None)
 
     assert plan.session_config.role_name == "explorer"
-    assert plan.role_definition.default_model == "xiaomi/mimo-v2.5"
+    assert plan.role_definition.default_model == "klorb-default/fast"
 
 
 def test_allowed_tools_override_replaces_the_roles_own_list(

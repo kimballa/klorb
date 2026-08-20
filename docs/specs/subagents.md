@@ -38,7 +38,7 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
 ```json
 {
   "name": "explorer",
-  "default_model": "moonshotai/kimi-k2.7-code",
+  "default_model": "klorb-default/fast",
   "restrict_to": {
     "tools": ["ReadFile", "Grep", "..."],
     "tool_categories": ["..."],
@@ -204,7 +204,10 @@ A subagent's `Session` is constructed directly (never by cloning the parent `Ses
   once, so it's the one exception to "clone and diverge independently" (see
   docs/specs/permissions.md).
 * `role_name` is overwritten to the requested subagent role; `model` is the `CreateSubagent`
-  call's `model` argument if given, else the role's `default_model`.
+  call's `model` argument if given, else the role's `default_model`. Either value may be one of
+  the `klorb-default/fast`/`normal`/`heavy` placeholders (`klorb.models.placeholders`), resolved
+  against `ProcessConfig.default_model_fast`/`default_model_normal`/`default_model_heavy`, or
+  `klorb-default/current`, resolved to the creating session's own `config.model`.
 * `skill_rules` is the computed deny-list from "Security model" above.
 * On the `Session` object itself (not part of the copied config): `parent` is a reference to the
   creator; `depth = parent.depth + 1`; `effective_subagent_roles` is the computed, stored set;

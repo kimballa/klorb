@@ -14,6 +14,11 @@ from klorb.hooks.config import (
     TimerEventConfig,
     WorkspaceTrustChangedEventConfig,
 )
+from klorb.models.placeholders import (
+    DEFAULT_PLACEHOLDER_MODEL_FAST,
+    DEFAULT_PLACEHOLDER_MODEL_HEAVY,
+    DEFAULT_PLACEHOLDER_MODEL_NORMAL,
+)
 from klorb.openrouter import DEFAULT_MODEL, OPENROUTER_BASE_URL
 from klorb.permissions.directory_access import DirectoryAccessTable
 from klorb.process_config import (
@@ -918,6 +923,40 @@ def test_bash_risk_classifier_settings_are_overridable_via_config_file(tmp_path:
     assert process_config.bash_risk_classifier_e2e_timeout_seconds == 7.5
     assert process_config.bash_risk_classifier_too_risky_threshold == 6
     assert process_config.bash_risk_classifier_history_size == 5
+
+
+# --- models.default.* (placeholder models) ---
+
+
+def test_default_placeholder_models_when_no_config_files_exist(tmp_path: Path) -> None:
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.default_model_fast == DEFAULT_PLACEHOLDER_MODEL_FAST
+    assert process_config.default_model_normal == DEFAULT_PLACEHOLDER_MODEL_NORMAL
+    assert process_config.default_model_heavy == DEFAULT_PLACEHOLDER_MODEL_HEAVY
+
+
+def test_default_config_layer_matches_placeholder_model_field_defaults() -> None:
+    layer = _real_default_config_layer([]).contents
+    defaults = ProcessConfig()
+
+    assert layer["models.default.fast"] == defaults.default_model_fast
+    assert layer["models.default.normal"] == defaults.default_model_normal
+    assert layer["models.default.heavy"] == defaults.default_model_heavy
+
+
+def test_placeholder_models_are_overridable_via_config_file(tmp_path: Path) -> None:
+    _write_config(tmp_path / "etc" / "klorb-config.json", {
+        "models.default.fast": "vendor/other-fast",
+        "models.default.normal": "vendor/other-normal",
+        "models.default.heavy": "vendor/other-heavy",
+    })
+
+    process_config = load_process_config(cwd=tmp_path)
+
+    assert process_config.default_model_fast == "vendor/other-fast"
+    assert process_config.default_model_normal == "vendor/other-normal"
+    assert process_config.default_model_heavy == "vendor/other-heavy"
 
 
 def test_skill_rules_concatenate_across_layers(tmp_path: Path) -> None:

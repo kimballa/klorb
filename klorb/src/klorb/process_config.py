@@ -21,6 +21,11 @@ from klorb.hooks.config import EVENT_CONFIG_MODELS, HOOK_NAMES, EventConfig, Hoo
 from klorb.hooks.merge import concatenate_named_handler_lists, parse_handler_list
 from klorb.hooks.timer_events import clamp_timer_intervals
 from klorb.json_error_display import format_json_error_context
+from klorb.models.placeholders import (
+    DEFAULT_PLACEHOLDER_MODEL_FAST,
+    DEFAULT_PLACEHOLDER_MODEL_HEAVY,
+    DEFAULT_PLACEHOLDER_MODEL_NORMAL,
+)
 from klorb.openrouter import OPENROUTER_BASE_URL
 from klorb.paths import get_klorb_config_dir
 from klorb.permissions.command_access import CommandRules
@@ -358,6 +363,9 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.subagents.maxDepth": "subagents_max_depth",
     "tools.subagents.maxConcurrentPerParent": "subagents_max_concurrent_per_parent",
     "tools.subagents.maxActiveTotal": "subagents_max_active_total",
+    "models.default.fast": "default_model_fast",
+    "models.default.normal": "default_model_normal",
+    "models.default.heavy": "default_model_heavy",
     "classifier.model": "session_classifier_model",
     "classifier.timeout": "session_classifier_timeout_seconds",
     "classifier.e2eTimeout": "session_classifier_e2e_timeout_seconds",
@@ -526,6 +534,12 @@ class ProcessConfig(BaseModel):
     """See `DEFAULT_SUBAGENTS_MAX_CONCURRENT_PER_PARENT` and `tools.subagents.maxConcurrentPerParent`."""
     subagents_max_active_total: int = DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL
     """See `DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL` and `tools.subagents.maxActiveTotal`."""
+    default_model_fast: str = DEFAULT_PLACEHOLDER_MODEL_FAST
+    """Concrete model id the `"klorb-default/fast"` placeholder resolves to."""
+    default_model_normal: str = DEFAULT_PLACEHOLDER_MODEL_NORMAL
+    """Concrete model id the `"klorb-default/normal"` placeholder resolves to."""
+    default_model_heavy: str = DEFAULT_PLACEHOLDER_MODEL_HEAVY
+    """Concrete model id the `"klorb-default/heavy"` placeholder resolves to."""
     session_classifier_model: str | None = None
     """Model `klorb.session_naming.generate_session_name()` sends its request to, via the same
     `ApiProvider` instance the main conversation uses. `None` (the default, and

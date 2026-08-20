@@ -8,6 +8,7 @@ from tools.subagents.conftest import _FakeProvider
 
 from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider
+from klorb.models.placeholders import DEFAULT_PLACEHOLDER_MODEL_FAST, DEFAULT_PLACEHOLDER_MODEL_HEAVY
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import ToolCallError
@@ -94,6 +95,75 @@ def test_subagent_session_gets_the_explorer_role_and_scratchpad_path(
     assert handle.session.scratchpad.path == context.session.scratchpad.path
     assert handle.session.name == "task"
     handle.thread.join(timeout=5.0)
+
+
+def test_apply_resolves_the_roles_placeholder_default_model(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+
+    tool.apply({"role": "explorer", "session_title": "task", "initial_message": "go"})
+
+    handle = context.session.subagent_tracker.handles()[0]
+    assert handle.session.config.model == DEFAULT_PLACEHOLDER_MODEL_FAST
+    handle.thread.join(timeout=5.0)
+
+
+def test_apply_resolves_an_explicit_placeholder_model_override(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+
+    tool.apply({
+        "role": "explorer", "session_title": "task", "initial_message": "go",
+        "model": "klorb-default/heavy",
+    })
+
+    handle = context.session.subagent_tracker.handles()[0]
+    assert handle.session.config.model == DEFAULT_PLACEHOLDER_MODEL_HEAVY
+    handle.thread.join(timeout=5.0)
+
+
+def test_apply_resolves_current_placeholder_to_the_parents_model(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    context.session.config.model = "parent/custom-model"
+    tool = CreateSubagentTool(context)
+
+    tool.apply({
+        "role": "explorer", "session_title": "task", "initial_message": "go",
+        "model": "klorb-default/current",
+    })
+
+    handle = context.session.subagent_tracker.handles()[0]
+    assert handle.session.config.model == "parent/custom-model"
+    handle.thread.join(timeout=5.0)
+
+
+def test_apply_raises_on_an_unrecognized_placeholder_model(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+
+    with pytest.raises(ToolCallError):
+        tool.apply({
+            "role": "explorer", "session_title": "task", "initial_message": "go",
+            "model": "klorb-default/bogus",
+        })
+
+    assert context.session.subagent_tracker.handles() == []
 
 
 def test_subagent_session_shares_the_parents_root_id(

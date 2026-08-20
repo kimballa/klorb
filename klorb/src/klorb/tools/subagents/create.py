@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from klorb.agents.policy import dispatch_subagent_turn, plan_subagent_creation
+from klorb.models.placeholders import resolve_placeholder_model
 from klorb.session import Session
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
@@ -28,7 +29,9 @@ class CreateSubagentParameters(BaseModel):
     initial_message: str = Field(description=(
         "The instructions/question you're giving the subagent -- its user message."))
     model: str | None = Field(default=None, description=(
-        "Override the default model for the role. Omit to use the role's default."))
+        "Override the default model for the role. Accepts a literal model id or one of the "
+        "\"klorb-default/fast\", \"klorb-default/normal\", \"klorb-default/heavy\", "
+        "\"klorb-default/current\" placeholders. Omit to use the role's default."))
     allowed_tools: list[str] | None = Field(default=None, description=(
         "Override the role's default tool list for this subagent. This does not "
         "grant any tools you do not already have access to yourself. Omit for default."))
@@ -87,6 +90,16 @@ class CreateSubagentTool(Tool):
         plan = plan_subagent_creation(
             context, args.get("role", ""), args.get("allowed_tools"), args.get("allowed_skills"))
         model = args.get("model") or plan.role_definition.default_model
+        try:
+            model = resolve_placeholder_model(
+                model,
+                fast=context.process_config.default_model_fast,
+                normal=context.process_config.default_model_normal,
+                heavy=context.process_config.default_model_heavy,
+                current=context.session.config.model,
+            )
+        except ValueError as exc:
+            raise ToolCallError(str(exc), category="validation") from exc
         child_config = plan.session_config
         child_config.model = model
         child_tool_registry = ToolRegistry(context.process_config, child_config, plan.tool_classes)
