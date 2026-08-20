@@ -1507,6 +1507,17 @@ for tests rooted there, even though application code resolves them fine.
 `esbuild.jsx: 'automatic'` setting, matching `tsconfig.webview.json`'s JSX mode) independent of
 either `esbuild` bundle, so it imports source modules directly rather than the built bundle.
 
+`test/setup.ts` (`vitest.config.mts`'s `setupFiles`) registers the real
+`@vscode-elements/elements` custom elements for jsdom-environment tests via
+`webview/registerCustomElements` — the same module `main.tsx` imports for the real webview —
+so component tests exercise actual `<vscode-textarea>`/`<vscode-button>`/etc. behavior rather
+than inert, unregistered elements; it also stubs jsdom's incomplete `ElementInternals` (missing
+`setFormValue`/`setValidity`/`checkValidity`/`reportValidity`/`form`/`validity`/
+`validationMessage`/`willValidate`, which these components' form-associated elements call
+unconditionally) and stubs the `#vscode-codicon-stylesheet` `<link>` that `<vscode-icon>` looks
+for, matching the one `klorbSessionViewProvider.ts`'s webview HTML shell always provides. See
+`docs/adrs/00203-jsdom-registers-real-vscode-elements-custom-elements-for-webview-tests.md`.
+
 ### Component library
 
 The webview's interactive controls (`<vscode-textarea>`, `<vscode-button>`, `<vscode-icon>`,

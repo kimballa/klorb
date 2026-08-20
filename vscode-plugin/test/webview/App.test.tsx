@@ -7,6 +7,7 @@ import {
   screen,
   type RenderResult,
 } from '@testing-library/react';
+import type { VscodeTextarea } from '@vscode-elements/elements';
 import { act, type ReactElement } from 'react';
 import { VirtuosoMockContext } from 'react-virtuoso';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -81,27 +82,22 @@ function taskPanelSummaryText(container: HTMLElement): string | null {
   return container.querySelector('.task-panel-summary-text')?.textContent ?? null;
 }
 
-function promptTextarea(container: HTMLElement): Element {
+function promptTextarea(container: HTMLElement): VscodeTextarea {
   // Testing Library has no role-based query for the <vscode-textarea> custom element, so a
-  // direct querySelector is the only way to reach it (see typeAndSubmit's comment below).
+  // direct querySelector is the only way to reach it.
   // eslint-disable-next-line testing-library/no-node-access
   const textarea = container.querySelector('vscode-textarea');
   if (textarea === null) {
     throw new Error('vscode-textarea not rendered');
   }
-  return textarea;
+  return textarea as VscodeTextarea;
 }
 
-/**
- * Types into the `<vscode-textarea>` custom element and hits Enter. jsdom doesn't recognize
- * a custom element as having a native `value` setter, so `fireEvent.input`'s usual
- * target-value shortcut doesn't apply here (per the plan's note to assert against the
- * custom-element tag boundary, not its shadow internals): the value is set directly on the
- * element before dispatching a plain `input` event, mirroring how the real Lit component
- * fires `input` after its own internal state changes.
- */
+/** Types into the `<vscode-textarea>` custom element and hits Enter: sets `.value` directly and
+ * dispatches a plain `input` event, since `fireEvent.input`'s native-textarea target-value
+ * shortcut doesn't apply to a custom element. */
 function typeAndSubmit(container: HTMLElement, text: string): void {
-  const textarea = promptTextarea(container) as HTMLElement & { value: string };
+  const textarea = promptTextarea(container);
   textarea.value = text;
   fireEvent(textarea, new Event('input', { bubbles: true }));
   fireEvent.keyDown(textarea, { key: 'Enter' });
@@ -174,7 +170,7 @@ describe('App', () => {
 
     typeAndSubmit(container, 'long task');
 
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+    expect(promptTextarea(container).disabled).toBe(true);
     expect(screen.getByTitle('Stop')).toBeTruthy();
   });
 
@@ -195,7 +191,7 @@ describe('App', () => {
     typeAndSubmit(container, 'quick task');
     postHostMessage({ type: 'turnEnded', stopReason: 'end_turn' });
 
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+    expect(promptTextarea(container).disabled).toBe(false);
     expect(screen.getByTitle('Send')).toBeTruthy();
   });
 
@@ -207,7 +203,7 @@ describe('App', () => {
     postHostMessage({ type: 'turnError', message: 'server exploded' });
 
     expect(screen.getByText('server exploded')).toBeTruthy();
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+    expect(promptTextarea(container).disabled).toBe(false);
   });
 
   it('renders a tool call chip that goes busy then completed', () => {
@@ -647,7 +643,7 @@ describe('App', () => {
       postHostMessage({ type: 'statusUpdate', enqueueMessageCapable: true });
 
       typeAndSubmit(container, 'long task');
-      expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+      expect(promptTextarea(container).disabled).toBe(false);
 
       typeAndSubmit(container, 'also check the tests');
 
@@ -661,7 +657,7 @@ describe('App', () => {
     const { container } = render(<App vscode={vscode} initialEntries={[]} />);
 
     typeAndSubmit(container, 'long task');
-    expect(promptTextarea(container).hasAttribute('disabled')).toBe(true);
+    expect(promptTextarea(container).disabled).toBe(true);
 
     // The textarea is disabled, so a second Enter (even if fired anyway) submits nothing new.
     typeAndSubmit(container, 'also check the tests');
@@ -821,7 +817,7 @@ describe('App', () => {
       // Selecting a subagent no longer disables the input -- submitting addresses it directly
       // instead of the root session (see docs/specs/vscode-plugin.md's "Subagents panel"
       // section).
-      expect(promptTextarea(container).hasAttribute('disabled')).toBe(false);
+      expect(promptTextarea(container).disabled).toBe(false);
     });
 
     it('submitting while a subagent is selected posts submitPrompt with its subagentId', () => {
