@@ -204,6 +204,11 @@ similarly govern the skills catalogs.
   hash rechunks and re-embeds it. The skills catalogs skip the mtime check entirely (see "Skills
   catalogs" below) and go straight to the content-hash compare. A previously-indexed path no longer
   seen is deleted.
+* **Secret redaction.** `_reindex_file` passes each file's text through a `SecretRedactor`
+  (`klorb.tools.util.secret_redaction`, one instance per `WorkspaceIndexer`, its baseline loaded
+  from `${workspace_root}/.klorb/secrets-baseline.json`) before chunking, so no detected credential
+  is ever embedded or persisted in `chunks`/`chunks_fts`. This is separate from
+  `render_chunk_lines()`'s query-time redaction below, which re-reads the file fresh at search time.
 * **The watcher** — a `watchdog` `Observer` + debounce-`Timer`, the same idiom
   `klorb.hooks.fs_events.FileSystemWatcher`/`klorb.tui.workspace_file_index.WorkspaceFileIndex` use —
   is scheduled recursively on the whole workspace root (so it already receives events for

@@ -18,6 +18,11 @@ operate on real, model-named filesystem paths, where a genuine credential (a `.e
 config file with an API key) is most likely to live. See "Out of scope" for what this
 deliberately doesn't cover (most notably `Bash`).
 
+`klorb.search_index.indexer.WorkspaceIndexer` also uses a `SecretRedactor`, but for a different
+purpose: redacting each file's text before chunking/embedding so no detected credential is ever
+persisted in the search index's on-disk store. See docs/specs/local-search-index.md's "Indexing:
+`WorkspaceIndexer`" section.
+
 `SecretRedactionFilter` (`logging_config.py`) applies the same detection to every log handler
 installed by `configure_logging()`, so credentials that pass through `logger.log()` are replaced
 with `[REDACTED]` before they reach stderr, the TUI conversation history, or the session log file.

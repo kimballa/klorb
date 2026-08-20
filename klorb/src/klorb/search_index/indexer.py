@@ -39,6 +39,7 @@ from klorb.search_index.store import FileIndexRecord, SearchIndexStore, WriteLoc
 from klorb.tools.memory.common import MEMORIES_DIRNAME
 from klorb.tools.skill.common import resolve_all_skills, resolve_skill_file, skill_file_manifest
 from klorb.tools.util.gitignore import GitignoreFilter
+from klorb.tools.util.secret_redaction import SecretRedactor, load_secrets_baseline
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,10 @@ class WorkspaceIndexer:
         self._index_memories = index_memories
         self._index_skills = index_skills
         self._claude_skills_compat = claude_skills_compat
+        # trusted=True: a `WorkspaceIndexer` is only ever constructed for an already-trusted
+        # workspace (session path) or via a directly user-invoked CLI command.
+        self._redactor = SecretRedactor(
+            baseline_hashes=load_secrets_baseline(self._workspace_root, trusted=True))
         self._global_memories_dir = (get_klorb_data_dir() / MEMORIES_DIRNAME).resolve(strict=False)
         index_dir = workspace_klorb_dir(self._workspace_root) / INDEX_DIR_NAME
         index_dir.mkdir(parents=True, exist_ok=True)
@@ -562,6 +567,8 @@ class WorkspaceIndexer:
         `get_embedding_model()` singleton. `timings`, if given, accumulates this call's
         chunk/embed/store phase durations."""
         self._store.delete_for_path(rel_path, write_lock)
+        # Redact before chunking so no detected secret is ever embedded or persisted in the index.
+        text = self._redactor.redact(None, text)
         chunk_start = time.monotonic()
         chunks = get_chunker_router().chunk_file(rel_path, text, catalog)
         if timings is not None:

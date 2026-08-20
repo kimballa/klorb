@@ -284,6 +284,22 @@ def test_run_foreground_scan_indexes_dirty_files(tmp_path: Path) -> None:
         workspace_indexer.close()
 
 
+def test_run_foreground_scan_redacts_secrets_before_storing_chunks(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text(
+        "AWS_ACCESS_KEY_ID=AKIAABCDEFGHIJKLMNOP\ndef handle_widget():\n    pass\n")
+    workspace_indexer = WorkspaceIndexer(tmp_path)
+    try:
+        workspace_indexer.run_foreground_scan()
+
+        hits = workspace_indexer.hybrid_search("handle_widget", 10, update=False)
+        assert hits
+        for chunk, _score in hits:
+            assert "AKIAABCDEFGHIJKLMNOP" not in chunk.text
+        assert any("[[SECRET:" in chunk.text for chunk, _score in hits)
+    finally:
+        workspace_indexer.close()
+
+
 def test_run_foreground_scan_skips_files_whose_mtime_is_unchanged(tmp_path: Path) -> None:
     (tmp_path / "a.py").write_text("def unchanged(): pass\n")
     workspace_indexer = WorkspaceIndexer(tmp_path)
