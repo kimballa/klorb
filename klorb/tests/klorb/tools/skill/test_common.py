@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.hooks.config import FileSystemModifiedEventConfig, TimerEventConfig
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import PermissionAskRequired
@@ -23,7 +24,9 @@ from klorb.tools.skill.common import (
     resolve_all_skills,
     resolve_skill_file,
     skill_bash_command_patterns,
+    skill_event_configs,
     skill_file_manifest,
+    skill_hook_configs,
     validate_namespace,
     validate_skill_name,
 )
@@ -232,6 +235,128 @@ def test_skill_bash_command_patterns_skips_malformed_entries(
     with caplog.at_level(logging.WARNING):
         assert skill_bash_command_patterns(raw) == [["git", "status"]]
     assert sum(1 for record in caplog.records if "entry skipped" in record.message) == 2
+
+
+# --- metadata.klorb.hooks / metadata.klorb.events ---
+
+
+def test_skill_hook_configs_reads_nested_metadata_key_and_forces_is_heritable_false_by_default() -> None:
+    raw = {
+        "metadata": {
+            "klorb": {"hooks": {"onToolUse": [{"type": "bash", "shell": "echo hi"}]}},
+        },
+    }
+    result = skill_hook_configs(raw)
+    assert list(result.keys()) == ["onToolUse"]
+    assert result["onToolUse"][0].shell == "echo hi"
+    assert result["onToolUse"][0].is_heritable is False
+
+
+def test_skill_hook_configs_honors_an_explicit_is_heritable_true() -> None:
+    raw = {
+        "metadata": {
+            "klorb": {
+                "hooks": {
+                    "onToolUse": [{"type": "bash", "shell": "echo hi", "isHeritable": True}],
+                },
+            },
+        },
+    }
+    result = skill_hook_configs(raw)
+    assert result["onToolUse"][0].is_heritable is True
+
+
+def test_skill_hook_configs_absent_yields_empty_dict() -> None:
+    assert skill_hook_configs({}) == {}
+    assert skill_hook_configs({"metadata": {}}) == {}
+    assert skill_hook_configs({"metadata": {"klorb": {}}}) == {}
+
+
+def test_skill_hook_configs_drops_process_scoped_hook_names_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = {
+        "metadata": {
+            "klorb": {
+                "hooks": {
+                    "onSessionEnd": [{"type": "bash", "shell": "echo hi"}],
+                    "onToolUse": [{"type": "bash", "shell": "echo ok"}],
+                },
+            },
+        },
+    }
+    with caplog.at_level(logging.WARNING):
+        result = skill_hook_configs(raw)
+    assert list(result.keys()) == ["onToolUse"]
+    assert "process-scoped hook" in caplog.text
+
+
+def test_skill_hook_configs_drops_unrecognized_hook_names_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = {"metadata": {"klorb": {"hooks": {"onTotallyMadeUp": [{"type": "bash", "shell": "x"}]}}}}
+    with caplog.at_level(logging.WARNING):
+        assert skill_hook_configs(raw) == {}
+    assert "onTotallyMadeUp" in caplog.text
+
+
+def test_skill_hook_configs_malformed_shape_yields_empty_dict(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert skill_hook_configs({"metadata": {"klorb": {"hooks": "not a dict"}}}) == {}
+
+
+def test_skill_event_configs_reads_nested_metadata_key() -> None:
+    raw = {
+        "metadata": {
+            "klorb": {
+                "events": {
+                    "FileSystemModified": [
+                        {"watch": "src/", "action": {"type": "chat", "prompt": "changed"}},
+                    ],
+                },
+            },
+        },
+    }
+    result = skill_event_configs(raw)
+    assert list(result.keys()) == ["FileSystemModified"]
+    fs_event = result["FileSystemModified"][0]
+    assert isinstance(fs_event, FileSystemModifiedEventConfig)
+    assert fs_event.watch == "src/"
+    assert fs_event.is_heritable is False
+
+
+def test_skill_event_configs_absent_yields_empty_dict() -> None:
+    assert skill_event_configs({}) == {}
+    assert skill_event_configs({"metadata": {"klorb": {}}}) == {}
+
+
+def test_skill_event_configs_drops_unrecognized_event_names_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = {"metadata": {"klorb": {"events": {"TotallyMadeUp": [{"action": {"type": "bash", "shell": "x"}}]}}}}
+    with caplog.at_level(logging.WARNING):
+        assert skill_event_configs(raw) == {}
+    assert "TotallyMadeUp" in caplog.text
+
+
+def test_skill_event_configs_clamps_timer_intervals_below_the_floor() -> None:
+    raw = {
+        "metadata": {
+            "klorb": {
+                "events": {
+                    "Timer": [
+                        {"interval_minutes": 0.01, "action": {"type": "chat", "prompt": "tick"}},
+                    ],
+                },
+            },
+        },
+    }
+    result = skill_event_configs(raw)
+    timer_event = result["Timer"][0]
+    assert isinstance(timer_event, TimerEventConfig)
+    assert timer_event.interval_minutes == pytest.approx(10.0 / 60.0)
 
 
 # --- discovery / precedence ---

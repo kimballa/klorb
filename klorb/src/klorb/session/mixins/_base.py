@@ -51,6 +51,10 @@ if TYPE_CHECKING:
     # `klorb.hooks.dispatcher` depends on `klorb.session.config`, so a real import here
     # would be circular; needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.hook_api import HookOutput
+    # `klorb.hooks.config` imports nothing from `klorb.session`, so this one isn't actually
+    # circular -- kept under TYPE_CHECKING anyway for consistency with the other hook/process
+    # imports in this block.
+    from klorb.hooks.config import EventConfig
     # isort: on
 
 
@@ -254,7 +258,9 @@ class SessionBase:
 
     def _deliver_chained_hook_message(self, message: str) -> None: ...
 
-    def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
+    def _dispatch_hook(
+        self, hook_name: str, *, subject: "Session | None" = None, **hook_input_kwargs: Any,
+    ) -> "HookOutput":
         raise NotImplementedError
 
     def _dispatch_lifecycle_hook(
@@ -263,7 +269,9 @@ class SessionBase:
     ) -> "HookOutput":
         raise NotImplementedError
 
-    def fire_subagent_start_hook(self, message: str) -> str | None:
+    def fire_subagent_start_hook(self, child: "Session", message: str) -> str | None:
         raise NotImplementedError
 
-    def fire_subagent_turn_end_hook(self, output: str) -> None: ...
+    def fire_subagent_turn_end_hook(self, child: "Session", output: str) -> None: ...
+
+    def _start_event_watchers_for(self, events: "dict[str, list[EventConfig]]") -> None: ...

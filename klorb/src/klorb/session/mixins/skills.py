@@ -14,6 +14,8 @@ from klorb.tools.skill.common import (
     display_skill_description,
     skill_activation_payload,
     skill_bash_command_patterns,
+    skill_event_configs,
+    skill_hook_configs,
 )
 from klorb.tools.skill.model import Skill
 
@@ -200,6 +202,8 @@ class SessionSkillsMixin(SessionBase):
             # `ActivateSkill` and go through the normal flow, where the hook gets another say.
             return None
         self.grant_skill_bash_commands(skill)
+        self.grant_skill_hooks(skill)
+        self.grant_skill_events(skill)
         payload = skill_activation_payload(skill)
         body = (
             f"The user has invoked skill {skill.name}. Read the skill JSON that follows plus "
@@ -246,3 +250,49 @@ class SessionSkillsMixin(SessionBase):
         logger.debug(
             "Skill %s/%s granted %d session bashCommands pattern(s).",
             skill.namespace, skill.name, len(patterns))
+
+    def grant_skill_hooks(self, skill: Skill) -> None:
+        """Add `skill`'s `metadata.klorb.hooks` entries to this session's own `config.hooks`, so
+        a skill's frontmatter can subscribe its own hook handlers into the activating session
+        without a `klorb-config.json` `hooks` key listing them separately. Idempotent per
+        skill-per-session, unlike a raw dict merge would be: a skill re-activated later in the
+        same session (e.g. once via `ActivateSkill`, again via a leading `/name` mention) is
+        skipped rather than re-registering (and so double-firing) its handlers -- see
+        `SessionConfig.granted_skill_hook_event_ids`.
+        """
+        skill_id = (skill.namespace, skill.name)
+        if skill_id in self.config.granted_skill_hook_event_ids:
+            return
+        new_hooks = skill_hook_configs(skill.raw)
+        if new_hooks:
+            merged = {name: list(handlers) for name, handlers in self.config.hooks.items()}
+            for name, handlers in new_hooks.items():
+                merged.setdefault(name, []).extend(handlers)
+            self.config.hooks = merged
+            logger.debug(
+                "Skill %s/%s granted hook handler(s) for %d name(s).",
+                skill.namespace, skill.name, len(new_hooks))
+        self.config.granted_skill_hook_event_ids = (
+            self.config.granted_skill_hook_event_ids | {skill_id})
+
+    def grant_skill_events(self, skill: Skill) -> None:
+        """Add `skill`'s `metadata.klorb.events` entries to this session's own `config.events`,
+        starting a `FileSystemWatcher`/`TimerScheduler` for whichever newly-added entries need
+        one -- mirrors `grant_skill_hooks`, sharing its idempotency tracking (one
+        `granted_skill_hook_event_ids` set covers both, since a skill's `metadata.klorb.hooks`/
+        `.events` activate together)."""
+        skill_id = (skill.namespace, skill.name)
+        if skill_id in self.config.granted_skill_hook_event_ids:
+            return
+        new_events = skill_event_configs(skill.raw)
+        if new_events:
+            merged = {name: list(handlers) for name, handlers in self.config.events.items()}
+            for name, handlers in new_events.items():
+                merged.setdefault(name, []).extend(handlers)
+            self.config.events = merged
+            self._start_event_watchers_for(new_events)
+            logger.debug(
+                "Skill %s/%s granted event handler(s) for %d name(s).",
+                skill.namespace, skill.name, len(new_events))
+        self.config.granted_skill_hook_event_ids = (
+            self.config.granted_skill_hook_event_ids | {skill_id})

@@ -25,6 +25,7 @@ from klorb.agents.runtime import (
     total_active_subagents,
 )
 from klorb.api_provider import ResponseAborted
+from klorb.hooks.config import filter_heritable_events, filter_heritable_hooks
 from klorb.message import Message
 from klorb.permissions.skill_access import SkillRules, format_fqsn, parse_fqsn
 from klorb.process_config import ProcessConfig
@@ -82,18 +83,35 @@ def _resolve_role_definition(parent: Session, role: str) -> AgentDefinition:
     return definition
 
 
+def _exceeds_per_parent_limit(process_config: ProcessConfig, session: Session) -> bool:
+    return session.subagent_tracker.running_count() >= process_config.subagents_max_concurrent_per_parent
+
+
+def _exceeds_total_limit(process_config: ProcessConfig, session: Session) -> bool:
+    return total_active_subagents(session) >= process_config.subagents_max_active_total
+
+
+def concurrency_limits_exceeded(process_config: ProcessConfig, session: Session) -> bool:
+    """Whether starting one more subagent turn on `session` right now would exceed
+    `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal` -- the same checks
+    `check_concurrency_limits` performs, but returning a bool for a caller that must silently
+    skip rather than raise. See `klorb.session.mixins.turns.
+    SessionTurnsMixin._deliver_event_to_dormant_subagent`."""
+    return _exceeds_per_parent_limit(process_config, session) or _exceeds_total_limit(process_config, session)
+
+
 def check_concurrency_limits(process_config: ProcessConfig, session: Session) -> None:
     """Raise `ToolCallError` (category `"transient"`) if starting one more subagent turn on
     `session` would exceed
     `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal`."""
     max_concurrent = process_config.subagents_max_concurrent_per_parent
-    if session.subagent_tracker.running_count() >= max_concurrent:
+    if _exceeds_per_parent_limit(process_config, session):
         raise ToolCallError(
             f"This agent already has {max_concurrent} subagent(s) running -- the most allowed "
             f"at once. Call WaitForSubagent so one finishes, then try again.",
             category="transient")
     max_active_total = process_config.subagents_max_active_total
-    if total_active_subagents(session) >= max_active_total:
+    if _exceeds_total_limit(process_config, session):
         raise ToolCallError(
             f"This session tree already has {max_active_total} subagent(s) running in total -- "
             f"the most allowed at once. Call WaitForSubagent so one finishes, then try again.",
@@ -189,6 +207,8 @@ def plan_subagent_creation(
     child_config.permission_framework_state = parent.config.permission_framework_state
     child_config.role_name = role
     child_config.skill_rules = skill_rules
+    child_config.hooks = filter_heritable_hooks(child_config.hooks)
+    child_config.events = filter_heritable_events(child_config.events)
 
     return SubagentPlan(
         role_definition=role_definition, session_config=child_config,
@@ -317,14 +337,19 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
     `handlers.cancel_event` fired mid-stream, or a failure note if a turn raised. Never raises.
 
     Dispatches `onSubagentStart`/`onSubagentTurnEnd` around each turn, covering every way a
-    subagent's turn is kicked off. A `onSubagentStart` veto (`fire_subagent_start_hook` returning
-    `None`) skips the turn entirely, reporting a blocked note back to the creating session.
+    subagent's turn is kicked off -- from `child`'s own *parent*'s handler chain, since these
+    describe the parent's observation of `child` starting/finishing, not something `child` fires
+    about itself. A `onSubagentStart` veto (`fire_subagent_start_hook` returning `None`) skips
+    the turn entirely, reporting a blocked note back to the creating session.
 
     Loops on an ordinary successful completion: `onSubagentTurnEnd`'s `chat`-handler
-    continuation is delivered via `Session._deliver_chained_hook_message`, and this is the
-    "host" that drains and resubmits it. An abort or exception stops the chain immediately
-    after firing the hook once, without attempting to drain further."""
-    effective_message = child.fire_subagent_start_hook(message)
+    continuation is delivered via `Session._deliver_chained_hook_message` on `child`'s own
+    conversation, and this is the "host" that drains and resubmits it. An abort or exception
+    stops the chain immediately after firing the hook once, without attempting to drain
+    further."""
+    assert child.parent is not None
+    parent = child.parent
+    effective_message = parent.fire_subagent_start_hook(child, message)
     if effective_message is None:
         return "(Subagent blocked by onSubagentStart hook policy.)"
     start_index = len(child.messages)
@@ -338,14 +363,14 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
         except ResponseAborted:
             output = _assistant_authored_text(child.messages[start_index:])
             result = f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
-            child.fire_subagent_turn_end_hook(result)
+            parent.fire_subagent_turn_end_hook(child, result)
             return result
         except Exception as exc:
             logger.exception("Subagent %s turn failed", child.id)
             result = f"(Subagent turn failed: {exc})"
-            child.fire_subagent_turn_end_hook(result)
+            parent.fire_subagent_turn_end_hook(child, result)
             return result
-        child.fire_subagent_turn_end_hook(result)
+        parent.fire_subagent_turn_end_hook(child, result)
         pending_message = child.drain_next_turn_text(handlers)
     return result
 

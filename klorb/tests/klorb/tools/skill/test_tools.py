@@ -250,6 +250,31 @@ def test_activate_allow_returns_content_and_manifest(
     assert result["tokens"] > 0
 
 
+def test_activate_grants_metadata_klorb_hooks_into_the_session(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
+    skill_dir = _workspace_skills_dir(context) / "s"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "description: do the thing\n"
+        "metadata:\n"
+        "  klorb:\n"
+        "    hooks:\n"
+        "      onToolUse:\n"
+        "        - type: chat\n"
+        "          prompt: granted by skill\n"
+        "---\n\nstep one\n")
+
+    ActivateSkillTool(context).apply({"namespace": "workspace", "name": "s"})
+
+    assert context.session is not None
+    assert [h.prompt for h in context.session.config.hooks["onToolUse"]] == ["granted by skill"]
+    # Not heritable to a subagent -- metadata.klorb.hooks defaults isHeritable to False.
+    assert context.session.config.hooks["onToolUse"][0].is_heritable is False
+
+
 def test_activate_pre_denied_skill_raises_value_error_not_found(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

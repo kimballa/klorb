@@ -57,6 +57,24 @@ An untrusted workspace's `.klorb/klorb-config.json` never contributes to `hooks`
 layer is skipped entirely whenever the workspace isn't trusted, the same as every other key it
 could declare.
 
+Every hook/event except `onProcessStart`/`onProcessEnd`/`onSessionStart`/`onSessionEnd` can also
+be declared under `sessionDefaults.hooks`/`sessionDefaults.events`, alongside your other
+`sessionDefaults` keys — the two sources are combined together, top-level first. Declaring one of
+the four process-only hooks under `sessionDefaults` is rejected with a warning; they're only
+configurable via the top-level `hooks` key shown above.
+
+### Heritability
+
+Each handler entry can carry its own `isHeritable: true|false`, controlling whether a subagent a
+session creates inherits that entry. A hook defaults to `isHeritable: true` (applies tree-wide
+unless you opt a specific handler out); an event defaults to `isHeritable: false` (a subagent
+starts with no event subscriptions of its own, since a watcher/timer is a standing background
+cost, not just a one-off action):
+
+```json
+{ "type": "bash", "shell": "...", "isHeritable": false }
+```
+
 ## Available hooks
 
 Hooks follow the agent through a (mostly-)sequential lifecycle of moments defined below:
@@ -64,22 +82,25 @@ Hooks follow the agent through a (mostly-)sequential lifecycle of moments define
 | Hook | Fires | Scope |
 | --- | --- | --- |
 | `onProcessStart` | `bin/klorb` starting up | process |
-| `onSessionStart` | a session starting, resuming, or being cleared | root session |
-| `onSubmitUserPrompt` | a user prompt about to be sent to the agent | root session |
+| `onSessionStart` | a session starting, resuming, or being cleared | process |
+| `onSubmitUserPrompt` | a user prompt about to be sent to the agent | whole tree |
 | `onRequestPermission` | planned but not yet implemented — see "Future work" | whole tree |
 | `onToolUse` | a tool about to run | whole tree |
 | `onToolResult` | a tool call's result content | whole tree |
 | `onActivateSkill` | a skill about to be activated | whole tree |
-| `onSubagentStart` | a subagent's turn starting | that subagent |
-| `onSubagentTurnEnd` | a subagent's turn ending | that subagent |
-| `onAgentTurnEnd` | the agent's turn ending, after its final message | root session |
-| `onSessionEnd` | a session suspending, being destroyed, or resetting | root session |
+| `onSubagentStart` | a subagent's turn starting | parent agent session |
+| `onSubagentTurnEnd` | a subagent's turn ending | parent agent session |
+| `onAgentTurnEnd` | the agent's turn ending, after its final message | whole tree |
+| `onSessionEnd` | a session suspending, being destroyed, or resetting | process |
 | `onProcessEnd` | `bin/klorb` exiting | process |
 
-`onToolUse`/`onToolResult`/`onActivateSkill` fire for every session in the tree — root or
-subagent — tagged with which one fired it. Every other hook above is scoped to either the root
-session only, or (for the subagent pair) to the firing subagent only; it never fires for the
-other side.
+`onProcessStart`/`onProcessEnd`/`onSessionStart`/`onSessionEnd` are process-scoped: they fire
+before any session exists, or describe a session's own start/end, and never fire for a subagent
+at all. Every other hook fires for whichever session it's actually about — root or subagent — and
+consults that session's own configured handlers, tagged with which one fired it.
+`onSubagentStart`/`onSubagentTurnEnd` are the one pair that's neither: each fires from the
+*parent* session's own handlers, describing the child that's starting/finishing — a handler
+configured only on the child doesn't fire for these two.
 
 ## Available events
 
@@ -88,8 +109,6 @@ interact with Handlers through the same input and output JSON interface.
 
 * **`FileSystemModified`** — watches a workspace-relative file or directory (`watch`; a directory
   is watched recursively) and runs `action` after changes settle, batched over a debounce window.
-  Always targets the root session's conversation, regardless of which session (root or a
-  subagent) happens to be active when the change is noticed.
 * **`Timer`** — runs `action` on a schedule: either `"interval_minutes"` or a `"cron"` string.
   **This is best-effort, not a real scheduler.** klorb has no persistent daemon mode — a `Timer`
   only fires while some klorb process for the workspace is already running for other reasons. A
@@ -100,6 +119,16 @@ interact with Handlers through the same input and output JSON interface.
   against an already-live session (the TUI's `>Trust workspace` command, or `_klorb/trustWorkspace`
   over ACP). This is distinct from `onSessionStart`'s own trust fields, which report a session's
   *initial* trust state as part of startup, not a later change.
+
+An event handler is attached to a particular session, not to whichever session your terminal
+happens to have focused — it's delivered to the subscribing session's own handler regardless.
+Every event you declare in config is a subscription of the root session only, and is not
+inherited by a subagent unless you mark it `isHeritable: true` (see "Heritability" above); by
+default, a subagent starts with no event subscriptions at all, and only gains one by directly
+activating a skill that grants it (see `docs/specs/skills.md`'s `metadata.klorb.events`). The
+subagent must still be alive at the moment the event fires for its handler to run — a dormant
+subagent (between turns) is woken with a fresh turn, unless doing so would exceed your
+subagent-concurrency limits, in which case it's silently skipped rather than delivered.
 
 ## Handler types
 
@@ -206,7 +235,7 @@ depends on which hook/event fired:
 | `workspace_just_bootstrapped` | bool \| null | `onSessionStart` only | Whether this firing is what triggered a first-time trust decision. |
 | `config` | object \| null | `onProcessStart`, `onSessionStart` | The entire resolved config, as a JSON-dumped `ProcessConfig`. |
 | `fs_updates` | array \| null | `FileSystemModified` event only | A debounced batch of `{"event": "created"\|"deleted"\|"modified", "path": "..."}` entries. |
-| `is_agent_active` | bool \| null | Every event | Whether the root session's agent is mid-turn at the moment the event fired. |
+| `is_agent_active` | bool \| null | Every event | Whether the firing session's agent is mid-turn at the moment the event fired. |
 
 ### `HookOutput`
 
@@ -262,14 +291,17 @@ to resubmit it as a fresh turn instead.
 
 `HookOutput.reset_session` wipes the firing session's conversation and starts it over in
 place — same session id, same on-disk directory — seeded with `message` as its next turn, as if
-you'd run "Clear session" yourself except nothing is actually replaced. Config is reinitialized
-from the process config's template, any live subagents are closed first, and the persistent bash
+you'd run "Clear session" yourself except nothing is actually replaced. For a root session,
+config is also reinitialized from the process config's template; a subagent's own config
+(role, tools, skills, hooks/events) is left untouched — only its conversation is wiped. Any
+live subagents of the session being reset are closed first, and the persistent bash
 shell/scratchpad are torn down and recreated fresh. Only `onAgentTurnEnd` and the event hooks
 (`Timer`/`FileSystemModified`/`WorkspaceTrustChanged`) act on it. Requires a non-empty
 `message`, or the request is dropped with a warning.
 
-When an `onAgentTurnEnd` handler triggers a reset, `onSessionEnd` is also dispatched first, with
-`reason: "ResetSession"`.
+When an `onAgentTurnEnd` handler triggers a reset on a root session, `onSessionEnd` is also
+dispatched first, with `reason: "ResetSession"` — `onSessionEnd` never applies to a subagent, so
+this doesn't happen for one.
 
 An `onAgentTurnEnd` reset handler should have a `filter` or be conditional within the handler
 script. The reset conversation's own first turn can end and trigger the hook again, and

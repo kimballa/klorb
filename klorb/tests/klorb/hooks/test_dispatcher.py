@@ -12,7 +12,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from klorb.api_provider import ProviderResponse
-from klorb.hooks.config import HookConfig, HookConfigFilter, WorkspaceTrustChangedEventConfig
+from klorb.hooks.config import (
+    PROCESS_SCOPED_HOOK_NAMES,
+    HookConfig,
+    HookConfigFilter,
+    WorkspaceTrustChangedEventConfig,
+)
 from klorb.hooks.dispatcher import HookDispatcher
 from klorb.hooks.hook_api import EventInput, HookInput
 from klorb.message import Message
@@ -28,11 +33,17 @@ def _unsandboxed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) -> ProcessConfig:
+    """Route `hooks` the same way `load_process_config()`'s push-down split does: a
+    `PROCESS_SCOPED_HOOK_NAMES` entry stays on `ProcessConfig.hooks`, every other name lands on
+    `session.hooks`."""
+    process_hooks = {name: h for name, h in hooks.items() if name in PROCESS_SCOPED_HOOK_NAMES}
+    session_hooks = {name: h for name, h in hooks.items() if name not in PROCESS_SCOPED_HOOK_NAMES}
     session = SessionConfig(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
-        write_dirs=DirRules(allow=[workspace_root]))
-    return ProcessConfig(session=session, hooks=hooks)
+        write_dirs=DirRules(allow=[workspace_root]),
+        hooks=session_hooks)
+    return ProcessConfig(session=session, hooks=process_hooks)
 
 
 def _hook_input(workspace_root: Path, **overrides: Any) -> HookInput:
@@ -104,7 +115,8 @@ def test_dispatch_skips_a_classifier_handler_with_no_api_provider_wired_in(tmp_p
         "onAgentTurnEnd": [HookConfig(type="classifier", prompt="classify this")],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"),
+        session_config=process_config.session)
     assert result.success is True
     assert result.message is None
 
@@ -114,7 +126,8 @@ def test_dispatch_runs_a_chat_handler_as_its_own_configured_prompt(tmp_path: Pat
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"),
+        session_config=process_config.session)
     assert result.message == "keep going"
 
 
@@ -152,7 +165,8 @@ def test_dispatch_folds_success_as_strictest_outcome(tmp_path: Path) -> None:
         ],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onRequestPermission", _hook_input(tmp_path, hook="onRequestPermission"))
+        "onRequestPermission", _hook_input(tmp_path, hook="onRequestPermission"),
+        session_config=process_config.session)
     assert result.success is False
 
 
@@ -164,7 +178,8 @@ def test_dispatch_folds_reset_session_once_any_handler_sets_it(tmp_path: Path) -
         ],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"),
+        session_config=process_config.session)
     assert result.reset_session is True
     assert result.message == "first"
 
@@ -177,7 +192,8 @@ def test_dispatch_drops_reset_session_without_a_message(
     })
     with caplog.at_level("WARNING"):
         result = HookDispatcher(process_config).dispatch(
-            "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+            "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"),
+            session_config=process_config.session)
     assert result.reset_session is False
     assert "reset_session" in caplog.text
 
@@ -194,7 +210,8 @@ def test_dispatch_drops_reset_session_for_hooks_outside_the_allowlist(
         ],
     })
     result = HookDispatcher(process_config).dispatch(
-        hook_name, _hook_input(tmp_path, hook=hook_name, reason="x"))
+        hook_name, _hook_input(tmp_path, hook=hook_name, reason="x"),
+        session_config=process_config.session)
     assert result.reset_session is False
     assert result.message == "restart me"
 
@@ -226,7 +243,8 @@ def test_dispatch_runs_a_classifier_handler_when_an_api_provider_is_wired_in(tmp
         "onAgentTurnEnd": [HookConfig(type="classifier", prompt="summarize")],
     })
     result = HookDispatcher(process_config, api_provider=provider).dispatch(
-        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"))
+        "onAgentTurnEnd", _hook_input(tmp_path, hook="onAgentTurnEnd"),
+        session_config=process_config.session)
     assert result.message == "classified message"
 
 
@@ -239,7 +257,8 @@ def test_dispatch_folds_permission_via_stricter_verdict(tmp_path: Path) -> None:
         ],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"))
+        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"),
+        session_config=process_config.session)
     assert result.permission == "ask"
 
 
@@ -248,7 +267,8 @@ def test_dispatch_permission_stays_unset_when_every_handler_is_silent(tmp_path: 
         "onToolUse": [HookConfig(type="bash", shell='echo \'{"message": "no opinion"}\'')],
     })
     result = HookDispatcher(process_config).dispatch(
-        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"))
+        "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"),
+        session_config=process_config.session)
     assert result.permission is None
 
 
@@ -261,10 +281,12 @@ def test_dispatch_filters_ontooluse_on_tool_name_not_event(tmp_path: Path) -> No
         ],
     })
     matching = HookDispatcher(process_config).dispatch(
-        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="Bash"))
+        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="Bash"),
+        session_config=process_config.session)
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
-        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="ReadFile"))
+        "onToolUse", HookInput(hook="onToolUse", workspace_root=str(tmp_path), tool_name="ReadFile"),
+        session_config=process_config.session)
     assert non_matching.message is None
 
 
@@ -278,11 +300,13 @@ def test_dispatch_filters_onactivateskill_on_skill_name_not_event(tmp_path: Path
     })
     matching = HookDispatcher(process_config).dispatch(
         "onActivateSkill",
-        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="do-thing"))
+        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="do-thing"),
+        session_config=process_config.session)
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
         "onActivateSkill",
-        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="other-skill"))
+        HookInput(hook="onActivateSkill", workspace_root=str(tmp_path), skill_name="other-skill"),
+        session_config=process_config.session)
     assert non_matching.message is None
 
 
@@ -296,11 +320,13 @@ def test_dispatch_filters_onsubmituserprompt_on_message_not_event(tmp_path: Path
     })
     matching = HookDispatcher(process_config).dispatch(
         "onSubmitUserPrompt",
-        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please deploy this"))
+        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please deploy this"),
+        session_config=process_config.session)
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch(
         "onSubmitUserPrompt",
-        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please build this"))
+        HookInput(hook="onSubmitUserPrompt", workspace_root=str(tmp_path), message="please build this"),
+        session_config=process_config.session)
     assert non_matching.message is None
 
 
@@ -323,11 +349,43 @@ def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path:
     assert result.message == str(other_root.resolve(strict=False))
 
 
+def test_dispatch_raises_without_session_config_for_a_session_scoped_hook(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {
+        "onToolUse": [HookConfig(type="bash", shell='echo \'{"message": "hi"}\'')],
+    })
+    with pytest.raises(ValueError, match="session_config is required"):
+        HookDispatcher(process_config).dispatch(
+            "onToolUse", _hook_input(tmp_path, hook="onToolUse", tool_name="Bash"))
+
+
+def test_dispatch_does_not_raise_without_session_config_for_a_process_scoped_hook(
+    tmp_path: Path,
+) -> None:
+    process_config = _process_config(tmp_path, {
+        "onProcessStart": [HookConfig(type="bash", shell='echo \'{"message": "hi"}\'')],
+    })
+    result = HookDispatcher(process_config).dispatch("onProcessStart", _hook_input(tmp_path))
+    assert result.message == "hi"
+
+
+def test_dispatch_event_raises_without_session_config(tmp_path: Path) -> None:
+    process_config = _process_config(tmp_path, {})
+    entries = [
+        WorkspaceTrustChangedEventConfig(
+            action=HookConfig(type="bash", shell='echo \'{"message": "hi"}\'')),
+    ]
+    with pytest.raises(ValueError, match="session_config is required"):
+        HookDispatcher(process_config).dispatch_event(
+            "WorkspaceTrustChanged", entries,
+            EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
+
+
 def test_dispatch_event_with_no_entries_returns_default_success(tmp_path: Path) -> None:
     process_config = _process_config(tmp_path, {})
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", [],
-        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"),
+        session_config=process_config.session)
     assert result.success is True
     assert result.message is None
 
@@ -346,7 +404,8 @@ def test_dispatch_event_runs_each_entrys_own_action_as_a_chain(tmp_path: Path) -
     ]
     result = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"),
+        session_config=process_config.session)
     assert result.message == "first+second"
 
 
@@ -360,9 +419,11 @@ def test_dispatch_event_filters_on_the_event_field(tmp_path: Path) -> None:
     ]
     matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="TrustCommand"),
+        session_config=process_config.session)
     assert matching.message == "matched"
     non_matching = HookDispatcher(process_config).dispatch_event(
         "WorkspaceTrustChanged", entries,
-        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="AcpTrustWorkspace"))
+        EventInput(hook="WorkspaceTrustChanged", workspace_root=str(tmp_path), reason="AcpTrustWorkspace"),
+        session_config=process_config.session)
     assert non_matching.message is None

@@ -526,6 +526,60 @@ firing. Granting is idempotent — re-activating a skill re-grants the same patt
 `metadata.klorb.bashCommands` (a non-list, or an entry that isn't a `list[str]`) contributes
 nothing, logged as a `logger.warning()`.
 
+## `metadata.klorb.hooks`/`metadata.klorb.events`: skill-granted hooks and events
+
+A skill's `SKILL.md` frontmatter may also carry `metadata.klorb.hooks`/`metadata.klorb.events`,
+the same shape as the top-level `hooks`/`events` `klorb-config.json` keys (see
+docs/specs/hooks-and-events.md):
+
+```yaml
+---
+name: watch-and-summarize
+description: ...
+metadata:
+  klorb:
+    hooks:
+      onToolUse:
+        - type: chat
+          prompt: "Remind the agent to update CHANGELOG.md after an edit."
+    events:
+      FileSystemModified:
+        - watch: src/
+          action: {type: chat, prompt: "src/ changed -- consider re-running the test suite."}
+---
+```
+
+Once `skillRules`/`onActivateSkill` have already let an activation through (both the leading-
+mention fast path and `ActivateSkillTool.apply()`), `Session.grant_skill_hooks`/
+`grant_skill_events` read these keys (`klorb.tools.skill.common.skill_hook_configs`/
+`skill_event_configs`) and merge each entry into `SessionConfig.hooks`/`.events`, keyed by hook/
+event name — the same session-scoped handler lists a `sessionDefaults.hooks`/`.events` config
+key populates (see docs/specs/hooks-and-events.md's "Configuration"). `grant_skill_events` also
+starts a `FileSystemWatcher`/`TimerScheduler` for any newly-granted `FileSystemModified`/`Timer`
+entry via `Session._start_event_watchers_for`, so a skill's event subscription takes effect
+immediately, without waiting for the session's next restart.
+
+Unlike `metadata.klorb.bashCommands`'s pure allow-list widening, a granted hook/event handler
+actually runs — so both grants are idempotent per skill per session
+(`SessionConfig.granted_skill_hook_event_ids`), rather than relying on downstream dedup: a skill
+re-activated later in the same session (e.g. once via `ActivateSkill`, again via a leading
+`/name` mention) is skipped, not re-registered, so its handlers don't double-fire.
+
+A `metadata.klorb.hooks` entry naming a process-scoped hook (`onProcessStart`/`onProcessEnd`/
+`onSessionStart`/`onSessionEnd`) is dropped, logged as a `logger.warning()` — a skill grant may
+only add session-scoped handlers, never process-wide ones; process-scoped hooks are configurable
+only via `klorb-config.json`'s own top-level `hooks` key. An unrecognized hook/event name, or a
+malformed handler shape, is likewise dropped and logged, never fatal to the rest of the skill's
+grant.
+
+Every parsed hook/event handler carries its own `isHeritable` (see docs/specs/hooks-and-events.md's
+"Heritability"). A skill-granted `HookConfig` defaults `isHeritable` to `false` when the
+frontmatter omits it — the opposite of a `klorb-config.json`-authored hook's own default of
+`true` — so a skill's own grant doesn't silently widen to every subagent the activating session
+happens to create; a skill author who wants tree-wide reach sets `isHeritable: true` explicitly.
+`EventConfig` already defaults to `false` regardless of source, so no such override is needed for
+`metadata.klorb.events`.
+
 ## Supporting files: `ReadSkillFile`
 
 `ReadSkillFile(namespace: str, name: str, path: str)` resolves the skill against
@@ -626,6 +680,14 @@ today, so a Claude-authored `SKILL.md` is discovered by its directory basename w
   (`"allow"`, or an `"ask"` the user or hook has already cleared) before its bash-command grant
   ever fires, so the exposure is the same trust decision as activating the skill at all — see
   "`metadata.klorb.bashCommands`" above.
+* **`metadata.klorb.hooks`/`.events` let an activated skill register hooks/events that actually
+  run, not just widen an allow-list.** Bounded the same way as `bashCommands`: gated on
+  `skillRules` first, so the exposure is the trust decision of activating the skill at all. A
+  process-scoped hook name is rejected outright (see "`metadata.klorb.hooks`/`metadata.klorb.
+  events`" above), and a granted handler only ever runs inside the activating session's own
+  turn/tool/event pipeline — the same sandboxing (for a `bash` handler) and permission checks
+  (for anything the handler's `HookOutput` tries to rewrite) every other hook handler goes
+  through.
 * **A leading `/<name>` mention auto-promotes an `"ask"`-verdicted skill to `"allow"` with no
   interactive prompt.** This is intentional, not an oversight: typing a skill's name as the leading
   token of a message is treated as the user's own approval, the same weight an interactive "Allow

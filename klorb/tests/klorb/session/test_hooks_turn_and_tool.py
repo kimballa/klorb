@@ -14,7 +14,7 @@ import fixtures.sample_tools as sample_tools_package
 import pytest
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
-from klorb.hooks.config import HookConfig, HookConfigFilter
+from klorb.hooks.config import PROCESS_SCOPED_HOOK_NAMES, HookConfig, HookConfigFilter
 from klorb.message import Message, ToolCallRequest
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
@@ -34,11 +34,18 @@ def _process_config(
     workspace_root: Path, make_session_config: Callable[..., SessionConfig],
     hooks: dict[str, list[HookConfig]],
 ) -> ProcessConfig:
+    """Route `hooks` the same way `load_process_config()`'s push-down split does: a
+    `PROCESS_SCOPED_HOOK_NAMES` entry (e.g. `onSessionEnd`) stays on `ProcessConfig.hooks`,
+    every other name (e.g. `onSubmitUserPrompt`/`onAgentTurnEnd`/`onToolUse`/`onToolResult`)
+    lands on `session.hooks`."""
+    process_hooks = {name: h for name, h in hooks.items() if name in PROCESS_SCOPED_HOOK_NAMES}
+    session_hooks = {name: h for name, h in hooks.items() if name not in PROCESS_SCOPED_HOOK_NAMES}
     session = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
-        write_dirs=DirRules(allow=[workspace_root]))
-    return ProcessConfig(session=session, hooks=hooks)
+        write_dirs=DirRules(allow=[workspace_root]),
+        hooks=session_hooks)
+    return ProcessConfig(session=session, hooks=process_hooks)
 
 
 def _reply(content: str = "model reply") -> ProviderResponse:
@@ -99,12 +106,11 @@ def test_onsubmituserprompt_denial_raises_and_marks_the_user_message_as_errored(
     provider.send_prompt.assert_not_called()
 
 
-def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(
+def test_onsubmituserprompt_fires_for_a_subagents_own_turn_too(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """`onSubmitUserPrompt` fires for the root session only -- a subagent's own turn goes
-    through the exact same `_dispatch_turn`, so this proves the `self.parent is None` guard,
-    not just that the hook exists."""
+    """`onSubmitUserPrompt` fires for any session's own turn, root or subagent -- it consults
+    the firing session's own `config.hooks`, not a root-only gate."""
     process_config = _process_config(tmp_path, make_session_config, {
         "onSubmitUserPrompt": [HookConfig(type="bash", shell='echo \'{"message": "rewritten"}\'')],
     })
@@ -117,8 +123,7 @@ def test_onsubmituserprompt_is_a_noop_for_a_subagent_turn(
     child.send_turn("original prompt", resolve_mentions=False)
 
     user_message = next(m for m in child.messages if m.role == "user")
-    assert user_message.content.endswith("original prompt")
-    assert user_message.content != "rewritten"
+    assert user_message.content == "rewritten"
 
 
 # --- onAgentTurnEnd / _deliver_chained_hook_message / max_chained_hook_turns ---
@@ -293,9 +298,13 @@ def test_onagentturnend_reset_session_without_a_message_is_ignored(
     assert user_messages[0].endswith("go")
 
 
-def test_onagentturnend_is_a_noop_for_a_subagent_turn(
+def test_onagentturnend_fires_for_a_subagents_own_turn_too(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
+    """`onAgentTurnEnd` fires for any session's own turn, root or subagent -- a bare
+    `send_turn()` call (no host loop to drain the queue) leaves the `chat` handler's
+    continuation queued rather than resubmitting it immediately, same as it would for a root
+    session with no host attached."""
     process_config = _process_config(tmp_path, make_session_config, {
         "onAgentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
@@ -308,6 +317,7 @@ def test_onagentturnend_is_a_noop_for_a_subagent_turn(
     child.send_turn("hi", resolve_mentions=False)
 
     assert provider.send_prompt.call_count == 1
+    assert [m.message_text for m in child._queued_messages] == ["keep going"]
 
 
 # --- onToolUse / onToolResult ---

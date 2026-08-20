@@ -1056,7 +1056,7 @@ def test_sidebar_maps_from_config_key(tmp_path: Path) -> None:
 def test_hooks_and_events_default_to_empty(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
     assert process_config.hooks == {}
-    assert process_config.events == {}
+    assert process_config.session.events == {}
 
 
 def test_hooks_concatenate_across_layers(tmp_path: Path) -> None:
@@ -1107,7 +1107,7 @@ def test_hook_with_filter_is_parsed(tmp_path: Path) -> None:
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    handler = process_config.hooks["onAgentTurnEnd"][0]
+    handler = process_config.session.hooks["onAgentTurnEnd"][0]
     assert handler.filter is not None
     assert handler.filter.not_ is not None
     assert handler.filter.not_.matches == "definitely done"
@@ -1169,15 +1169,15 @@ def test_events_concatenate_across_layers_and_dispatch_by_event_name(tmp_path: P
 
     process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    fs_handler = process_config.events["FileSystemModified"][0]
+    fs_handler = process_config.session.events["FileSystemModified"][0]
     assert isinstance(fs_handler, FileSystemModifiedEventConfig)
     assert fs_handler.watch == "src/"
 
-    timer_handler = process_config.events["Timer"][0]
+    timer_handler = process_config.session.events["Timer"][0]
     assert isinstance(timer_handler, TimerEventConfig)
     assert timer_handler.interval_minutes == 10
 
-    trust_handler = process_config.events["WorkspaceTrustChanged"][0]
+    trust_handler = process_config.session.events["WorkspaceTrustChanged"][0]
     assert isinstance(trust_handler, WorkspaceTrustChangedEventConfig)
     assert trust_handler.action.prompt == "trust changed"
 
@@ -1192,7 +1192,7 @@ def test_timer_interval_below_the_floor_is_clamped_with_a_warning(
     with caplog.at_level(logging.WARNING, logger="klorb.hooks.timer_events"):
         process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    timer_handler = process_config.events["Timer"][0]
+    timer_handler = process_config.session.events["Timer"][0]
     assert isinstance(timer_handler, TimerEventConfig)
     assert timer_handler.interval_minutes == pytest.approx(10.0 / 60.0)
     assert "clamping" in caplog.text
@@ -1208,7 +1208,7 @@ def test_unrecognized_event_name_is_dropped_with_a_warning(
     with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
         process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
 
-    assert process_config.events == {}
+    assert process_config.session.events == {}
     assert "TotallyMadeUp" in caplog.text
 
 
@@ -1229,3 +1229,62 @@ def test_process_config_to_disk_dict_serializes_hooks_and_events(tmp_path: Path)
     }
     # Round-trips through plain json.dumps without error (no leftover pydantic model instances).
     json.dumps(disk_dict)
+
+
+def test_session_defaults_hooks_and_events_land_on_the_session_template(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "sessionDefaults": {
+                "hooks": {"onToolUse": [{"type": "bash", "shell": "echo from-session-defaults"}]},
+                "events": {
+                    "Timer": [{"interval_minutes": 5, "action": {"type": "chat", "prompt": "tick"}}],
+                },
+            },
+        })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.hooks["onToolUse"][0].shell == "echo from-session-defaults"
+    timer_event = process_config.session.events["Timer"][0]
+    assert isinstance(timer_event, TimerEventConfig)
+    assert timer_event.interval_minutes == 5
+    assert process_config.hooks == {}
+
+
+def test_session_defaults_hooks_concatenate_after_the_top_level_hooks_keys_own_portion(
+    tmp_path: Path,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "hooks": {"onToolUse": [{"type": "bash", "shell": "echo top-level"}]},
+            "sessionDefaults": {
+                "hooks": {"onToolUse": [{"type": "bash", "shell": "echo session-defaults"}]},
+            },
+        })
+
+    process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    shells = [handler.shell for handler in process_config.session.hooks["onToolUse"]]
+    assert shells == ["echo top-level", "echo session-defaults"]
+
+
+def test_process_scoped_hook_name_in_session_defaults_hooks_is_dropped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    _write_config(
+        tmp_path / ".klorb" / "klorb-config.json",
+        {
+            "sessionDefaults": {
+                "hooks": {"onSessionEnd": [{"type": "bash", "shell": "echo hi"}]},
+            },
+        })
+
+    with caplog.at_level(logging.WARNING, logger="klorb.process_config"):
+        process_config = load_process_config(cwd=tmp_path, workspace=_trusted_workspace(tmp_path))
+
+    assert process_config.session.hooks == {}
+    assert process_config.hooks == {}
+    assert "process-scoped hook" in caplog.text
+    assert "onSessionEnd" in caplog.text

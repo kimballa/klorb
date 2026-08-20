@@ -5,12 +5,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from klorb.hooks.config import EventConfig, HookConfig
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.skill_access import SkillId, SkillRules
 from klorb.permissions.table import Verdict
 from klorb.role import OPERATOR_ROLE_NAME
 from klorb.session.constants import (
@@ -138,6 +139,25 @@ class SessionConfig(BaseModel):
     after `share_env`'s pass-through so they shadow it — see `klorb.tools.bash.build_bash_env`.
     On-disk `setEnv`, merged across config layers with a later layer's value for the same key
     replacing an earlier layer's."""
+    hooks: dict[str, list[HookConfig]] = Field(default_factory=dict)
+    """Handler lists keyed by hook name, for every hook name outside
+    `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES` -- see docs/specs/hooks-and-events.md.
+    Populated from two on-disk sources at config-load time (a top-level `hooks` key's
+    session-scoped names, `sessionDefaults.hooks` in full, concatenated together) and,
+    mid-session, by a skill's `metadata.klorb.hooks` grant on activation (see
+    `klorb.session.mixins.skills.grant_skill_hooks`). A subagent's `SessionConfig` inherits only
+    this dict's `is_heritable=True` entries from its parent -- see
+    `klorb.hooks.config.filter_heritable_hooks`."""
+    events: dict[str, list[EventConfig]] = Field(default_factory=dict)
+    """Handler lists keyed by event name -- every event name is session-scoped, unlike `hooks`.
+    Same population sources as `hooks` (a top-level `events` key plus `sessionDefaults.events`,
+    concatenated; skill-granted via `grant_skill_events`), same `is_heritable`-filtered subagent
+    inheritance via `klorb.hooks.config.filter_heritable_events`."""
+    granted_skill_hook_event_ids: set[SkillId] = Field(default_factory=set)
+    """Which skills' `metadata.klorb.hooks`/`.events` have already been granted into `hooks`/
+    `events` this session, so `grant_skill_hooks`/`grant_skill_events` can skip a skill
+    re-activated later in the same session rather than re-registering (and so double-firing) its
+    handlers. Never persisted -- a session-only idempotency guard, like `approved_scopes`."""
     permission_framework_state: PermissionFrameworkState = Field(
         default_factory=PermissionFrameworkState)
     """Holds the effective `permission_framework` value -- see `permission_framework` below
