@@ -14,6 +14,7 @@ metadata:
       - ["git", "rm", "**"]
       - ["touch", "docs/plans/auto/.factory_in_progress.tmp"]
       - ["gh", "auth", "status"]
+      - ["gh", "pr", "**"]
 ---
 
 # Enable software factory
