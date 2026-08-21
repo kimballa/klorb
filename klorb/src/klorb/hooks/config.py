@@ -28,11 +28,8 @@ RESET_SESSION_CAPABLE_HOOKS: frozenset[str] = frozenset({
 PROCESS_SCOPED_HOOK_NAMES: frozenset[str] = frozenset({
     "onProcessStart", "onProcessEnd", "onSessionStart", "onSessionEnd",
 })
-"""Hook names whose handler configuration lives on `ProcessConfig.hooks`, never a
-`SessionConfig.hooks` -- these fire before any session exists, or describe a session's own
-lifetime boundary rather than something happening within it. Every other hook name, and every
-event name, is session-scoped: configured (directly or via push-down from a top-level
-`klorb-config.json` `hooks`/`events` key) on `SessionConfig.hooks`/`.events`."""
+"""Hook names whose handler configuration lives on `ProcessConfig.hooks`, never
+`SessionConfig.hooks`. Every other hook name, and every event name, is session-scoped."""
 
 MIN_EVENT_DEBOUNCE_SECONDS: float = 10.0
 """The default debounce window `FileSystemModified`'s watcher waits after the most recent
@@ -97,14 +94,9 @@ class HookConfigFilter(BaseModel):
 class HookConfig(BaseModel):
     """One handler entry in a `hooks` config list (or an event's `action`): `type` selects how
     it runs (`bash` via `shell`/`command`, `classifier`/`chat` via `prompt`), `name` tells it
-    apart from other entries in the same list, and `filter` gates whether it's eligible.
-    `is_heritable` governs whether a subagent's `SessionConfig` keeps this entry when it's
-    created from a parent's -- defaults to `True` here, since a `klorb-config.json`-authored
-    hook is meant to apply tree-wide unless its author opts out; a skill's own
-    `metadata.klorb.hooks` grant instead defaults this to `False` when parsed (see
-    `klorb.tools.skill.common.skill_hook_configs`), since a skill's own grant shouldn't silently
-    widen to every subagent it happens to create.
-    """
+    apart from other entries in the same list, `filter` gates whether it's eligible, and
+    `is_heritable` (default `True`) governs whether a subagent's `SessionConfig` keeps this
+    entry when it's created from a parent's."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -119,9 +111,7 @@ class HookConfig(BaseModel):
 
 class EventConfig(BaseModel):
     """Base shape for every event-specific config below: the `action` (a `HookConfig`)
-    run when the event fires. `is_heritable` defaults to `False` here (unlike `HookConfig`'s
-    own default of `True`): an event subscription is a standing background watcher/timer, so a
-    subagent starts with none unless the entry explicitly opts in."""
+    run when the event fires, and `is_heritable` (default `False`)."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -173,8 +163,7 @@ def _filter_heritable(handlers: dict[str, list[_H]]) -> dict[str, list[_H]]:
 
 def filter_heritable_hooks(hooks: dict[str, list[HookConfig]]) -> dict[str, list[HookConfig]]:
     """The subset of `hooks` a subagent's `SessionConfig` should inherit from its parent's: only
-    each name's `is_heritable=True` entries, dropping any name left with none. Used by
-    `klorb.agents.policy.plan_subagent_creation` when building a child's `SessionConfig`."""
+    each name's `is_heritable=True` entries, dropping any name left with none."""
     return _filter_heritable(hooks)
 
 

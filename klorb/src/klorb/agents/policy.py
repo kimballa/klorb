@@ -93,10 +93,7 @@ def _exceeds_total_limit(process_config: ProcessConfig, session: Session) -> boo
 
 def concurrency_limits_exceeded(process_config: ProcessConfig, session: Session) -> bool:
     """Whether starting one more subagent turn on `session` right now would exceed
-    `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal` -- the same checks
-    `check_concurrency_limits` performs, but returning a bool for a caller that must silently
-    skip rather than raise. See `klorb.session.mixins.turns.
-    SessionTurnsMixin._deliver_event_to_dormant_subagent`."""
+    `tools.subagents.maxConcurrentPerParent` or `maxActiveTotal`."""
     return _exceeds_per_parent_limit(process_config, session) or _exceeds_total_limit(process_config, session)
 
 
@@ -336,17 +333,15 @@ def _run_subagent_turn(child: Session, message: str, handlers: TurnEventHandlers
     none of it said anything, the same concatenation plus an abort note if
     `handlers.cancel_event` fired mid-stream, or a failure note if a turn raised. Never raises.
 
-    Dispatches `onSubagentStart`/`onSubagentTurnEnd` around each turn, covering every way a
-    subagent's turn is kicked off -- from `child`'s own *parent*'s handler chain, since these
-    describe the parent's observation of `child` starting/finishing, not something `child` fires
-    about itself. A `onSubagentStart` veto (`fire_subagent_start_hook` returning `None`) skips
-    the turn entirely, reporting a blocked note back to the creating session.
+    Dispatches `onSubagentStart`/`onSubagentTurnEnd` from `child`'s own *parent* around each
+    turn, covering every way a subagent's turn is kicked off. A `onSubagentStart` veto
+    (`fire_subagent_start_hook` returning `None`) skips the turn entirely, reporting a blocked
+    note back to the creating session.
 
     Loops on an ordinary successful completion: `onSubagentTurnEnd`'s `chat`-handler
     continuation is delivered via `Session._deliver_chained_hook_message` on `child`'s own
-    conversation, and this is the "host" that drains and resubmits it. An abort or exception
-    stops the chain immediately after firing the hook once, without attempting to drain
-    further."""
+    conversation. An abort or exception stops the chain immediately after firing the hook once,
+    without attempting to drain further."""
     assert child.parent is not None
     parent = child.parent
     effective_message = parent.fire_subagent_start_hook(child, message)

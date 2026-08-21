@@ -99,10 +99,9 @@ class HookDispatcher:
         the aggregate result returned here. A handler is skipped.
 
         `hook_name` in `PROCESS_SCOPED_HOOK_NAMES` is looked up on `ProcessConfig.hooks`;
-        every other name is looked up on `session_config.hooks`, which must be given (raises
-        `ValueError` otherwise -- every real call site always has a live session by the time it
-        fires a session-scoped hook). `session_config` also sandboxes a `bash` handler with a
-        live session's permission tables; for a process-scoped hook fired with no session yet
+        every other name is looked up on `session_config.hooks`, which must be given.
+        `session_config` also sandboxes a `bash` handler with a live session's permission
+        tables; for a process-scoped hook fired with no session yet
         (`onProcessStart`/`onProcessEnd`), falls back to `ProcessConfig.session`, the template
         every fresh session is copied from.
         """
@@ -126,8 +125,7 @@ class HookDispatcher:
     ) -> HookOutput:
         """Run each of `entries`' own `action` as one ordered chain. `entries` is whatever
         subset of `session_config.events[event_name]` the caller has already decided is
-        eligible for this occurrence -- every event name is session-scoped, so `session_config`
-        must be given (raises `ValueError` otherwise)."""
+        eligible for this occurrence."""
         logger.debug("Dispatching event %r (%d configured handler(s))", event_name, len(entries))
         if not entries:
             return HookOutput()

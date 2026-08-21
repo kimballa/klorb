@@ -51,9 +51,6 @@ if TYPE_CHECKING:
     # `klorb.hooks.dispatcher` depends on `klorb.session.config`, so a real import here
     # would be circular; needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.hook_api import HookOutput
-    # `klorb.hooks.config` imports nothing from `klorb.session`, so this one isn't actually
-    # circular -- kept under TYPE_CHECKING anyway for consistency with the other hook/process
-    # imports in this block.
     from klorb.hooks.config import EventConfig
     # isort: on
 

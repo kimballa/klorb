@@ -141,23 +141,15 @@ class SessionConfig(BaseModel):
     replacing an earlier layer's."""
     hooks: dict[str, list[HookConfig]] = Field(default_factory=dict)
     """Handler lists keyed by hook name, for every hook name outside
-    `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES` -- see docs/specs/hooks-and-events.md.
-    Populated from two on-disk sources at config-load time (a top-level `hooks` key's
-    session-scoped names, `sessionDefaults.hooks` in full, concatenated together) and,
-    mid-session, by a skill's `metadata.klorb.hooks` grant on activation (see
-    `klorb.session.mixins.skills.grant_skill_hooks`). A subagent's `SessionConfig` inherits only
-    this dict's `is_heritable=True` entries from its parent -- see
-    `klorb.hooks.config.filter_heritable_hooks`."""
+    `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES`. Populated from `klorb-config.json`'s
+    top-level `hooks`/`sessionDefaults.hooks` keys and skill `metadata.klorb.hooks` grants. A
+    subagent inherits only this dict's `is_heritable=True` entries from its parent."""
     events: dict[str, list[EventConfig]] = Field(default_factory=dict)
-    """Handler lists keyed by event name -- every event name is session-scoped, unlike `hooks`.
-    Same population sources as `hooks` (a top-level `events` key plus `sessionDefaults.events`,
-    concatenated; skill-granted via `grant_skill_events`), same `is_heritable`-filtered subagent
-    inheritance via `klorb.hooks.config.filter_heritable_events`."""
+    """Handler lists keyed by event name; every event name is session-scoped. Same population
+    sources and `is_heritable`-filtered subagent inheritance as `hooks`."""
     granted_skill_hook_event_ids: set[SkillId] = Field(default_factory=set)
     """Which skills' `metadata.klorb.hooks`/`.events` have already been granted into `hooks`/
-    `events` this session, so `grant_skill_hooks`/`grant_skill_events` can skip a skill
-    re-activated later in the same session rather than re-registering (and so double-firing) its
-    handlers. Never persisted -- a session-only idempotency guard, like `approved_scopes`."""
+    `events` this session, so a re-activated skill isn't re-registered. Never persisted."""
     permission_framework_state: PermissionFrameworkState = Field(
         default_factory=PermissionFrameworkState)
     """Holds the effective `permission_framework` value -- see `permission_framework` below

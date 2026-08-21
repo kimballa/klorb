@@ -252,14 +252,8 @@ class SessionSkillsMixin(SessionBase):
             skill.namespace, skill.name, len(patterns))
 
     def grant_skill_hooks(self, skill: Skill) -> None:
-        """Add `skill`'s `metadata.klorb.hooks` entries to this session's own `config.hooks`, so
-        a skill's frontmatter can subscribe its own hook handlers into the activating session
-        without a `klorb-config.json` `hooks` key listing them separately. Idempotent per
-        skill-per-session, unlike a raw dict merge would be: a skill re-activated later in the
-        same session (e.g. once via `ActivateSkill`, again via a leading `/name` mention) is
-        skipped rather than re-registering (and so double-firing) its handlers -- see
-        `SessionConfig.granted_skill_hook_event_ids`.
-        """
+        """Add `skill`'s `metadata.klorb.hooks` entries to this session's own `config.hooks`.
+        Idempotent per skill-per-session."""
         skill_id = (skill.namespace, skill.name)
         if skill_id in self.config.granted_skill_hook_event_ids:
             return
@@ -278,9 +272,7 @@ class SessionSkillsMixin(SessionBase):
     def grant_skill_events(self, skill: Skill) -> None:
         """Add `skill`'s `metadata.klorb.events` entries to this session's own `config.events`,
         starting a `FileSystemWatcher`/`TimerScheduler` for whichever newly-added entries need
-        one -- mirrors `grant_skill_hooks`, sharing its idempotency tracking (one
-        `granted_skill_hook_event_ids` set covers both, since a skill's `metadata.klorb.hooks`/
-        `.events` activate together)."""
+        one."""
         skill_id = (skill.namespace, skill.name)
         if skill_id in self.config.granted_skill_hook_event_ids:
             return

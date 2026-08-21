@@ -932,15 +932,11 @@ def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]
         value = getattr(process_config, attr_name, None)
         result[on_disk_key] = value
 
-    # hooks/events hold pydantic model instances, not plain JSON-serializable values, so
-    # they're re-serialized here rather than left as the raw `getattr` result above.
-    # `ProcessConfig.hooks` holds only the 4 process-scoped names post-`load_process_config()`
-    # split; every other hook name (and every event name) lives on `process_config.session`
-    # instead -- reconstruct the top-level on-disk `hooks`/`events` keys from both sources
-    # (mutually exclusive by name, by construction, so `{**a, **b}` never collides). There's no
-    # way to separate a merged hook/event list back into its original top-level-vs-
-    # `sessionDefaults` sources, so both fold into the same top-level keys here -- the same
-    # limitation `readDirs`/`writeDirs` already have post-merge.
+    # hooks/events hold pydantic model instances, so they're re-serialized here. `ProcessConfig.
+    # hooks` holds only the 4 process-scoped names; every other name lives on
+    # `process_config.session` instead, so both sources merge into the same top-level `hooks`/
+    # `events` keys. A merged list can't be separated back into its original
+    # top-level-vs-`sessionDefaults` source.
     hooks_by_name = {**process_config.session.hooks, **process_config.hooks}
     result["hooks"] = {
         name: [handler.model_dump(exclude_defaults=True, by_alias=True) for handler in handlers]

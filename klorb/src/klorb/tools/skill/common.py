@@ -197,18 +197,10 @@ def skill_bash_command_patterns(raw: dict[str, Any]) -> list[list[str]]:
 
 
 def skill_hook_configs(raw: dict[str, Any]) -> dict[str, list[HookConfig]]:
-    """Every hook entry under `raw`'s `metadata.klorb.hooks` frontmatter key, keyed by hook name,
-    parsed via the same `klorb.hooks.merge.parse_handler_list` validation
-    `load_process_config()` uses for the top-level `hooks` config key. A name outside
-    `klorb.hooks.config.HOOK_NAMES`, or a `PROCESS_SCOPED_HOOK_NAMES` entry -- process-scoped
-    hooks may only be configured via `klorb-config.json`'s own top-level `hooks` key, never a
-    per-activation skill grant -- is dropped, logged as a `logger.warning()`. Every parsed
-    `HookConfig` whose raw dict didn't set `isHeritable` gets `is_heritable=False` forced onto
-    it here, overriding `HookConfig`'s own pydantic default of `True`: that default is right for
-    a `klorb-config.json`-authored hook (meant to apply tree-wide unless it opts out), but wrong
-    for a skill's own grant, which shouldn't silently widen to every subagent the activating
-    session happens to create.
-    """
+    """Every hook entry under `raw`'s `metadata.klorb.hooks` frontmatter key, keyed by hook
+    name. A name outside `klorb.hooks.config.HOOK_NAMES`, or a `PROCESS_SCOPED_HOOK_NAMES`
+    entry, is dropped, logged as a `logger.warning()`. Every parsed `HookConfig` whose raw dict
+    didn't set `isHeritable` gets `is_heritable=False` forced onto it."""
     klorb_metadata = _skill_klorb_metadata(raw)
     if klorb_metadata is None:
         return {}
@@ -243,12 +235,7 @@ def skill_hook_configs(raw: dict[str, Any]) -> dict[str, list[HookConfig]]:
 
 def skill_event_configs(raw: dict[str, Any]) -> dict[str, list[EventConfig]]:
     """Every event entry under `raw`'s `metadata.klorb.events` frontmatter key, keyed by event
-    name, parsed via `klorb.hooks.merge.parse_handler_list` against the `EventConfig` subclass
-    `klorb.hooks.config.EVENT_CONFIG_MODELS` maps that name to -- mirrors `skill_hook_configs`,
-    except no event name is ever process-scoped, so nothing is rejected on those grounds.
-    `EventConfig.is_heritable` already defaults to `False` regardless of source, so (unlike
-    `skill_hook_configs`) no override is needed here.
-    """
+    name. No event name is ever process-scoped, so nothing is rejected on those grounds."""
     klorb_metadata = _skill_klorb_metadata(raw)
     if klorb_metadata is None:
         return {}

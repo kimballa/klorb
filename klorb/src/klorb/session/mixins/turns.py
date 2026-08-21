@@ -345,11 +345,9 @@ class SessionTurnsMixin(SessionBase):
         return result_text
 
     def _apply_submit_user_prompt_hook(self, user_message: Message) -> None:
-        """Dispatch `onSubmitUserPrompt` for this turn's `user_message`, before
-        it's sent to the model -- for any session's own turn, root or subagent. A `message` in
-        the aggregate `HookOutput` rewrites `user_message.content` in place;
-        `user_message.fragments` are left untouched. `success=False` raises
-        `HookDeniedTurnError`."""
+        """Dispatch `onSubmitUserPrompt` for this turn's `user_message`, before it's sent to
+        the model. A `message` in the aggregate `HookOutput` rewrites `user_message.content`
+        in place. `success=False` raises `HookDeniedTurnError`."""
 
         result = self._dispatch_hook("onSubmitUserPrompt", message=user_message.content)
         if result.success is False:
@@ -360,13 +358,11 @@ class SessionTurnsMixin(SessionBase):
             user_message.num_tokens = estimate_tokens(user_message.content)
 
     def _fire_agent_turn_end_hook(self, reply_text: str) -> None:
-        """Dispatch `onAgentTurnEnd` once this session's own turn has fully ended -- for any
-        session, root or subagent.
+        """Dispatch `onAgentTurnEnd` once this session's own turn has fully ended.
 
         A `reset_session` result calls `Session.reset_session()` and delivers `result.message`
-        as the reset conversation's first turn -- first dispatching `onSessionEnd` with
-        `reason="ResetSession"` too, but only for a root session: `onSessionEnd` never applies to
-        a subagent, reset or otherwise.
+        as the reset conversation's first turn. For a root session only, this also dispatches
+        `onSessionEnd` with `reason="ResetSession"` first.
         """
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
         if result.reset_session:
@@ -382,12 +378,10 @@ class SessionTurnsMixin(SessionBase):
     def deliver_event_message(self, text: str) -> None:
         """Deliver an event handler's aggregate `message` into this session's conversation.
 
-        If a turn is already running, `text` is queued for that turn's host to pick up
-        once it ends. Otherwise `text` is queued and `deliver_wake()` pings the registered
-        wake handler -- the same live-host mechanism a root session's TUI/ACP/headless front
-        door uses. A dormant subagent (no turn running, no wake handler -- its ordinary
-        between-turns state) has no such host at all: `_deliver_event_to_dormant_subagent`
-        starts a fresh turn directly instead."""
+        If a turn is already running, `text` is queued for that turn's host to pick up once it
+        ends. Otherwise `text` is queued and `deliver_wake()` pings the registered wake handler.
+        A dormant subagent has no such host at all: `_deliver_event_to_dormant_subagent` starts
+        a fresh turn directly instead."""
         if self.current_turn_handlers() is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             return
@@ -402,14 +396,9 @@ class SessionTurnsMixin(SessionBase):
             f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
 
     def _deliver_event_to_dormant_subagent(self, text: str) -> None:
-        """A dormant subagent has no live host to queue an event message into the way a root
-        session's TUI/ACP/headless host does -- start a fresh turn directly instead, exactly
-        like `klorb.agents.policy.dispatch_direct_message`'s dormant-child branch does for a
-        human-sent message, except silently skipped (never raising, never delivered) if doing so
-        would exceed `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`. The resulting
-        turn's output is not relayed to the parent's own conversation (`parent_interested=False`)
-        -- the parent didn't ask for this turn, so it stays out of the parent's context until the
-        parent explicitly calls `WaitForSubagent`/`MessageSubagent`."""
+        """Starts a fresh, uninterested turn directly, since a dormant subagent has no live host
+        to queue an event message into. Silently skipped, never raising, if doing so would
+        exceed `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`."""
         from klorb.agents.policy import concurrency_limits_exceeded, dispatch_subagent_turn
         assert self.parent is not None
         assert self._process_config is not None
@@ -419,7 +408,7 @@ class SessionTurnsMixin(SessionBase):
             if current is None:
                 return
             if current.state == "running":
-                # Raced between the caller's earlier idle-check and this lock -- queue like an
+                # Raced between the caller's earlier idle-check and this lock. Queue like an
                 # ordinary in-flight event instead of starting a second, overlapping turn.
                 self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
                 return
