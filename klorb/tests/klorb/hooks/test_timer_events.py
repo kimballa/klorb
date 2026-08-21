@@ -247,3 +247,45 @@ def test_close_is_safe_to_call_more_than_once(tmp_path: Path) -> None:
     scheduler.start()
     scheduler.close()
     scheduler.close()
+
+
+# --- one-shot behavior ---
+
+
+@pytest.mark.usefixtures("_fast_debounce_floor")
+async def test_one_shot_timer_fires_once_then_stops(
+    tmp_path: Path, recorder: _Recorder,
+) -> None:
+    entry = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
+    entry.one_shot = True
+    scheduler = TimerScheduler(tmp_path, [entry], dispatch=recorder)
+    scheduler.start()
+    try:
+        await recorder.wait()
+        # Give a bit of extra time to confirm no second fire.
+        await asyncio.sleep(_SHORT_INTERVAL_MINUTES * 60 * 3)
+    finally:
+        scheduler.close()
+
+    assert len(recorder.calls) == 1
+
+
+@pytest.mark.usefixtures("_fast_debounce_floor")
+async def test_recurring_timer_still_reschedules_after_one_shot_sibling_fires(
+    tmp_path: Path, recorder: _Recorder,
+) -> None:
+    one_shot = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
+    one_shot.one_shot = True
+    recurring = _entry(interval_minutes=_SHORT_INTERVAL_MINUTES)
+    scheduler = TimerScheduler(tmp_path, [one_shot, recurring], dispatch=recorder)
+    scheduler.start()
+    try:
+        # Wait for at least 3 fires total -- one from one-shot, rest from recurring.
+        await recorder.wait()
+        await recorder.wait()
+        await recorder.wait()
+    finally:
+        scheduler.close()
+
+    # The recurring entry fires at least twice; the one-shot fires exactly once.
+    assert len(recorder.calls) >= 3

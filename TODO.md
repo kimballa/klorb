@@ -12,11 +12,6 @@
 
 ### Feature backlog
 
-* (#agent) One-shot timer events
-  * Events for the session can be one-shot.
-  * Add a `WakeUpTimer(delay_seconds, self_prompt)` tool to let an agent create an event for
-    later in its session. (Bound 60 <= delay_seconds <= 3600)
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want

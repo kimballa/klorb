@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.hooks.config import FileSystemModifiedEventConfig, HookConfig
 from klorb.lockfile import create_lockfile
 from klorb.message import Message, MessageFragment, MessageRole
 from klorb.schema_envelope import write_versioned_json
@@ -68,6 +69,20 @@ class TestSessionState:
         assert state is not None
         assert state.config.model == "some/model"
         assert [m.content for m in state.messages] == ["hi there", "hello!"]
+
+    def test_write_then_read_round_trips_event_config_subclass_fields(self, tmp_path: Path) -> None:
+        workspace = _workspace(tmp_path)
+        fs_event = FileSystemModifiedEventConfig(
+            watch="docs/plans/auto", action=HookConfig(type="bash", command=["echo", "hi"]))
+        config = SessionConfig(workspace=workspace, events={"FileSystemModified": [fs_event]})
+
+        write_session_state(workspace, "sess-1", config, [])
+        state = read_session_state(workspace, "sess-1")
+
+        assert state is not None
+        restored = state.config.events["FileSystemModified"][0]
+        assert isinstance(restored, FileSystemModifiedEventConfig)
+        assert restored.watch == "docs/plans/auto"
 
     def test_write_includes_schema_envelope(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
