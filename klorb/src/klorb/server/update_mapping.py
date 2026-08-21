@@ -93,6 +93,7 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "CreateSubagent": "other",
     "WaitForSubagent": "other",
     "MessageSubagent": "other",
+    "WakeUpTimer": "think",
 }
 """Every tool name `ToolRegistry.discover_tools()` can produce today, mapped to its ACP
 `ToolKind`. A name this dict doesn't cover falls back to

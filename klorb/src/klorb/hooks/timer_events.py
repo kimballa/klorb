@@ -112,8 +112,11 @@ class TimerScheduler:
             self._dispatch(
                 [entry], EventInput(hook="Timer", workspace_root=str(self._workspace_root)))
         except Exception:
-            # `_schedule_next` below is what re-arms this entry's next fire.
             logger.error(
                 "Timer entry %r raised while dispatching; still rescheduling.",
                 entry.action.name, exc_info=True)
+        if entry.one_shot:
+            logger.debug("Timer entry %r is one-shot; not rescheduling.", entry.action.name)
+            self._timers.pop(index, None)
+            return
         self._schedule_next(index, entry)

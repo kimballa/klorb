@@ -128,10 +128,13 @@ class FileSystemModifiedEventConfig(EventConfig):
 
 class TimerEventConfig(EventConfig):
     """One `events.Timer` entry: fires `action` either every `interval_minutes` or on
-    `cron`'s schedule."""
+    `cron`'s schedule. When `one_shot` is `True`, the entry fires exactly once and is not
+    rescheduled after delivery.
+    """
 
     interval_minutes: float | None = None
     cron: str | None = None
+    one_shot: bool = False
 
 
 class WorkspaceTrustChangedEventConfig(EventConfig):
