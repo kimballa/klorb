@@ -282,14 +282,12 @@ class SessionTurnsMixin(SessionBase):
         reasoning = self._reasoning_params()
         drop_reasoning = self._drop_reasoning()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
-        is_root = self.parent is None
 
         self.active_cancel_event = callbacks.cancel_event
         self._current_turn_handlers = callbacks
         try:
             try:
-                if is_root:
-                    self._apply_submit_user_prompt_hook(user_message)
+                self._apply_submit_user_prompt_hook(user_message)
                 reply, _ = self._send_and_receive(
                     list(self._messages), system_prompt, model_name, reasoning, drop_reasoning,
                     tools, callbacks)
@@ -343,15 +341,13 @@ class SessionTurnsMixin(SessionBase):
         finally:
             self.active_cancel_event = None
             self._current_turn_handlers = None
-        if is_root:
-            self._fire_agent_turn_end_hook(result_text)
+        self._fire_agent_turn_end_hook(result_text)
         return result_text
 
     def _apply_submit_user_prompt_hook(self, user_message: Message) -> None:
-        """Dispatch `onSubmitUserPrompt` for this turn's `user_message`, before
-        it's sent to the model. A `message` in the aggregate `HookOutput` rewrites
-        `user_message.content` in place; `user_message.fragments` are left untouched.
-        `success=False` raises `HookDeniedTurnError`."""
+        """Dispatch `onSubmitUserPrompt` for this turn's `user_message`, before it's sent to
+        the model. A `message` in the aggregate `HookOutput` rewrites `user_message.content`
+        in place. `success=False` raises `HookDeniedTurnError`."""
 
         result = self._dispatch_hook("onSubmitUserPrompt", message=user_message.content)
         if result.success is False:
@@ -362,16 +358,17 @@ class SessionTurnsMixin(SessionBase):
             user_message.num_tokens = estimate_tokens(user_message.content)
 
     def _fire_agent_turn_end_hook(self, reply_text: str) -> None:
-        """Dispatch `onAgentTurnEnd` once this root session's turn has fully ended.
+        """Dispatch `onAgentTurnEnd` once this session's own turn has fully ended.
 
-        A `reset_session` result first dispatches `onSessionEnd` with `reason="ResetSession"`,
-        then calls `Session.reset_session()` and delivers `result.message` as the reset
-        conversation's first turn.
+        A `reset_session` result calls `Session.reset_session()` and delivers `result.message`
+        as the reset conversation's first turn. For a root session only, this also dispatches
+        `onSessionEnd` with `reason="ResetSession"` first.
         """
         result = self._dispatch_hook("onAgentTurnEnd", message=reply_text)
         if result.reset_session:
             assert result.message is not None
-            self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
+            if self.parent is None:
+                self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
             cast("Session", self).reset_session()
             self._deliver_chained_hook_message(result.message)
             return
@@ -381,9 +378,10 @@ class SessionTurnsMixin(SessionBase):
     def deliver_event_message(self, text: str) -> None:
         """Deliver an event handler's aggregate `message` into this session's conversation.
 
-        If a turn is already running, `text` is queued for that turn's host to pick up
-        once it ends. Otherwise `text` is queued and `deliver_wake()` pings the registered
-        wake handler."""
+        If a turn is already running, `text` is queued for that turn's host to pick up once it
+        ends. Otherwise `text` is queued and `deliver_wake()` pings the registered wake handler.
+        A dormant subagent has no such host at all: `_deliver_event_to_dormant_subagent` starts
+        a fresh turn directly instead."""
         if self.current_turn_handlers() is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             return
@@ -391,8 +389,37 @@ class SessionTurnsMixin(SessionBase):
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             self.deliver_wake()
             return
+        if self.parent is not None:
+            self._deliver_event_to_dormant_subagent(text)
+            return
         raise ChainedHookMessageUndeliverableError(
             f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
+
+    def _deliver_event_to_dormant_subagent(self, text: str) -> None:
+        """Starts a fresh, uninterested turn directly, since a dormant subagent has no live host
+        to queue an event message into. Silently skipped, never raising, if doing so would
+        exceed `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`."""
+        from klorb.agents.policy import concurrency_limits_exceeded, dispatch_subagent_turn
+        assert self.parent is not None
+        assert self._process_config is not None
+        tracker = self.parent.subagent_tracker
+        with tracker.dispatch_guard():
+            current = tracker.current_handle(self.id)
+            if current is None:
+                return
+            if current.state == "running":
+                # Raced between the caller's earlier idle-check and this lock. Queue like an
+                # ordinary in-flight event instead of starting a second, overlapping turn.
+                self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
+                return
+            if concurrency_limits_exceeded(self._process_config, self.parent):
+                logger.info(
+                    "Event delivered to dormant subagent %s skipped: would exceed subagent "
+                    "concurrency limits.", self.id)
+                return
+            dispatch_subagent_turn(
+                self.parent, cast("Session", self), current.role, current.title, text,
+                parent_interested=False)
 
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
         """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` and return the

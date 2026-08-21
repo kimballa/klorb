@@ -5,12 +5,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from klorb.hooks.config import EventConfig, HookConfig
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.file_access import FileRules
-from klorb.permissions.skill_access import SkillRules
+from klorb.permissions.skill_access import SkillId, SkillRules
 from klorb.permissions.table import Verdict
 from klorb.role import OPERATOR_ROLE_NAME
 from klorb.session.constants import (
@@ -138,6 +139,17 @@ class SessionConfig(BaseModel):
     after `share_env`'s pass-through so they shadow it — see `klorb.tools.bash.build_bash_env`.
     On-disk `setEnv`, merged across config layers with a later layer's value for the same key
     replacing an earlier layer's."""
+    hooks: dict[str, list[HookConfig]] = Field(default_factory=dict)
+    """Handler lists keyed by hook name, for every hook name outside
+    `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES`. Populated from `klorb-config.json`'s
+    top-level `hooks`/`sessionDefaults.hooks` keys and skill `metadata.klorb.hooks` grants. A
+    subagent inherits only this dict's `is_heritable=True` entries from its parent."""
+    events: dict[str, list[EventConfig]] = Field(default_factory=dict)
+    """Handler lists keyed by event name; every event name is session-scoped. Same population
+    sources and `is_heritable`-filtered subagent inheritance as `hooks`."""
+    granted_skill_hook_event_ids: set[SkillId] = Field(default_factory=set)
+    """Which skills' `metadata.klorb.hooks`/`.events` have already been granted into `hooks`/
+    `events` this session, so a re-activated skill isn't re-registered. Never persisted."""
     permission_framework_state: PermissionFrameworkState = Field(
         default_factory=PermissionFrameworkState)
     """Holds the effective `permission_framework` value -- see `permission_framework` below

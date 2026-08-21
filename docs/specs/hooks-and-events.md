@@ -16,22 +16,40 @@ semantics, config merge, and each lifecycle point's wiring.
 
 ## Configuration
 
-`hooks` and `events` are flat, process-scoped keys in `PROCESS_KEY_MAP`
-(`klorb/src/klorb/process_config.py`), top-level in `klorb-config.json` (not inside
-`sessionDefaults`) — cross-cutting policy from the config stack, not something a session mutates
-at runtime, and required to be identical across every concurrently running session the same way
-every other `ProcessConfig` field is (docs/specs/process-and-session-config.md).
+`klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES` (`onProcessStart`/`onProcessEnd`/`onSessionStart`/
+`onSessionEnd`) is process-scoped: these fire before any session exists, or describe a session's
+own lifetime boundary, so their handler configuration lives on `ProcessConfig.hooks` and is
+required to be identical across every concurrently running session the same way every other
+`ProcessConfig` field is (docs/specs/process-and-session-config.md). Every other hook name, and
+every event name, is session-scoped: its handler configuration lives on `SessionConfig.hooks`/
+`.events` instead, so a hookable moment other than the four above consults the *firing session's
+own* `config.hooks`/`.events`, not a process-wide table.
+
+A session-scoped name has two on-disk sources, both merged into the root session template
+(`ProcessConfig.session.hooks`/`.events`) at `load_process_config()` time: the top-level `hooks`/
+`events` keys' own session-scoped portion (top-level entries), and `sessionDefaults.hooks`/
+`.events` (session-default entries) — concatenated together, top-level first. A
+`PROCESS_SCOPED_HOOK_NAMES` entry appearing under `sessionDefaults.hooks` is a config error:
+dropped with a `config_warnings` entry, the same "config parse error" mechanism an invalid
+individual handler entry already uses — process-scoped hooks may only be configured via the
+top-level `hooks` key. There is no equivalent restriction for `sessionDefaults.events`: no event
+name is ever process-scoped.
 
 Each key's value is an object keyed by hook/event name (`onProcessStart`, `FileSystemModified`,
 ...), each holding a list of handler configs — `dict[str, list[HookConfig]]` for `hooks`,
-`dict[str, list[EventConfig]]` for `events` (`ProcessConfig.hooks`/`ProcessConfig.events`).
-`klorb.hooks.config.HOOK_NAMES`/`EVENT_NAMES` enumerate the recognized names; an entry under an
-unrecognized name is dropped with a `config_warnings` entry rather than accepted silently.
+`dict[str, list[EventConfig]]` for `events`. `klorb.hooks.config.HOOK_NAMES`/`EVENT_NAMES`
+enumerate the recognized names; an entry under an unrecognized name is dropped with a
+`config_warnings` entry rather than accepted silently.
 
 An untrusted workspace's `.klorb/klorb-config.json` layer is skipped entirely by
 `load_process_config()` whenever `workspace.trusted` is `False` (docs/specs/projects-and-trust.md),
 so `hooks`/`events` need no dedicated enforcement beyond the ordinary layering every other key
 goes through.
+
+Beyond config-file authoring, a session-scoped name's handler list can also grow at runtime: a
+skill's `metadata.klorb.hooks`/`.events` frontmatter grants its own handlers into the activating
+session's `config.hooks`/`.events` on activation — see "`metadata.klorb.hooks`/`metadata.klorb.
+events`" in docs/specs/skills.md.
 
 ### Merge behavior: named-list concatenate
 
@@ -40,25 +58,48 @@ variants (docs/specs/process-and-session-config.md's "cross-layer merge behavior
 hook/event name present in a layer's `hooks`/`events` object, that layer's list is appended to
 whatever list earlier layers already built for that name —
 `klorb.hooks.merge.concatenate_named_handler_lists`. `load_process_config()`
-(`klorb/src/klorb/process_config.py`) calls this once per layer while folding `hooks`/`events`
-into `concatenated_hooks`/`concatenated_events` accumulators, via `klorb.hooks.merge.parse_handler_list`
-for per-entry pydantic validation (an entry that fails to validate is skipped with a
-`config_warnings` message, not fatal to the rest of the layer). The final linear order for a
-given hook/event name is simply every layer's entries for that name, in layer order, then
-authoring order within a layer — deliberately not a documented contract beyond that: a handler
-should not depend on its exact position relative to another layer's handler.
+(`klorb/src/klorb/process_config.py`) calls this once per layer (once for the top-level `hooks`/
+`events` keys, again for `sessionDefaults.hooks`/`.events`) while folding entries into their own
+accumulators, via `klorb.hooks.merge.parse_handler_list` for per-entry pydantic validation (an
+entry that fails to validate is skipped with a `config_warnings` message, not fatal to the rest of
+the layer). The final linear order for a given hook/event name is simply every layer's entries for
+that name, in layer order, then authoring order within a layer — deliberately not a documented
+contract beyond that: a handler should not depend on its exact position relative to another
+layer's handler.
 
 ### Config schema
 
 * `HookConfig` (`klorb.hooks.config`): `type` (`"bash"|"classifier"|"chat"`), `shell`/`command`/
   `prompt` (handler-type-specific payload), `name` (optional, disambiguates entries in output/logs),
-  `filter` (optional `HookConfigFilter`).
+  `filter` (optional `HookConfigFilter`), `isHeritable` (see "Heritability" below).
 * `HookConfigFilter`: `matches`/`pattern`/`contains`/`any`/`all`/`not` (aliased from `not_` for the
   reserved keyword) — see `klorb.hooks.filters.evaluate_filter`.
 * `EventConfig` and its subclasses `FileSystemModifiedEventConfig` (`watch`),
   `TimerEventConfig` (`interval_minutes`/`cron`), `WorkspaceTrustChangedEventConfig` (no extra
-  field) — each carries an `action: HookConfig`. `klorb.hooks.config.EVENT_CONFIG_MODELS` maps
-  each `EVENT_NAMES` entry to the subclass its list entries parse as.
+  field) — each carries an `action: HookConfig` and its own `isHeritable` (see "Heritability"
+  below). `klorb.hooks.config.EVENT_CONFIG_MODELS` maps each `EVENT_NAMES` entry to the subclass
+  its list entries parse as.
+
+### Heritability
+
+Every `HookConfig`/`EventConfig` entry carries its own `isHeritable: bool`, read when a subagent's
+`SessionConfig` is built from its parent's: `klorb.agents.policy.plan_subagent_creation` applies
+`klorb.hooks.config.filter_heritable_hooks`/`filter_heritable_events` to the deep-copied
+`hooks`/`events` dicts, keeping only each name's `isHeritable=true` entries (dropping a name left
+with none entirely). A root session's own `hooks`/`events` are never filtered — heritability only
+governs what a *child* inherits from its parent.
+
+The default differs by source, not just by hook-vs-event:
+
+* A `HookConfig` parsed from `klorb-config.json` (top-level `hooks` or `sessionDefaults.hooks`)
+  defaults `isHeritable` to `true` — meant to apply tree-wide unless its author opts out.
+* An `EventConfig` defaults `isHeritable` to `false`, regardless of source — an event subscription
+  is a standing background watcher/timer, so a subagent starts with none unless the entry
+  explicitly opts in.
+* A `HookConfig` parsed from a skill's `metadata.klorb.hooks` grant also defaults `isHeritable` to
+  `false` (overriding `HookConfig`'s own config-file default of `true`) when the skill's
+  frontmatter doesn't set it explicitly — a skill's own grant shouldn't silently widen to every
+  subagent the activating session happens to create.
 
 ## Filters
 
@@ -374,15 +415,15 @@ hooks are inert in that case rather than erroring.
 | --- | --- | --- |
 | `onProcessStart` | `klorb.cli.main()`, before workspace/session setup | process |
 | `onProcessEnd` | `klorb.cli.main()`, at exit | process |
-| `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | root session |
-| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling); its result never initiates a reset (see "`reset_session` is opt-in per hook/event name" above) | root session |
-| `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | root session |
-| `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `_deliver_chained_hook_message`, unless `reset_session` is also set (see "Session reset" above) | root session |
+| `onSessionStart` | `Session.fire_session_start_hook`; for the TUI, called from `_resolve_workspace_trust()` (`klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) once trust is settled; for headless/ACP, at construction, since trust is already final there | process |
+| `onSessionEnd` | `Session.fire_session_start_hook`'s counterpart at session close, `reason="SuspendSession"` (or `"ResetSession"`, dispatched by `onAgentTurnEnd`'s own reset handling, root session only — see "Scope across the subagent tree" below); its result never initiates a reset (see "`reset_session` is opt-in per hook/event name" above) | process |
+| `onSubmitUserPrompt` | `_apply_submit_user_prompt_hook` (`klorb/src/klorb/session/mixins/turns.py`), before a turn's message reaches the model; a `success=False` aggregate raises `HookDeniedTurnError`, blocking the turn | whole tree |
+| `onAgentTurnEnd` | `_fire_agent_turn_end_hook`, after the agent's final message; a `message` in the aggregate result is passed to `_deliver_chained_hook_message`, unless `reset_session` is also set (see "Session reset" above) | whole tree |
 | `onToolUse` | `_apply_tool_use_hook` (`klorb/src/klorb/session/mixins/tool_execution.py`), before a tool call runs; `tool_args` in the result replaces the call's args, `success=False` or a `permission` of `"deny"`/`"ask"` blocks the call | whole tree |
 | `onToolResult` | `_apply_tool_result_hook`, after a tool call's result envelope is built; `tool_result` in the result replaces `response_body`/`error_message` in the envelope, never `system_interjections` | whole tree |
 | `onActivateSkill` | `Session.fire_activate_skill_hook` (`klorb/src/klorb/session/mixins/skills.py`), from `ActivateSkillTool.apply()` and from `_build_user_skill_activation_interjection`'s leading-mention fast path, once `skillRules` has already let the activation through; `success=False` or a `permission` of `"deny"`/`"ask"` vetoes it — `ActivateSkillTool.apply()` raises `ToolCallError`, the leading-mention path falls back to the ordinary `SkillReference` reminder | whole tree |
-| `onSubagentStart` | `Session.fire_subagent_start_hook`, called from `klorb.agents.policy` around a subagent's turn; a `None` return (aggregate `success=False`) skips the turn entirely | firing subagent |
-| `onSubagentTurnEnd` | `Session.fire_subagent_turn_end_hook`, after a subagent's turn | firing subagent |
+| `onSubagentStart` | `Session.fire_subagent_start_hook`, called on the *parent* session from `klorb.agents.policy` around its child's turn — the parent's own observation of a subagent starting, not something the child fires about itself; a `None` return (aggregate `success=False`) skips the turn entirely | parent agent session |
+| `onSubagentTurnEnd` | `Session.fire_subagent_turn_end_hook`, called on the *parent* session after its child's turn; the parent's own handler chain, though a `message` in the result chains as the *child's* next turn | parent agent session |
 
 `onRequestPermission` is named in `klorb.hooks.config.HOOK_NAMES` but not yet wired to any call
 site — see "Out of scope" below.
@@ -393,13 +434,21 @@ permission prompt is `onRequestPermission`'s own deferred design.
 
 ### Scope across the subagent tree
 
-Subagents (docs/specs/subagents.md) are separate `Session` objects nested under a root session.
-`onToolUse`/`onToolResult`/`onActivateSkill` fire identically for any session in the tree, tagged
-via `HookInput.role`/`session_id` with whichever session fired them, so a `filter` can single out
-subagent activity. Every other hook above is scoped to exactly one side: `onSessionStart`/`onSessionEnd`/
-`onSubmitUserPrompt`/`onAgentTurnEnd` never fire for a subagent's own turns, and
-`onSubagentStart`/`onSubagentTurnEnd` never fire for the root session. `onProcessStart`/
-`onProcessEnd` have no session at all yet/anymore when they fire.
+Subagents (docs/specs/subagents.md) are separate `Session` objects nested under a root session,
+each with its own `config.hooks`/`.events`. `onSubmitUserPrompt`/`onAgentTurnEnd`/`onToolUse`/
+`onToolResult`/`onActivateSkill` fire identically for any session in the tree, each consulting
+*that session's own* `config.hooks` and tagged via `HookInput.role`/`session_id` with whichever
+session fired them, so a `filter` can single out subagent activity. `onProcessStart`/`onProcessEnd`/
+`onSessionStart`/`onSessionEnd` are process-scoped and never fire for a subagent at all — a
+subagent's own reset (`onAgentTurnEnd`'s `reset_session`) does not dispatch `onSessionEnd`, unlike
+a root session's.
+
+`onSubagentStart`/`onSubagentTurnEnd` are the one pair scoped to neither "root only" nor "whole
+tree": each fires from the *parent* session's own `config.hooks` — describing the child via
+`HookInput.session_id`/`.role`, but looked up against the parent's handler chain — since these are
+the parent's own observation of its child starting/finishing, not the child's. A handler
+configured only on the child's own `config.hooks` does not fire for these two names; a handler on
+the parent's fires regardless of anything the child itself carries.
 
 ## Available events
 
@@ -411,14 +460,46 @@ that turn's own host to pick up once it ends, the same live-host mechanism ordin
 chaining relies on (see "Chained turns" above). Otherwise there is no turn in flight: `text` is
 still queued, then whichever host registered a wake handler (`Session.register_wake_handler`,
 see docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md)
-is pinged to drain and resubmit it through its own front door. Only with no registered handler
-at all (a subagent, a `Session` built for a unit test, or headless outside its own
-`run_one_shot()` loop) does it raise `ChainedHookMessageUndeliverableError` rather than
-dispatching invisibly. Both `FileSystemModified` and `WorkspaceTrustChanged` always target the
-root session's conversation, never a subagent's, regardless of which session happens to be
-active when they fire. Every event sets `EventInput.is_agent_active` to whether that root
-session's `current_turn_handlers()` is non-`None` at the moment the event fires — the same
-signal `deliver_event_message` uses to decide between queuing and waking.
+is pinged to drain and resubmit it through its own front door. A session with neither a live
+turn nor a registered wake handler but with a parent (an ordinary dormant subagent, between
+turns) starts a fresh, uninterested turn directly instead
+(`Session._deliver_event_to_dormant_subagent`), mirroring `klorb.agents.policy.
+dispatch_direct_message`'s own dormant-child branch for a human-sent message — except silently
+skipped, never delivered, if doing so would exceed `tools.subagents.maxConcurrentPerParent`/
+`maxActiveTotal` (`klorb.agents.policy.concurrency_limits_exceeded`); the order in which some
+dormant subagents do or don't wake in this resource-capped state is not a defined contract. Only
+a session with none of these three (no live turn, no wake handler, no parent — a `Session` built
+for a unit test, or headless outside its own `run_one_shot()` loop) raises
+`ChainedHookMessageUndeliverableError` rather than dispatching invisibly.
+
+Event handlers are attached to a particular session, not a terminal focus: even if the terminal
+has a different session focused when the event occurs, it is delivered to the subscribing
+session's own handler. Every config-file-defined event entry (the top-level `events` key,
+`sessionDefaults.events`) is applied as a subscription of the root session only, and is not
+inherited by a child session unless the entry explicitly sets `isHeritable=true` — see
+"Heritability" above. The child `Session` must be alive at the moment the event occurs for its
+handler to deliver it. By default, a subagent starts with no event subscriptions at all, and
+gains one only by directly activating a skill whose own `metadata.klorb.events` grants it (see
+"Dynamic per-session watchers" below) — not by inheriting anything from its parent.
+
+Every event sets `EventInput.is_agent_active` to whether the *firing* session's own
+`current_turn_handlers()` is non-`None` at the moment the event fires — the same signal
+`deliver_event_message` uses to decide between queuing, waking, and starting a fresh dormant-
+subagent turn.
+
+### Dynamic per-session watchers
+
+`Session._start_event_watchers_for(events)` starts a `FileSystemWatcher`/`TimerScheduler` for
+whichever of `events`' `FileSystemModified`/`Timer` entries are non-empty, on whichever session
+calls it, registering each one's teardown under a fresh, collision-free key so `close()` stops
+it. Called twice per session, potentially: once at `onSessionStart` with the (root) session's
+full `config.events`, and again — with just the newly-added entries — whenever a skill's
+`metadata.klorb.events` grant (`klorb.session.mixins.skills.grant_skill_events`) adds a new
+subscription mid-session, root or subagent alike. A dormant subagent's watcher/scheduler keeps
+running while dormant — that's what lets a later filesystem change or timer tick wake it via
+`_deliver_event_to_dormant_subagent` above — so a session tree with many skill-activated
+subagent event subscriptions accumulates live background threads for the lifetime of the whole
+process, not just while each subagent is actively turning.
 
 ### `FileSystemModified` (`klorb.hooks.fs_events.FileSystemWatcher`)
 
@@ -461,14 +542,16 @@ before rescheduling — a `ChainedHookMessageUndeliverableError` (an idle-trigge
 
 ### `WorkspaceTrustChanged`
 
-Fires via `Session.fire_workspace_trust_changed_hook(reason)` at the two points a workspace's trust
-decision can change against an already-live root session: the TUI's `>Trust workspace` command
-(`reason="TrustCommand"`, `klorb/src/klorb/tui/mixins/workspace_bootstrap.py`) and ACP's
-`_klorb/trustWorkspace` (`reason="AcpTrustWorkspace"`, `klorb.server.klorb_agent.KlorbAcpAgent`). Needs
-no watcher/scheduler of its own — it dispatches directly through the same `HookDispatcher`/
-`deliver_event_message` path the other two events use. Distinct from `onSessionStart`'s own
-`workspace_trusted`/`workspace_just_bootstrapped` fields, which report a session's *initial* trust
-state as a one-time, planned fact at startup, not a later, unplanned change.
+Fires via `Session.fire_workspace_trust_changed_hook(reason)`, reading the firing session's own
+`config.events` like every other session-scoped hook/event — not inherently root-only, though
+both real callers today only ever hold a reference to the root session: the TUI's
+`>Trust workspace` command (`reason="TrustCommand"`, `klorb/src/klorb/tui/mixins/
+workspace_bootstrap.py`) and ACP's `_klorb/trustWorkspace` (`reason="AcpTrustWorkspace"`,
+`klorb.server.klorb_agent.KlorbAcpAgent`). Needs no watcher/scheduler of its own — it dispatches
+directly through the same `HookDispatcher`/`deliver_event_message` path the other two events
+use. Distinct from `onSessionStart`'s own `workspace_trusted`/`workspace_just_bootstrapped`
+fields, which report a session's *initial* trust state as a one-time, planned fact at startup,
+not a later, unplanned change.
 
 ## Error handling
 

@@ -19,7 +19,7 @@ from klorb.agents.policy import (
 )
 from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle
 from klorb.api_provider import ProviderResponse
-from klorb.hooks.config import HookConfig
+from klorb.hooks.config import HookConfig, TimerEventConfig
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import ToolCallError
@@ -227,6 +227,35 @@ def test_explorer_plan_session_config_carries_the_explorer_role(
     assert plan.role_definition.default_model == "klorb-default/fast"
 
 
+def test_plan_subagent_creation_filters_out_non_heritable_hooks_and_events(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    context = _operator_context(tmp_path, make_session_config)
+    assert context.session is not None
+    context.session.config.hooks = {
+        "onToolUse": [
+            HookConfig.model_validate({"type": "chat", "prompt": "heritable", "isHeritable": True}),
+            HookConfig.model_validate({"type": "chat", "prompt": "not-heritable", "isHeritable": False}),
+        ],
+    }
+    context.session.config.events = {
+        "Timer": [
+            TimerEventConfig.model_validate({
+                "interval_minutes": 5, "action": {"type": "chat", "prompt": "tick"},
+                "isHeritable": False,
+            }),
+        ],
+    }
+
+    plan = plan_subagent_creation(context, "explorer", None, None)
+
+    assert [h.prompt for h in plan.session_config.hooks["onToolUse"]] == ["heritable"]
+    assert plan.session_config.events == {}
+    # The parent's own dicts are untouched.
+    assert len(context.session.config.hooks["onToolUse"]) == 2
+    assert "Timer" in context.session.config.events
+
+
 def test_allowed_tools_override_replaces_the_roles_own_list(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
@@ -427,13 +456,66 @@ def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the
         running_handle.thread.join(timeout=5.0)
 
 
+def test_deliver_event_message_starts_a_fresh_turn_on_a_dormant_subagent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """An event handler's message delivered to a dormant subagent (no turn running, no wake
+    handler -- its ordinary between-turns state) starts a fresh, uninterested turn directly,
+    mirroring `dispatch_direct_message`'s own dormant-child branch for a human message."""
+    provider = _FakeProvider(reply_text="event reply")
+    process_config = ProcessConfig()
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(
+        make_session_config(role_name="explorer"), provider=provider, process_config=process_config,
+        parent=parent)
+    dormant_handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task", state="finished", output="earlier output")
+    parent.subagent_tracker.register(dormant_handle)
+
+    child.deliver_event_message("filesystem changed")
+
+    new_handle = parent.subagent_tracker.handles()[0]
+    new_handle.thread.join(timeout=5.0)
+    assert new_handle is not dormant_handle
+    assert new_handle.parent_interested is False
+    assert new_handle.output == "event reply"
+
+
+def test_deliver_event_message_skips_a_dormant_subagent_when_concurrency_limits_exceeded(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """No exception, no delivery -- just silently skipped, per docs/specs/hooks-and-events.md's
+    "if this would cause too many subagents in parallel to wake up ... it is not delivered"."""
+    provider = _FakeProvider(reply_text="event reply")
+    process_config = ProcessConfig(subagents_max_concurrent_per_parent=0)
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(
+        make_session_config(role_name="explorer"), provider=provider, process_config=process_config,
+        parent=parent)
+    dormant_handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task", state="finished", output="earlier output")
+    parent.subagent_tracker.register(dormant_handle)
+
+    child.deliver_event_message("filesystem changed")  # must not raise
+
+    assert parent.subagent_tracker.handles() == [dormant_handle]  # no new turn was dispatched
+    assert provider.calls == []
+
+
 def _subagent_session_pair(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig], provider: _FakeProvider,
     hooks: dict[str, list[HookConfig]],
 ) -> tuple[Session, Session]:
-    process_config = ProcessConfig(hooks=hooks)
+    """`onSubagentStart`/`onSubagentTurnEnd` fire from the *parent*'s own `config.hooks`, so
+    `hooks` goes on `parent`'s `SessionConfig`, not a shared `ProcessConfig`."""
+    process_config = ProcessConfig()
     parent = Session(
-        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        make_session_config(
+            role_name="operator", workspace=Workspace(path=tmp_path, trusted=True), hooks=hooks),
         provider=provider, process_config=process_config)
     child = Session(
         make_session_config(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
@@ -455,6 +537,31 @@ def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(
     assert provider.calls
     user_message = next(m for m in provider.calls[0] if m.role == "user")
     assert user_message.content.endswith("rewritten task")
+
+
+def test_onsubagentstart_hook_on_the_child_alone_does_not_fire(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`onSubagentStart` is the parent's own observation of its child starting -- a handler
+    configured only on the child's own `config.hooks` (never the parent's) must not fire."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    process_config = ProcessConfig()
+    parent = Session(
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config)
+    child = Session(
+        make_session_config(
+            role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True),
+            hooks={"onSubagentStart": [
+                HookConfig(type="bash", shell='echo \'{"message": "rewritten task"}\'')]}),
+        provider=provider, process_config=process_config, parent=parent)
+
+    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle.thread.join(timeout=5.0)
+
+    assert provider.calls
+    user_message = next(m for m in provider.calls[0] if m.role == "user")
+    assert user_message.content.endswith("original task")
 
 
 def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(

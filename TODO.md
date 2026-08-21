@@ -283,4 +283,11 @@
   real long session: if virtualization alone resolves the degradation, drop it from that entry;
   if instability persists, it corroborates a separate non-DOM cause.
 
+### Plan 025: Skill-granted hooks/events
+
+* Generalize `is_heritable` beyond `HookConfig`/`EventConfig` to every grant kind
+  (`command_rules`, `skill_rules`, `read_dirs`/`write_dirs`/`read_files`/`write_files`), so a
+  subagent's creation can filter those the same way it now filters hooks/events, instead of a
+  subagent always inheriting every one of its parent's bash/skill/directory grants unconditionally.
+
 ## Meta / dev environment

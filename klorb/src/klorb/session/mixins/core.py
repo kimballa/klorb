@@ -145,6 +145,10 @@ class SessionCoreMixin(SessionBase):
         self._child_index = parent._allocate_child_index() if parent is not None else 0
         """This session's own address segment among its parent's children (assigned once, by
         the parent, at construction time), or `0` for a top-level session -- see `address()`."""
+        self._event_watcher_seq = 0
+        """Count of `FileSystemWatcher`/`TimerScheduler` instances this session has ever started
+        via `_start_event_watchers_for`, monotonically incremented so each gets a
+        collision-free `register_teardown` key."""
         if parent is None:
             # `config` (built via `process_config.session.model_copy()`, or restored from
             # `session.json`) may still reference the same `PermissionFrameworkState` box
@@ -917,32 +921,31 @@ class SessionCoreMixin(SessionBase):
         self._dispatch_lifecycle_hook(
             "onSessionStart", reason=reason, workspace_just_bootstrapped=workspace_just_bootstrapped,
             include_config=True)
-        self._start_workspace_event_watchers()
+        self._start_event_watchers_for(self.config.events)
 
-    def _start_workspace_event_watchers(self) -> None:
-        """Start this root session's `FileSystemModified` watcher and `Timer` scheduler, for
-        whichever of the two have `events` entries configured, and register their teardowns so
-        `close()` stops them -- called once `onSessionStart` fires (see
-        `fire_session_start_hook`), so trust is already settled and
-        `self._process_config.events` reflects whatever config layer the resolved workspace can
-        see."""
-        assert self._process_config is not None
-        fs_entries = cast(
-            "list[FileSystemModifiedEventConfig]",
-            self._process_config.events.get("FileSystemModified", []))
+    def _start_event_watchers_for(self, events: "dict[str, list[EventConfig]]") -> None:
+        """Start a `FileSystemWatcher`/`TimerScheduler` for whichever of `events`'
+        `FileSystemModified`/`Timer` entries are non-empty, registering each one's teardown
+        under a fresh, collision-free key so `close()` stops it. Safe to call more than once on
+        the same session with only the newly-added entries."""
+        if self._process_config is None:
+            return
+        fs_entries = cast("list[FileSystemModifiedEventConfig]", events.get("FileSystemModified", []))
         if fs_entries:
             from klorb.hooks.fs_events import FileSystemWatcher
             watcher = FileSystemWatcher(
                 self.config.workspace.path, fs_entries, dispatch=self._dispatch_fs_modified_event)
             watcher.start()
-            self.register_teardown("FileSystemWatcher", watcher.close)
-        timer_entries = cast("list[TimerEventConfig]", self._process_config.events.get("Timer", []))
+            self._event_watcher_seq += 1
+            self.register_teardown(f"FileSystemWatcher-{self._event_watcher_seq}", watcher.close)
+        timer_entries = cast("list[TimerEventConfig]", events.get("Timer", []))
         if timer_entries:
             from klorb.hooks.timer_events import TimerScheduler
             scheduler = TimerScheduler(
                 self.config.workspace.path, timer_entries, dispatch=self._dispatch_timer_event)
             scheduler.start()
-            self.register_teardown("TimerScheduler", scheduler.close)
+            self._event_watcher_seq += 1
+            self.register_teardown(f"TimerScheduler-{self._event_watcher_seq}", scheduler.close)
 
     def _dispatch_fs_modified_event(
         self, entries: "list[FileSystemModifiedEventConfig]", event_input: "EventInput",
@@ -985,7 +988,8 @@ class SessionCoreMixin(SessionBase):
             self.deliver_notice(output.log)
         if output.reset_session:
             assert output.message is not None
-            self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
+            if self.parent is None:
+                self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
             cast("Session", self).reset_session()
             cast("Session", self).deliver_event_message(output.message)
             return
@@ -993,15 +997,12 @@ class SessionCoreMixin(SessionBase):
             cast("Session", self).deliver_event_message(output.message)
 
     def fire_workspace_trust_changed_hook(self, reason: str) -> None:
-        """Dispatch `WorkspaceTrustChanged` for this root session -- called by the TUI's
-        `>Trust workspace` command (`reason="TrustCommand"`) or ACP's `_klorb/trustWorkspace`
-        (`reason="AcpTrustWorkspace"`) once `_apply_workspace_config` has already reloaded this
-        session's config against the newly-trusted workspace. A no-op for a subagent or a
-        session with no `ProcessConfig`, mirroring `fire_session_start_hook`'s own guard --
-        both callers only ever hold a reference to the root session in practice."""
-        if self.parent is not None or self._process_config is None:
+        """Dispatch `WorkspaceTrustChanged` for this session, reading its own `config.events`.
+        `reason` is `"TrustCommand"` or `"AcpTrustWorkspace"`. A no-op for a session with no
+        `ProcessConfig`."""
+        if self._process_config is None:
             return
-        entries = self._process_config.events.get("WorkspaceTrustChanged", [])
+        entries = self.config.events.get("WorkspaceTrustChanged", [])
         if not entries:
             return
         from klorb.hooks.dispatcher import HookDispatcher
@@ -1032,55 +1033,54 @@ class SessionCoreMixin(SessionBase):
             hook_name, reason=reason, workspace_trusted=self.config.workspace.trusted,
             workspace_just_bootstrapped=workspace_just_bootstrapped, config=config)
 
-    def _dispatch_hook(self, hook_name: str, **hook_input_kwargs: Any) -> "HookOutput":
-        """Dispatch `hook_name` against this session's own `ProcessConfig`/`SessionConfig`,
-        tagging the built `HookInput` with this session's `workspace`/`role`/`id` and passing
-        through `hook_input_kwargs` (e.g. `reason=`, `message=`, `tool_name=`) -- the shared
-        building block every hook-firing call site in `klorb.session.mixins` (turn dispatch,
-        tool execution, `_dispatch_lifecycle_hook` above) and `klorb.agents.policy` (subagent
-        lifecycle) goes through. Returns a default (`success=True`, no message) `HookOutput` if
-        this session has no `ProcessConfig` -- hooks are inert for a `Session` constructed
-        without one, e.g. most unit tests. Deferred imports: `klorb.hooks` doesn't depend on
-        `klorb.session`, but importing it at module level here would still be the wrong
-        direction for a mixin most callers construct without ever touching hooks."""
+    def _dispatch_hook(
+        self, hook_name: str, *, subject: "Session | None" = None, **hook_input_kwargs: Any,
+    ) -> "HookOutput":
+        """Dispatch `hook_name` against this session's own `ProcessConfig`/`SessionConfig` but
+        tag the built `HookInput`'s identifying fields (`workspace_root`/`role`/`session_id`/
+        `root_session_id`) with `subject` (defaulting to `self`) instead. This lets
+        `fire_subagent_start_hook`/`fire_subagent_turn_end_hook` below dispatch from the
+        *parent*'s own handler chain while still describing the *child* subagent the hook is
+        actually about. Passes through `hook_input_kwargs`."""
         from klorb.hooks.dispatcher import HookDispatcher
         from klorb.hooks.hook_api import HookInput, HookOutput
+
+        # Returns a default `HookOutput` if this session has no `ProcessConfig`. Hooks are inert
+        # for a `Session` constructed without one, e.g. most unit tests.
         if self._process_config is None:
             return HookOutput()
+        target = subject if subject is not None else cast("Session", self)
         output = HookDispatcher(
             self._process_config, api_provider=self._provider, model_registry=self._model_registry,
         ).dispatch(
             hook_name,
             HookInput(
-                hook=hook_name, workspace_root=str(self.config.workspace.path),
-                role=self.config.role_name, session_id=self.id, root_session_id=self.root_id,
+                hook=hook_name, workspace_root=str(target.config.workspace.path),
+                role=target.config.role_name, session_id=target.id, root_session_id=target.root_id,
                 **hook_input_kwargs),
             session_config=self.config)
         if output.log is not None:
             self.deliver_notice(output.log)
         return output
 
-    def fire_subagent_start_hook(self, message: str) -> str | None:
-        """Dispatch `onSubagentStart` for this subagent session, about to run its first (or
-        resumed) turn -- called by `klorb.agents.policy._run_subagent_turn`, mirroring
-        `onSubmitUserPrompt`'s message-rewrite/veto contract for the root session's own turns
-        (see `SessionTurnsMixin._dispatch_turn`). Returns the message to actually send: `message`
-        itself, unless the aggregate `HookOutput` set `message` (a rewrite) or `success=False`
-        (a veto, signaled by returning `None` -- the caller must not start the turn)."""
-        result = self._dispatch_hook("onSubagentStart", message=message)
+    def fire_subagent_start_hook(self, child: "Session", message: str) -> str | None:
+        """Dispatch `onSubagentStart` from this (parent) session's own `config.hooks`,
+        describing `child` about to run its first (or resumed) turn. Returns the message to
+        actually send: `message` itself, unless the aggregate `HookOutput` set `message` (a
+        rewrite) or `success=False` (a veto, signaled by returning `None`)."""
+        result = self._dispatch_hook("onSubagentStart", subject=child, message=message)
         if result.success is False:
             return None
         return result.message if result.message is not None else message
 
-    def fire_subagent_turn_end_hook(self, output: str) -> None:
-        """Dispatch `onSubagentTurnEnd` for this subagent session once its turn ends -- called by
-        `klorb.agents.policy._run_subagent_turn`, mirroring `onAgentTurnEnd`'s `chat`-handler
-        chaining for the root session's own turns (see `SessionTurnsMixin._dispatch_turn`): a
-        `message` in the aggregate `HookOutput` is delivered via `_deliver_chained_hook_message`
-        as a follow-up turn on this same subagent session, not on the parent that created it."""
-        result = self._dispatch_hook("onSubagentTurnEnd", message=output)
+    def fire_subagent_turn_end_hook(self, child: "Session", output: str) -> None:
+        """Dispatch `onSubagentTurnEnd` from this (parent) session's own `config.hooks`, once
+        `child`'s turn ends. A `message` in the aggregate `HookOutput` is delivered via
+        `child._deliver_chained_hook_message` as a follow-up turn on `child`'s own
+        conversation."""
+        result = self._dispatch_hook("onSubagentTurnEnd", subject=child, message=output)
         if result.message is not None:
-            self._deliver_chained_hook_message(result.message)
+            child._deliver_chained_hook_message(result.message)
 
     def close(self) -> None:
         """Persist a final `session.json` and release `session.lock` (see
@@ -1117,29 +1117,22 @@ class SessionCoreMixin(SessionBase):
 
     def reset_session(self) -> None:
         """Wipe this session's conversation and start it over in place, as if it were a freshly
-        constructed `Session` reusing the same `id`/on-disk directory -- `HookOutput.
-        reset_session`'s effect (see docs/specs/hooks-and-events.md's "Session reset" section).
-        Called by `close()` (an `onSessionEnd` result) and `SessionTurnsMixin.
-        _fire_agent_turn_end_hook` (an `onAgentTurnEnd` result).
+        constructed `Session` reusing the same `id`/on-disk directory.
 
         Cascade-closes any live subagents first (their relayed output lands in `self._messages`
         only to be wiped a moment later by `_reset_state()`, same as a real `close()` would
-        capture it first). Reinitializes `config` from `ProcessConfig.session`'s template (a
-        no-op without a `ProcessConfig`, e.g. most unit tests) -- unlike `_reset_state()`, which
-        leaves `config` and everything derived from it alone, since `__init__`'s own call to
-        `_reset_state()` must not clobber a caller-supplied `config` (a restored session, a
-        subagent's inherited one).
+        capture it first). For a root session, reinitializes `config` from `ProcessConfig.
+        session`'s template. A subagent's `config` is left untouched entirely.
 
         Does not deliver the reset's continuation message itself -- the two callers have
         different hosts (or none) available to deliver it to, so each does that separately
         after calling this."""
         from klorb.agents.runtime import cascade_close_subagents
         cascade_close_subagents(cast("Session", self))
-        if self._process_config is not None:
+        if self._process_config is not None and self.parent is None:
             self.config = self._process_config.session.model_copy()
-            if self.parent is None:
-                self.config.permission_framework_state = PermissionFrameworkState(
-                    value=self.config.permission_framework_state.value)
+            self.config.permission_framework_state = PermissionFrameworkState(
+                value=self.config.permission_framework_state.value)
             self._role = get_role(self.config.role_name)
             self._system_prompt = SystemPrompt(
                 self.config, self._role, self._model_registry, self._process_config)

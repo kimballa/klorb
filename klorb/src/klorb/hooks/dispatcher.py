@@ -12,6 +12,7 @@ from klorb.hooks.bash_handler import run_bash_handler
 from klorb.hooks.classifier_handler import run_classifier_handler
 from klorb.hooks.config import (
     HOOK_FILTER_SUBJECT_FIELDS,
+    PROCESS_SCOPED_HOOK_NAMES,
     RESET_SESSION_CAPABLE_HOOKS,
     EventConfig,
     HookConfig,
@@ -95,15 +96,27 @@ class HookDispatcher:
         """Run every eligible handler configured for `hook_name`, in the order
         `klorb.process_config.load_process_config` already resolved, folding each valid
         `HookOutput` into the next handler's `HookInput` (its `message`/`tool_args`) and into
-        the aggregate result returned here. A handler is skipped. `session_config` sandboxes a
-        `bash` handler with a live session's permission tables when one exists; otherwise falls
-        back to `ProcessConfig.session`, the template every fresh session is copied from.
+        the aggregate result returned here. A handler is skipped.
+
+        `hook_name` in `PROCESS_SCOPED_HOOK_NAMES` is looked up on `ProcessConfig.hooks`;
+        every other name is looked up on `session_config.hooks`, which must be given.
+        `session_config` also sandboxes a `bash` handler with a live session's permission
+        tables; for a process-scoped hook fired with no session yet
+        (`onProcessStart`/`onProcessEnd`), falls back to `ProcessConfig.session`, the template
+        every fresh session is copied from.
         """
-        handlers = self._process_config.hooks.get(hook_name, [])
+        if hook_name in PROCESS_SCOPED_HOOK_NAMES:
+            handlers = self._process_config.hooks.get(hook_name, [])
+            sandbox_config = session_config if session_config is not None else self._process_config.session
+        else:
+            if session_config is None:
+                raise ValueError(
+                    f"session_config is required to dispatch session-scoped hook {hook_name!r}.")
+            handlers = session_config.hooks.get(hook_name, [])
+            sandbox_config = session_config
         logger.debug("Dispatching hook %r (%d configured handler(s))", hook_name, len(handlers))
         if not handlers:
             return HookOutput()
-        sandbox_config = session_config if session_config is not None else self._process_config.session
         return self._run_chain(hook_name, handlers, hook_input, sandbox_config)
 
     def dispatch_event(
@@ -111,14 +124,15 @@ class HookDispatcher:
         session_config: SessionConfig | None = None,
     ) -> HookOutput:
         """Run each of `entries`' own `action` as one ordered chain. `entries` is whatever
-        subset of `ProcessConfig.events[event_name]` the caller has already decided is eligible
-        for this occurrence."""
+        subset of `session_config.events[event_name]` the caller has already decided is
+        eligible for this occurrence."""
         logger.debug("Dispatching event %r (%d configured handler(s))", event_name, len(entries))
         if not entries:
             return HookOutput()
-        sandbox_config = session_config if session_config is not None else self._process_config.session
+        if session_config is None:
+            raise ValueError(f"session_config is required to dispatch event {event_name!r}.")
         handlers = list(map(lambda entry: entry.action, entries))
-        return self._run_chain(event_name, handlers, event_input, sandbox_config)
+        return self._run_chain(event_name, handlers, event_input, session_config)
 
     def _run_chain(
         self, name: str, handlers: list[HookConfig], hook_input: HookInput,

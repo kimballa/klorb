@@ -17,7 +17,14 @@ from typing import Any, cast
 from pydantic import BaseModel, Field
 
 from klorb.config_macros import MacroExpansionError, expand_macros, resolve_macro_values
-from klorb.hooks.config import EVENT_CONFIG_MODELS, HOOK_NAMES, EventConfig, HookConfig, TimerEventConfig
+from klorb.hooks.config import (
+    EVENT_CONFIG_MODELS,
+    HOOK_NAMES,
+    PROCESS_SCOPED_HOOK_NAMES,
+    EventConfig,
+    HookConfig,
+    TimerEventConfig,
+)
 from klorb.hooks.merge import concatenate_named_handler_lists, parse_handler_list
 from klorb.hooks.timer_events import clamp_timer_intervals
 from klorb.json_error_display import format_json_error_context
@@ -311,12 +318,16 @@ headlessly), resolved by `klorb.cli.main()` — see docs/specs/permissions.md an
 absent: the operating role is set by code (defaulting to the operator role), never by a
 config file — see docs/specs/roles-and-system-prompts.md.
 `readDirs`/`writeDirs`/`readFiles`/`writeFiles`/`commandRules`/`skillRules`/`webDomains`/
-`bashDomains`/`shareEnv`/`setEnv` are also deliberately absent — lists and maps like `readDirs`
-and `shareEnv` are merged (by list concatenation, or key-by-key for `setEnv`, where a later
-layer's value for the same key replaces an earlier layer's) rather than the 1:1 scalar
-replacement `_route_keys()` implements, so `load_process_config()` handles all nine separately,
-ahead of `_route_keys()` — see docs/specs/permissions.md and docs/specs/skills.md and
-docs/specs/bash-tool-and-command-permissions.md. `workspace` is deliberately absent too:
+`bashDomains`/`shareEnv`/`setEnv`/`hooks`/`events` are also deliberately absent — lists and maps
+like `readDirs` and `shareEnv` are merged (by list concatenation, or key-by-key for `setEnv`,
+where a later layer's value for the same key replaces an earlier layer's) rather than the 1:1
+scalar replacement `_route_keys()` implements, so `load_process_config()` handles all twelve
+separately, ahead of `_route_keys()` — see docs/specs/permissions.md and docs/specs/skills.md and
+docs/specs/bash-tool-and-command-permissions.md. `sessionDefaults.hooks`/`.events` are
+session-scoped-names-only (a process-scoped name here is a config error, dropped with a
+`config_warnings` entry) and concatenate onto whatever the top-level `hooks`/`events` keys'
+own session-scoped portion already contributed — see docs/specs/hooks-and-events.md. `workspace`
+is deliberately absent too:
 it has no on-disk key at all, by design — see `SessionConfig.workspace`/
 docs/specs/projects-and-trust.md — a project must never be able to grant itself trust via its
 own config file.
@@ -379,7 +390,6 @@ PROCESS_KEY_MAP: dict[str, str] = {
     THEME_CONFIG_KEY: "theme",
     SIDEBAR_CONFIG_KEY: "sidebar",
     "hooks": "hooks",
-    "events": "events",
 }
 """Maps each recognized top-level `klorb-config.json` key (outside `sessionDefaults`) to the
 process-only `ProcessConfig` attribute it sets."""
@@ -597,16 +607,13 @@ class ProcessConfig(BaseModel):
     """Whether `WorkspaceIndexer` also covers the `skills-user`/`skills-workspace`/
     `skills-internal` catalogs `SearchSkills` draws its semantic hits from."""
     hooks: dict[str, list[HookConfig]] = Field(default_factory=dict)
-    """Handler lists keyed by hook name (`onProcessStart`, `onSessionStart`, ...), merged
-    across the config-layer stack by named-list concatenation — a later layer's handlers for a
-    given hook name are appended to, never replace, an earlier layer's for that same name.
-    Empty by default, so hooks are inert unless explicitly configured. See
-    `klorb.hooks.config.HOOK_NAMES`."""
-    events: dict[str, list[EventConfig]] = Field(default_factory=dict)
-    """Handler lists keyed by event name (`FileSystemModified`, `Timer`,
-    `WorkspaceTrustChanged`), merged the same named-list-concatenate way as `hooks`. Each
-    list's entries are the `EventConfig` subclass `klorb.hooks.config.EVENT_CONFIG_MODELS`
-    maps that event name to. Empty by default."""
+    """Handler lists for `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES` only (`onProcessStart`,
+    `onProcessEnd`, `onSessionStart`, `onSessionEnd`) — these fire before any session exists, or
+    describe a session's own lifetime boundary, so their configuration stays process-wide rather
+    than moving to `SessionConfig` like every other hook name does. Merged across the
+    config-layer stack by named-list concatenation — a later layer's handlers for a given hook
+    name are appended to, never replace, an earlier layer's for that same name. Empty by
+    default, so hooks are inert unless explicitly configured."""
     config_warnings: list[str] = Field(default_factory=list)
     """Human-readable messages describing any config layer `load_process_config()` had to skip
     over while assembling this `ProcessConfig` — today, only a layer whose file isn't valid
@@ -925,15 +932,19 @@ def process_config_to_disk_dict(process_config: ProcessConfig) -> dict[str, Any]
         value = getattr(process_config, attr_name, None)
         result[on_disk_key] = value
 
-    # hooks/events hold pydantic model instances, not plain JSON-serializable values, so
-    # they're re-serialized here rather than left as the raw `getattr` result above.
+    # hooks/events hold pydantic model instances, so they're re-serialized here. `ProcessConfig.
+    # hooks` holds only the 4 process-scoped names; every other name lives on
+    # `process_config.session` instead, so both sources merge into the same top-level `hooks`/
+    # `events` keys. A merged list can't be separated back into its original
+    # top-level-vs-`sessionDefaults` source.
+    hooks_by_name = {**process_config.session.hooks, **process_config.hooks}
     result["hooks"] = {
-        name: [handler.model_dump(exclude_none=True, by_alias=True) for handler in handlers]
-        for name, handlers in process_config.hooks.items()
+        name: [handler.model_dump(exclude_defaults=True, by_alias=True) for handler in handlers]
+        for name, handlers in hooks_by_name.items()
     }
     result["events"] = {
-        name: [handler.model_dump(exclude_none=True, by_alias=True) for handler in handlers]
-        for name, handlers in process_config.events.items()
+        name: [handler.model_dump(exclude_defaults=True, by_alias=True) for handler in handlers]
+        for name, handlers in process_config.session.events.items()
     }
 
     # Session defaults.
@@ -1075,6 +1086,10 @@ def load_process_config(
     replaces an earlier layer's, same as `dict.update` but scoped to this one nested object
     rather than the whole `sessionDefaults` dict) — see
     docs/specs/bash-tool-and-command-permissions.md.
+    `sessionDefaults.hooks`/`.events` are also concatenated across layers by name, and further
+    concatenated with the top-level `hooks`/`events` keys' own session-scoped portion (top-level
+    entries first) into the final `SessionConfig.hooks`/`.events` a fresh root session starts
+    with — see docs/specs/hooks-and-events.md.
 
     `workspace` identifies the current project root and whether it's trusted — see
     `klorb.workspace.Workspace` and docs/specs/projects-and-trust.md. When omitted (the common
@@ -1113,6 +1128,8 @@ def load_process_config(
     merged_set_env: dict[str, str] = {}
     concatenated_hooks: dict[str, list[HookConfig]] = {}
     concatenated_events: dict[str, list[EventConfig]] = {}
+    concatenated_session_hooks: dict[str, list[HookConfig]] = {}
+    concatenated_session_events: dict[str, list[EventConfig]] = {}
 
     def merge_layer(loaded_layer: LoadedConfigLayer) -> None:
         layer = _expand_config_layer_macros(
@@ -1147,6 +1164,24 @@ def load_process_config(
                     concatenated_bash_domains[category].append(entry)
         concatenated_share_env.extend(session_layer.pop("shareEnv", None) or [])
         merged_set_env.update(session_layer.pop("setEnv", None) or {})
+        layer_session_hooks = session_layer.pop("hooks", None) or {}
+        for bad_name in sorted(PROCESS_SCOPED_HOOK_NAMES.intersection(layer_session_hooks)):
+            message = (
+                f"{loaded_layer.source_label} (sessionDefaults.hooks): {bad_name!r} is a "
+                "process-scoped hook and may only be configured via the top-level hooks key; "
+                "ignoring.")
+            logger.warning(message)
+            config_warnings.append(message)
+            del layer_session_hooks[bad_name]
+        _merge_named_handlers_layer(
+            layer_session_hooks, model_for_name=lambda name: HookConfig if name in HOOK_NAMES else None,
+            accumulator=concatenated_session_hooks,
+            source_label=f"{loaded_layer.source_label} (sessionDefaults)", warnings=config_warnings)
+        layer_session_events = session_layer.pop("events", None) or {}
+        _merge_named_handlers_layer(
+            layer_session_events, model_for_name=EVENT_CONFIG_MODELS.get,
+            accumulator=concatenated_session_events,
+            source_label=f"{loaded_layer.source_label} (sessionDefaults)", warnings=config_warnings)
         merged_session_defaults.update(session_layer)
         layer_hooks = layer.pop("hooks", None) or {}
         _merge_named_handlers_layer(
@@ -1176,6 +1211,23 @@ def load_process_config(
     merge_layer(LoadedConfigLayer(
         contents=_load_saved_session_overrides(cwd), text="", source_label="saved-session-overrides"))
 
+    # Split the top-level `hooks` key's merged entries by name: `PROCESS_SCOPED_HOOK_NAMES`
+    # stays process-wide (`ProcessConfig.hooks`); every other name is session-scoped and
+    # concatenates onto the `sessionDefaults.hooks` source for that same name (top-level
+    # entries first, `sessionDefaults`'s own appended after). Every event name is
+    # session-scoped, so `events` concatenates unconditionally.
+    process_scoped_hooks: dict[str, list[HookConfig]] = {}
+    session_scoped_top_hooks: dict[str, list[HookConfig]] = {}
+    for name, handlers in concatenated_hooks.items():
+        target = process_scoped_hooks if name in PROCESS_SCOPED_HOOK_NAMES else session_scoped_top_hooks
+        target[name] = handlers
+    final_session_hooks: dict[str, list[HookConfig]] = {}
+    concatenate_named_handler_lists(final_session_hooks, session_scoped_top_hooks)
+    concatenate_named_handler_lists(final_session_hooks, concatenated_session_hooks)
+    final_session_events: dict[str, list[EventConfig]] = {}
+    concatenate_named_handler_lists(final_session_events, concatenated_events)
+    concatenate_named_handler_lists(final_session_events, concatenated_session_events)
+
     session_overrides = _route_keys(merged_session_defaults, SESSION_KEY_MAP)
     session_overrides["read_dirs"] = DirRules(**concatenated_read_dirs)
     session_overrides["write_dirs"] = DirRules(**concatenated_write_dirs)
@@ -1188,9 +1240,10 @@ def load_process_config(
     session_overrides["share_env"] = concatenated_share_env
     session_overrides["set_env"] = merged_set_env
     session_overrides["workspace"] = workspace
+    session_overrides["hooks"] = final_session_hooks
+    session_overrides["events"] = final_session_events
     process_overrides = _route_keys(merged, PROCESS_KEY_MAP)
-    process_overrides["hooks"] = concatenated_hooks
-    process_overrides["events"] = concatenated_events
+    process_overrides["hooks"] = process_scoped_hooks
     logger.debug(
         "load_process_config: merged readDirs=%s writeDirs=%s readFiles=%s writeFiles=%s "
         "(deny/ask/allow counts) for workspace %s",

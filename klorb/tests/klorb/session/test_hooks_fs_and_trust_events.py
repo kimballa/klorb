@@ -41,8 +41,9 @@ def _process_config(
     session = make_session_config(
         workspace=Workspace(path=workspace_root, trusted=True),
         read_dirs=DirRules(allow=[workspace_root]),
-        write_dirs=DirRules(allow=[workspace_root]))
-    return ProcessConfig(session=session, events=events)
+        write_dirs=DirRules(allow=[workspace_root]),
+        events=events)
+    return ProcessConfig(session=session)
 
 
 def _reply(content: str = "model reply") -> ProviderResponse:

@@ -20,6 +20,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import PermissionAskContext, PermissionDecision, Session, SessionConfig, TurnEventHandlers
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.skill import catalog as skill_catalog
+from klorb.tools.skill.model import Skill
 from klorb.workspace import Workspace
 
 
@@ -62,12 +63,12 @@ def _session(
     ws.mkdir(exist_ok=True)
     config = make_session_config(
         model="some/model", workspace=Workspace(path=ws, trusted=trusted),
-        skill_rules=skill_rules if skill_rules is not None else SkillRules())
+        skill_rules=skill_rules if skill_rules is not None else SkillRules(),
+        hooks=hooks if hooks is not None else {})
     return Session(
         config,
         provider=provider if provider is not None else MagicMock(),
-        process_config=ProcessConfig(
-            compatibility_claude_skills=claude_skills, hooks=hooks if hooks is not None else {}))
+        process_config=ProcessConfig(compatibility_claude_skills=claude_skills))
 
 
 def _workspace_skills(session: Session) -> Path:
@@ -763,3 +764,62 @@ def test_onactivateskill_hook_sees_is_user_activated_for_the_leading_mention_fas
     content = _user_content(session)
     assert '<SystemInterjection subject="UserSkillActivation">' in content
     assert "the exact steps" in content
+
+
+# --- grant_skill_hooks / grant_skill_events ---
+
+
+def _skill_with_metadata(tmp_path: Path, klorb_metadata: dict) -> Skill:
+    root = _write_skill(tmp_path / "skills", "do-thing", "does the thing")
+    return Skill(
+        namespace="workspace", name="do-thing", description="does the thing",
+        raw={"metadata": {"klorb": klorb_metadata}}, aliases=set(), root=root)
+
+
+def test_grant_skill_hooks_merges_into_session_config_hooks(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
+    skill = _skill_with_metadata(tmp_path, {
+        "hooks": {"onToolUse": [{"type": "chat", "prompt": "granted"}]},
+    })
+
+    session.grant_skill_hooks(skill)
+
+    assert [h.prompt for h in session.config.hooks["onToolUse"]] == ["granted"]
+
+
+def test_grant_skill_hooks_is_idempotent_per_skill_per_session(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
+    skill = _skill_with_metadata(tmp_path, {
+        "hooks": {"onToolUse": [{"type": "chat", "prompt": "granted"}]},
+    })
+
+    session.grant_skill_hooks(skill)
+    session.grant_skill_hooks(skill)
+
+    assert len(session.config.hooks["onToolUse"]) == 1
+
+
+def test_grant_skill_events_starts_a_watcher_and_is_idempotent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    session = _session(tmp_path, make_session_config)
+    started: list[dict] = []
+    session._start_event_watchers_for = lambda events: started.append(events)  # type: ignore[method-assign]
+    skill = _skill_with_metadata(tmp_path, {
+        "events": {
+            "FileSystemModified": [
+                {"watch": "src/", "action": {"type": "chat", "prompt": "changed"}},
+            ],
+        },
+    })
+
+    session.grant_skill_events(skill)
+    session.grant_skill_events(skill)
+
+    assert len(session.config.events["FileSystemModified"]) == 1
+    # Only started once, for the single (first) grant.
+    assert len(started) == 1

@@ -6,7 +6,7 @@ gate whether a handler is eligible to run, and the event-specific config shapes
 """
 
 import re
-from typing import Literal
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -24,6 +24,12 @@ RESET_SESSION_CAPABLE_HOOKS: frozenset[str] = frozenset({
     "onAgentTurnEnd", "FileSystemModified", "Timer", "WorkspaceTrustChanged",
 })
 """Every hook/event name whose `HookOutput.reset_session` `HookDispatcher` honors."""
+
+PROCESS_SCOPED_HOOK_NAMES: frozenset[str] = frozenset({
+    "onProcessStart", "onProcessEnd", "onSessionStart", "onSessionEnd",
+})
+"""Hook names whose handler configuration lives on `ProcessConfig.hooks`, never
+`SessionConfig.hooks`. Every other hook name, and every event name, is session-scoped."""
 
 MIN_EVENT_DEBOUNCE_SECONDS: float = 10.0
 """The default debounce window `FileSystemModified`'s watcher waits after the most recent
@@ -88,8 +94,11 @@ class HookConfigFilter(BaseModel):
 class HookConfig(BaseModel):
     """One handler entry in a `hooks` config list (or an event's `action`): `type` selects how
     it runs (`bash` via `shell`/`command`, `classifier`/`chat` via `prompt`), `name` tells it
-    apart from other entries in the same list, and `filter` gates whether it's eligible.
-    """
+    apart from other entries in the same list, `filter` gates whether it's eligible, and
+    `is_heritable` (default `True`) governs whether a subagent's `SessionConfig` keeps this
+    entry when it's created from a parent's."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     type: HookHandlerType
     shell: str | None = None
@@ -97,13 +106,17 @@ class HookConfig(BaseModel):
     prompt: str | None = None
     name: str | None = None
     filter: HookConfigFilter | None = None
+    is_heritable: bool = Field(default=True, alias="isHeritable")
 
 
 class EventConfig(BaseModel):
     """Base shape for every event-specific config below: the `action` (a `HookConfig`)
-    run when the event fires."""
+    run when the event fires, and `is_heritable` (default `False`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     action: HookConfig
+    is_heritable: bool = Field(default=False, alias="isHeritable")
 
 
 class FileSystemModifiedEventConfig(EventConfig):
@@ -133,3 +146,27 @@ EVENT_CONFIG_MODELS: dict[str, type[EventConfig]] = {
 }
 """Maps each `EVENT_NAMES` entry to the `EventConfig` subclass its handler-list entries are
 parsed as."""
+
+_H = TypeVar("_H", HookConfig, EventConfig)
+
+
+def _filter_heritable(handlers: dict[str, list[_H]]) -> dict[str, list[_H]]:
+    """Shared body for `filter_heritable_hooks`/`filter_heritable_events`: a new dict holding
+    only each name's `is_heritable=True` entries, dropping a name left with none."""
+    result: dict[str, list[_H]] = {}
+    for name, entries in handlers.items():
+        heritable = list(filter(lambda entry: entry.is_heritable, entries))
+        if heritable:
+            result[name] = heritable
+    return result
+
+
+def filter_heritable_hooks(hooks: dict[str, list[HookConfig]]) -> dict[str, list[HookConfig]]:
+    """The subset of `hooks` a subagent's `SessionConfig` should inherit from its parent's: only
+    each name's `is_heritable=True` entries, dropping any name left with none."""
+    return _filter_heritable(hooks)
+
+
+def filter_heritable_events(events: dict[str, list[EventConfig]]) -> dict[str, list[EventConfig]]:
+    """`filter_heritable_hooks`'s counterpart for `events`."""
+    return _filter_heritable(events)

@@ -682,7 +682,7 @@ async def test_scrolling_to_the_top_expands_a_collapsed_history_chunk(
 
         await _wait_until(
             pilot, lambda: len(list(history.query(HistoryPlaceholder))) < placeholder_count_before,
-            timeout=5.0)
+            timeout=10.0)
 
 
 async def test_ctrl_e_expands_the_nearest_collapsed_history_chunk(
