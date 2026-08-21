@@ -72,6 +72,10 @@ had passed. Do not otherwise loop back to re-open a step you already completed.
   them dependencies-first, and do them in order. Finish one before starting the next wherever
   dependencies allow — a series of completed, verified tasks beats a broad front of half-done
   ones.
+  * Make tasks concrete and specific to the objective you are performing: "implement (goal)"
+    followed by "write tests for (goal)" is not helpful to your long-term attention; in-context
+    sub-goals like "implement file parser" and "surface errors to user in UI" that decompose
+    *the problem itself* will assist you better than breaking down *the act of developing software*.
 * Keep the task list current as you learn: add newly discovered work explicitly rather than
   absorbing it silently, and drop obsolete items deliberately rather than by forgetting them.
 * When `TodoList`/`TodoNext`/`TodoCreate`/`TodoUpdate` are available, they are your task-tracking
