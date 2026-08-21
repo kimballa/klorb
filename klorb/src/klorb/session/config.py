@@ -2,10 +2,11 @@
 """`SessionConfig`: per-`Session` configuration set once at startup from parsed CLI arguments."""
 
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializeAsAny, field_validator
 
-from klorb.hooks.config import EventConfig, HookConfig
+from klorb.hooks.config import EVENT_CONFIG_MODELS, EventConfig, HookConfig
 from klorb.openrouter import DEFAULT_MODEL
 from klorb.permissions.command_access import CommandRules
 from klorb.permissions.directory_access import DirRules
@@ -144,9 +145,29 @@ class SessionConfig(BaseModel):
     `klorb.hooks.config.PROCESS_SCOPED_HOOK_NAMES`. Populated from `klorb-config.json`'s
     top-level `hooks`/`sessionDefaults.hooks` keys and skill `metadata.klorb.hooks` grants. A
     subagent inherits only this dict's `is_heritable=True` entries from its parent."""
-    events: dict[str, list[EventConfig]] = Field(default_factory=dict)
+    events: dict[str, list[SerializeAsAny[EventConfig]]] = Field(default_factory=dict)
     """Handler lists keyed by event name; every event name is session-scoped. Same population
     sources and `is_heritable`-filtered subagent inheritance as `hooks`."""
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _resolve_event_subclasses(cls, value: Any) -> Any:
+        """Reconstruct each `events` entry as its `EVENT_CONFIG_MODELS` subclass by dict key, so
+        a JSON-validated session recovers `watch`/`interval_minutes`/etc. instead of collapsing
+        every entry to the base `EventConfig` shape."""
+        if not isinstance(value, dict):
+            return value
+        result: dict[str, Any] = {}
+        for name, entries in value.items():
+            model = EVENT_CONFIG_MODELS.get(name)
+            if model is None or not isinstance(entries, list):
+                result[name] = entries
+                continue
+            result[name] = [
+                entry if isinstance(entry, EventConfig) else model.model_validate(entry)
+                for entry in entries
+            ]
+        return result
     granted_skill_hook_event_ids: set[SkillId] = Field(default_factory=set)
     """Which skills' `metadata.klorb.hooks`/`.events` have already been granted into `hooks`/
     `events` this session, so a re-activated skill isn't re-registered. Never persisted."""
