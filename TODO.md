@@ -12,7 +12,7 @@
 
 ### Feature backlog
 
-* One-shot timer events
+* (#agent) One-shot timer events
   * Events for the session can be one-shot.
   * Add a `WakeUpTimer(delay_seconds, self_prompt)` tool to let an agent create an event for
     later in its session. (Bound 60 <= delay_seconds <= 3600)
