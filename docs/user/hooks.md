@@ -262,7 +262,7 @@ Every field is optional — omit anything you have no opinion on, and it won't a
 | `permission` | `allow`\|`ask`\|`deny` \| null | `null` | `onToolUse`, `onActivateSkill` | |
 | `message` | string \| null | `null` | `onSubmitUserPrompt` (rewrite); `onAgentTurnEnd` / `onSubagentTurnEnd` / events (next prompt); with any `success: false` (denial feedback) | Multi-purpose |
 | `tool_result` | string \| null | `null` | `onToolResult` | Replaces the tool call's result content . |
-| `interrupt` | bool | `false` | Any hook/event that also sets `message` | Breaks into an in-flight turn immediately rather than waiting for turn end. (Not yet implemented) |
+| `interrupt` | bool | `false` | Any hook/event that also sets `message` | Breaks into an in-flight turn immediately rather than waiting for turn end. Only acted on alongside `reset_session` today (see "Session reset" below); elsewhere it's accepted but has no effect. |
 | `reset_session` | bool | `false` | `onAgentTurnEnd`, `Timer`/`FileSystemModified`/`WorkspaceTrustChanged` events | Wipes the conversation and starts it over in place (same session id/directory), seeded with `message`. See "Session reset" below. |
 
 If more than one handler runs in a chain for the same firing, each handler's `HookOutput` feeds
@@ -302,6 +302,14 @@ shell/scratchpad are torn down and recreated fresh. Only `onAgentTurnEnd` and th
 When an `onAgentTurnEnd` handler triggers a reset on a root session, `onSessionEnd` is also
 dispatched first, with `reason: "ResetSession"` — `onSessionEnd` never applies to a subagent, so
 this doesn't happen for one.
+
+A `reset_session` from one of the event hooks can arrive while the firing session's own turn is
+still running. Without `interrupt`, that reset is dropped rather than applied underneath the
+running turn — it doesn't queue for later, so a `Timer`/`FileSystemModified`/
+`WorkspaceTrustChanged` handler that wants a reset to actually happen every time it fires should
+set `interrupt: true`. With `interrupt: true`, klorb cancels the in-flight turn, waits for it to
+unwind, and then resets — the same outcome as if you'd pressed Escape and submitted a new prompt
+yourself.
 
 An `onAgentTurnEnd` reset handler should have a `filter` or be conditional within the handler
 script. The reset conversation's own first turn can end and trigger the hook again, and

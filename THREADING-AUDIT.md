@@ -69,6 +69,14 @@ These are already fixed on this branch; listed so a reader knows they are not op
 * **`WaitForSubagent` ignored a message queued before it started.** It cleared
   `_user_msg_event` on entry, discarding the signal for an already-queued message, then blocked.
   It now checks the queue itself after clearing the event.
+* **`reset_session()` could fire mid-turn from a timer/FS thread with no guard.** A running turn
+  kept appending into a conversation `_reset_state()` had just rebound to a fresh list.
+  `_deliver_or_reset_event` now gates every `reset_session` through `_prepare_reset_session`:
+  `interrupt` false drops the reset while a turn is in flight, true sets that turn's
+  `cancel_event` and waits for it to unwind first, the same as an Escape-then-new-prompt. The new
+  `Session._messages_lock` guards the `_current_turn_handlers`/`active_cancel_event` transition
+  at the start/end of `_dispatch_turn` against this decision, and is available for findings 1 and
+  5 below to build on.
 
 ## Open findings
 
@@ -77,55 +85,7 @@ These are already fixed on this branch; listed so a reader knows they are not op
 *by saying nothing; in other cases the user replies in "User's response", which should be taken*
 *as superseding the recommendation in "Claude's fix."*
 
-### 1. `reset_session()` fires from a timer/FS thread with no in-flight-turn guard
-
-**Severity: high.** This is the clearest remaining instance of the "orphan agent keeps writing
-into the live session" family.
-
-`hooks.dispatcher` can return `HookOutput.reset_session`, and
-`SessionCoreMixin._deliver_or_reset_event` (`klorb/src/klorb/session/mixins/core.py:996`) acts on
-it unconditionally:
-
-```python
-if output.reset_session:
-    cast("Session", self).reset_session()
-    cast("Session", self).deliver_event_message(output.message)
-```
-
-`_deliver_or_reset_event` runs on thread 9 (the FS-watcher's debounce `Timer`) or thread 10 (a
-`TimerScheduler` timer). `reset_session()` calls `_reset_state()`, which rebinds
-`self._messages = []`.
-
-Interleaving:
-
-1. Thread 2 is inside `_dispatch_turn`, holding a local reference to `user_message` and
-   streaming into a placeholder `Message`.
-2. A `FileSystemModified` handler returns `reset_session`. Thread 9 calls `reset_session()`,
-   which rebinds `self._messages` to a fresh empty list.
-3. Thread 2's next `self._messages.append(...)` lands in the **new** list. The turn's
-   `tool_use`/`tool_response` messages from before the reset are gone, but its assistant
-   placeholder is now message #0 of what is supposed to be a blank conversation.
-4. Thread 2 finishes and returns its response text to `_finish_turn`, which renders it into a
-   history the reset was supposed to have cleared.
-
-`_dispatch_event_entries` already computes `event_input.is_agent_active =
-self.current_turn_handlers() is not None` and hands it to the hook — the harness knows whether a
-turn is live, it just does not act on it.
-
-**Claude's Fix direction:** treat a `reset_session` arriving mid-turn the same way a queued message is
-treated — defer it to the turn boundary rather than applying it under the running turn. Either
-queue the reset for the host's drain point, or have `_deliver_or_reset_event` refuse and log when
-`current_turn_handlers() is not None`. `_reset_state()` rebinding `_messages` should additionally
-assert no turn is in flight, so a future caller cannot reintroduce this.
-
-**User's response:** This plan is true if `interrupt` is false. If `interrupt` is true, we should
-treat the reset_session + message with interrupt semantics as if the user pressed ^C to cancel the
-current agent turn, reset the session, and provided a new prompt. We had not yet implemented `interrupt`
-but we should respect the flag, at least for the `reset_session=True` cases.
-
-This should rely on a `Session._messages_lock` that also gets used with #2 and #6.
-
-### 2. The session-naming thread serializes messages the turn thread is still streaming into
+### 1. The session-naming thread serializes messages the turn thread is still streaming into
 
 **Severity: high.** Hits the first turn of every fresh session, which is why it would present as
 intermittent corruption of new sessions specifically.
@@ -153,13 +113,14 @@ from thread 1 via `_update_status_bar`) sum a list thread 2 is appending to.
 deep-copy (or `model_copy`) any message whose `processing_state == "started_receipt"` before
 serializing. The cheapest correct version is for `_write_session_state_and_touch` to build its
 own list of `for_persistence()` results while holding a messages lock that `_send_and_receive`
-also takes around placeholder mutation. Introducing a `Session._messages_lock` also gives
-findings 1 and 6 somewhere to hang.
+also takes around placeholder mutation. `Session._messages_lock` already exists for this — the
+`reset_session`/`interrupt` fix above introduced it to guard `_current_turn_handlers`'s
+transition — and finding 5 below can hang off it too.
 
 **User's response:** Agree that a Session._messages_lock is the missing key to a LOT of this and is
 long-overdue to install.
 
-### 3. `clear_session()` replaces the session out from under a running turn
+### 2. `clear_session()` replaces the session out from under a running turn
 
 **Severity: high.** This is the other half of the orphan-agent family, and the one most likely to
 be what produces "two widgets populating at once".
@@ -197,7 +158,7 @@ new turn. Abort the current one first as if we ^C'd. Wait for that abort to be p
 new one. (Because the user could have just killed the whole process and restarted `klorb --new`. They
 want a clear session. Get there.)
 
-### 4. `Session.close()` runs a multi-second cascade on the event-loop thread
+### 3. `Session.close()` runs a multi-second cascade on the event-loop thread
 
 **Severity: medium-high.** Can trip the liveness watchdog and force-exit a healthy process.
 
@@ -226,7 +187,7 @@ the notification to quit basically simultaneously. We should wait max 5 seconds 
 *all* of them, collectively. If that's too crazy to orchestrate, clamp on
 _SHUTDOWN_JOIN_TIMEOUT_SECONDS, maybe 2 seconds?
 
-### 5. An ACP `session/cancel` is silently dropped between chained turns
+### 4. An ACP `session/cancel` is silently dropped between chained turns
 
 **Severity: medium.**
 
@@ -246,7 +207,7 @@ The TUI does not have this bug because `ReplApp._cancel_event` is app-owned and 
 `TurnBridge.run_turn` check it before starting each chained iteration, rather than relying on a
 per-turn attribute that is `None` exactly at the boundary where a cancel is most likely to land.
 
-### 6. `SubagentHandle`'s `state`/`output` pair is published non-atomically
+### 5. `SubagentHandle`'s `state`/`output` pair is published non-atomically
 
 **Severity: medium-low.**
 
@@ -272,9 +233,10 @@ the same commit that THREADING-AUDIT.md was authored. Can we reuse that? (Maybe 
 _protected class, but should be more broadly available... dunno if it should actually be defined
 where it is, in that case, or someplace more-universally-accessible.)
 
-This should rely on a `Session._messages_lock` that also gets used with #1 and #2.
+This should rely on `Session._messages_lock`, already introduced for the `reset_session`/
+`interrupt` fix and finding 1's session-naming fix above.
 
-### 7. `_apply_workspace_config` rewrites live config while a turn reads it
+### 6. `_apply_workspace_config` rewrites live config while a turn reads it
 
 **Severity: medium-low.**
 
@@ -302,7 +264,7 @@ be problematic to be stuck with the old session config? Or would they know to us
 always go back to `session.config` rather than keeping their own maybe-stale `_session_config`
 field?
 
-### 8. `Session._next_child_index` increments without synchronization
+### 7. `Session._next_child_index` increments without synchronization
 
 **Severity: low.** Display-only.
 
@@ -351,7 +313,7 @@ class AtomicCounter:
 
 ... Then use that.
 
-### 9. `ReplApp._tool_call_widgets` is never pruned
+### 8. `ReplApp._tool_call_widgets` is never pruned
 
 **Severity: low.** A leak rather than a race, but it is in the same "orphan widget" family and is
 cheap to fix.
@@ -378,11 +340,18 @@ extend:
 
 * `test_policy.py::test_dispatch_direct_message_is_atomic_under_concurrent_calls_for_the_same_dormant_subagent`
   uses a `threading.Barrier` plus a monkeypatched counter to prove exactly one of two racing
-  callers wins. That is the right shape for findings 1, 3, and 8.
+  callers wins. That is the right shape for findings 2 and 7.
 * Holding a lock in the test body to pin a worker at a known point (as this branch's
   `test_subagent_finish_and_a_concurrent_enqueue_cannot_strand_the_message` does with
   `dispatch_guard()`) deterministically reproduces a window without `sleep`-based flakiness.
-  That is the right shape for findings 2 and 6.
+  That is the right shape for findings 1 and 5.
+
+The `reset_session`/`interrupt` fix above is covered the same deterministic way, but with a real
+background thread instead of a lock: `test_hooks_fs_and_trust_events.py`'s
+`test_dispatch_fs_modified_event_reset_session_interrupts_an_in_flight_turn` runs a real
+`send_turn()` on its own thread, blocked in a fake provider until the main thread's
+`_dispatch_fs_modified_event` call cancels and waits for it, and
+`..._is_dropped_when_a_turn_is_in_flight_without_interrupt` covers the non-`interrupt` drop path.
 
 Deterministic windows beat timing: prefer a lock, `Barrier`, or a monkeypatched provider that
 blocks on an `Event` the test controls, over `time.sleep`. Every test added on this branch

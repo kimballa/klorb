@@ -283,8 +283,9 @@ class SessionTurnsMixin(SessionBase):
         drop_reasoning = self._drop_reasoning()
         tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
 
-        self.active_cancel_event = callbacks.cancel_event
-        self._current_turn_handlers = callbacks
+        with self._messages_lock:
+            self.active_cancel_event = callbacks.cancel_event
+            self._current_turn_handlers = callbacks
         try:
             try:
                 self._apply_submit_user_prompt_hook(user_message)
@@ -339,8 +340,9 @@ class SessionTurnsMixin(SessionBase):
             )
             result_text = reply.content
         finally:
-            self.active_cancel_event = None
-            self._current_turn_handlers = None
+            with self._messages_lock:
+                self.active_cancel_event = None
+                self._current_turn_handlers = None
         self._fire_agent_turn_end_hook(result_text)
         return result_text
 

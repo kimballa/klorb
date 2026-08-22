@@ -9,6 +9,7 @@ behind, a registered wake handler to enqueue-and-wake, or
 docs/adrs/00187-session-register-wake-handler-tells-an-idle-host-to-drain-and-resubmit.md)
 -- see `klorb.tests.klorb.hooks.test_fs_events` for `FileSystemWatcher`'s own filesystem-level
 behavior."""
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from klorb.api_provider import ProviderResponse
+from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.hooks import fs_events
 from klorb.hooks.config import FileSystemModifiedEventConfig, HookConfig, WorkspaceTrustChangedEventConfig
 from klorb.hooks.hook_api import EventInput
@@ -252,6 +253,91 @@ def test_fire_workspace_trust_changed_hook_reset_session_resets_and_wakes_the_ho
     provider.send_prompt.assert_not_called()
     drained = session.drain_queued_messages()
     assert drained == [QueuedMessage(message_text="fresh start", origin="event")]
+
+
+def test_dispatch_fs_modified_event_reset_session_is_dropped_when_a_turn_is_in_flight_without_interrupt(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A `reset_session` without `interrupt` arriving mid-turn is dropped rather than applied
+    underneath the running turn, since `_prepare_reset_session` has no `cancel_event` to clear it
+    out of the way first."""
+    entry = FileSystemModifiedEventConfig(
+        watch=".", action=HookConfig(
+            type="bash", shell='echo \'{"message": "fresh start", "reset_session": true}\''))
+    process_config = _process_config(tmp_path, make_session_config, FileSystemModified=[entry])
+    provider = MagicMock()
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    session.append_system_note("live conversation")
+    original_id = session.id
+    session._current_turn_handlers = TurnEventHandlers()
+    try:
+        session._dispatch_fs_modified_event(
+            [entry], EventInput(hook="FileSystemModified", workspace_root=str(tmp_path)))
+    finally:
+        session._current_turn_handlers = None
+        session.close()
+
+    assert session.id == original_id
+    assert len(session.messages) == 1
+    assert session.drain_queued_messages() == []
+
+
+def test_dispatch_fs_modified_event_reset_session_interrupts_an_in_flight_turn(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """`interrupt: true` on a `reset_session` result cancels the in-flight turn -- the same
+    `cancel_event` Escape sets -- and waits for it to unwind before resetting, treating it as if
+    the user had cancelled the turn and submitted a fresh prompt themselves."""
+    entry = FileSystemModifiedEventConfig(
+        watch=".", action=HookConfig(
+            type="bash",
+            shell='echo \'{"message": "fresh start", "reset_session": true, "interrupt": true}\''))
+    process_config = _process_config(tmp_path, make_session_config, FileSystemModified=[entry])
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_send_prompt(
+        *args: Any, cancel_event: threading.Event | None = None, **kwargs: Any,
+    ) -> ProviderResponse:
+        entered.set()
+        while not release.wait(timeout=0.02):
+            if cancel_event is not None and cancel_event.is_set():
+                raise ResponseAborted()
+        raise ResponseAborted()
+
+    provider = MagicMock()
+    provider.send_prompt.side_effect = blocking_send_prompt
+    session = Session(process_config.session, provider=provider, process_config=process_config)
+    session.register_wake_handler(lambda: None)
+    original_id = session.id
+
+    def run_turn() -> None:
+        try:
+            session.send_turn(
+                "original prompt", callbacks=TurnEventHandlers(cancel_event=turn_cancel_event))
+        except ResponseAborted:
+            pass
+
+    turn_cancel_event = threading.Event()
+    turn_thread = threading.Thread(target=run_turn, daemon=True)
+    turn_thread.start()
+    assert entered.wait(timeout=5.0)
+
+    try:
+        session._dispatch_fs_modified_event(
+            [entry], EventInput(hook="FileSystemModified", workspace_root=str(tmp_path)))
+    finally:
+        turn_thread.join(timeout=5.0)
+        release.set()
+        session.close()
+
+    assert turn_cancel_event.is_set()
+    assert not turn_thread.is_alive()
+    assert session.id == original_id
+    assert session.messages == []
+    assert session.drain_queued_messages() == [
+        QueuedMessage(message_text="fresh start", origin="event")]
 
 
 # --- deliver_event_message ---

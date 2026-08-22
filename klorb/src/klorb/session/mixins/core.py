@@ -5,6 +5,7 @@ helpers every other mixin builds on."""
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -82,6 +83,10 @@ recreated mid-session."""
 
 _SESSION_NAMING_TEARDOWN_SUBJECT = "SessionNaming"
 """Teardown subject for `_start_session_naming`'s token-invalidation callback."""
+
+_RESET_SESSION_INTERRUPT_TIMEOUT_SECONDS = 5.0
+"""How long `_prepare_reset_session` waits for an interrupt-triggered turn cancellation to be
+observed before giving up on an `interrupt`-flagged `reset_session`."""
 
 
 class SessionCoreMixin(SessionBase):
@@ -254,6 +259,11 @@ class SessionCoreMixin(SessionBase):
         self._queued_message_lock = threading.Lock()
         """Guards `_queued_messages` so a drain's read-then-clear is atomic against an enqueue
         from another thread."""
+        self._messages_lock = threading.Lock()
+        """Guards the `active_cancel_event`/`_current_turn_handlers` transition at the start and
+        end of `_dispatch_turn` against a concurrent event/hook thread's read-then-act decision
+        in `_prepare_reset_session`, so a `reset_session` can't race a turn that is only just
+        starting or only just finishing."""
         self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
@@ -989,12 +999,19 @@ class SessionCoreMixin(SessionBase):
 
     def _deliver_or_reset_event(self, output: "HookOutput") -> None:
         """Shared tail for `_dispatch_event_entries`/`fire_workspace_trust_changed_hook`: surface
-        `output.log`, then either reset this session in place and deliver `output.message` as
-        the reset conversation's first turn, or deliver it as an ordinary event message."""
+        `output.log`, then either reset this session in place and deliver `output.message` as the
+        reset conversation's first turn, or deliver it as an ordinary event message; a
+        `reset_session` is gated through `_prepare_reset_session` first so it never lands
+        underneath a turn that's still running."""
         if output.log is not None:
             self.deliver_notice(output.log)
         if output.reset_session:
             assert output.message is not None
+            if not self._prepare_reset_session(output.interrupt):
+                logger.warning(
+                    "Dropping reset_session for %s: a turn is in flight and interrupt was not "
+                    "requested (or the turn didn't unwind in time).", self.id)
+                return
             if self.parent is None:
                 self._dispatch_lifecycle_hook("onSessionEnd", reason="ResetSession")
             cast("Session", self).reset_session()
@@ -1002,6 +1019,24 @@ class SessionCoreMixin(SessionBase):
             return
         if output.message is not None:
             cast("Session", self).deliver_event_message(output.message)
+
+    def _prepare_reset_session(self, interrupt: bool) -> bool:
+        """Returns `True` once no turn is in flight, so `_deliver_or_reset_event` can safely reset
+        this session; a running turn is left alone unless `interrupt` is set, which cancels it and
+        waits up to `_RESET_SESSION_INTERRUPT_TIMEOUT_SECONDS` for it to unwind."""
+        with self._messages_lock:
+            handlers = self._current_turn_handlers
+            if handlers is None:
+                return True
+            if not interrupt or handlers.cancel_event is None:
+                return False
+            handlers.cancel_event.set()
+        deadline = time.monotonic() + _RESET_SESSION_INTERRUPT_TIMEOUT_SECONDS
+        while self.current_turn_handlers() is not None:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+        return True
 
     def fire_workspace_trust_changed_hook(self, reason: str) -> None:
         """Dispatch `WorkspaceTrustChanged` for this session, reading its own `config.events`.

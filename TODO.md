@@ -7,23 +7,21 @@
 
 * Cross-thread races catalogued in `/THREADING-AUDIT.md`, in severity order. Each entry names the
   threads involved and the interleaving that produces the bug, and is independently fixable:
-  1. `reset_session()` fires from a timer/FS-watcher thread with no in-flight-turn guard, so a
-     running turn keeps appending into a conversation that was just wiped.
-  2. The session-naming thread's `persist_state()` serializes `_messages` (the live list, and
+  1. The session-naming thread's `persist_state()` serializes `_messages` (the live list, and
      live `streaming_content`) while the turn thread streams into it.
-  3. `clear_session()` replaces the `Session` without cancelling or awaiting the turn worker, so
+  2. `clear_session()` replaces the `Session` without cancelling or awaiting the turn worker, so
      the outgoing turn renders into the new history.
-  4. `Session.close()` runs `cascade_close_subagents`' multi-second joins on the event-loop
+  3. `Session.close()` runs `cascade_close_subagents`' multi-second joins on the event-loop
      thread, which can stop the watchdog snooze and force-exit a healthy process.
-  5. An ACP `session/cancel` landing between two chained turns reads a cleared
+  4. An ACP `session/cancel` landing between two chained turns reads a cleared
      `active_cancel_event` and is silently dropped.
-  6. `SubagentHandle.state`/`output` are published as two separate writes and read without the
+  5. `SubagentHandle.state`/`output` are published as two separate writes and read without the
      tracker lock.
-  7. `_apply_workspace_config` rewrites live permission tables field-by-field while a turn may be
+  6. `_apply_workspace_config` rewrites live permission tables field-by-field while a turn may be
      reading them.
-  8. `Session._next_child_index` increments without synchronization, so two concurrently-created
+  7. `Session._next_child_index` increments without synchronization, so two concurrently-created
      subagents can share a dotted address.
-  9. `ReplApp._tool_call_widgets` is never pruned on chunk collapse or session clear.
+  8. `ReplApp._tool_call_widgets` is never pruned on chunk collapse or session clear.
 
 * the 'screenshot' option in the cmd palette doesn't work.
 
@@ -286,7 +284,8 @@
 * Surfacing hook activity in the UI — a TUI/VSCode view of which hooks fired, what they returned,
   and whether they errored, rather than only `logger.debug()`/`warning()` output.
   * Easier MVP might be to surface stderr from the hook script via logger.warning().
-* `HookOutput.interrupt` is not respected / implemented.
+* `HookOutput.interrupt` is only respected alongside `reset_session`
+  (`Session._prepare_reset_session`); a bare `interrupt` with no `reset_session` is still a no-op.
 
 ### Plan 023: TUI history virtualization
 
