@@ -97,7 +97,7 @@ The Klorb project is organized as a collection of subprojects:
 * When revising or refactoring, make the smallest code change necessary to effect the change. But **do** do
   what needs to be done to actually make the change.
 * Do not make unrelated changes while revising or refactoring a file.
-* Data access or mutation possible by multiple threads should be done through well-defined methods (not direct field access) that enforce synchronization or locking. Multi-step read-analyze-write or multiple-read field use must have locking applied to the end-to-end process. True even in python - the GIL is insufficient to synchronize multi-threaded programs! 
+* Data access or mutation possible by multiple threads should be done through well-defined methods (not direct field access) that enforce synchronization or locking. Multi-step read-analyze-write or multiple-read field use must have locking applied to the end-to-end process. True even in python - the GIL is insufficient to synchronize multi-threaded programs!
 * Do not try to be an auto-formatter or lint tool. Use `make lint_fix` or other tools configured in this repository.
 * When possible, reuse existing API endpoints rather than make new ones.
 * Never duplicate a constant (a magic number, hardcoded string, default value, etc.) across files.
