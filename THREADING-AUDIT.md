@@ -77,6 +77,15 @@ These are already fixed on this branch; listed so a reader knows they are not op
   `Session._messages_lock` guards the `_current_turn_handlers`/`active_cancel_event` transition
   at the start/end of `_dispatch_turn` against this decision, and is available for findings 1 and
   5 below to build on.
+* **`SubagentHandle.state`/`output` were published as two separate writes.** A reader landing
+  between `mark_finished`'s `handle.state = "finished"` and `handle.output = output` (or any of
+  the TUI/ACP readers, which take no lock at all) could see `state == "finished"` with
+  `output is None`. `policy._SubagentTurnOutcome` already had the right shape for this, so it
+  moved to `agents.runtime` as the public, frozen `SubagentTurnOutcome` and became
+  `SubagentHandle.outcome`, the single field `mark_finished` now assigns in one atomic write;
+  `state`/`output` are properties derived from it, so a reader can never observe one without the
+  other. `cascade_close_subagents`'s `handle.delivered = True` write, previously unlocked, now
+  goes through a new `SubagentTracker.mark_delivered`.
 
 ## Open findings
 
@@ -207,7 +216,7 @@ The TUI does not have this bug because `ReplApp._cancel_event` is app-owned and 
 `TurnBridge.run_turn` check it before starting each chained iteration, rather than relying on a
 per-turn attribute that is `None` exactly at the boundary where a cancel is most likely to land.
 
-### 5. `SubagentHandle`'s `state`/`output` pair is published non-atomically
+### 5. (FIXED) `SubagentHandle`'s `state`/`output` pair is published non-atomically
 
 **Severity: medium-low.**
 

@@ -10,7 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Markdown, OptionList, Static
 from tui.conftest import _session, _wait_until
 
-from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle
+from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, SubagentTurnOutcome
 from klorb.message import Message, MessageRole, ToolCallRequest
 from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
@@ -420,8 +420,7 @@ async def test_subagent_notice_reads_task_complete_for_an_ordinary_finish(
         await pilot.pause()
         assert _notice_text(app) == "Subagent is still working…"
 
-        handle.state = "finished"
-        handle.output = "done"
+        handle.outcome = SubagentTurnOutcome(output="done", completed=True)
         app._append_new_subagent_messages(handle.session, handle)
 
         assert _notice_text(app) == "Subagent task complete."
@@ -432,8 +431,8 @@ async def test_subagent_notice_reads_interrupted_for_an_aborted_finish(
 ) -> None:
     session = _session(MagicMock(), make_session_config)
     handle = _add_subagent(session, make_session_config)
-    handle.state = "finished"
-    handle.output = f"partial output\n\n{SUBAGENT_ABORTED_MARKER}"
+    handle.outcome = SubagentTurnOutcome(
+        output=f"partial output\n\n{SUBAGENT_ABORTED_MARKER}", completed=False)
     app = ReplApp(session=session)
 
     async with app.run_test() as pilot:
@@ -461,8 +460,8 @@ async def test_escape_immediately_shows_sending_interrupt_then_flips_to_interrup
         assert _notice_text(app) == "Sending interrupt…"
 
         # The subagent's background thread notices `cancel_event` and finishes.
-        handle.state = "finished"
-        handle.output = f"partial output\n\n{SUBAGENT_ABORTED_MARKER}"
+        handle.outcome = SubagentTurnOutcome(
+            output=f"partial output\n\n{SUBAGENT_ABORTED_MARKER}", completed=False)
         app._append_new_subagent_messages(handle.session, handle)
 
         assert _pending_interrupt(app) is None

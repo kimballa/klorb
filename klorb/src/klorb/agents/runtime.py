@@ -43,6 +43,15 @@ processing (consuming a `maxConcurrentPerParent`/`maxActiveTotal` slot), `"finis
 turn ends."""
 
 
+@dataclass(frozen=True)
+class SubagentTurnOutcome:
+    """What one subagent turn produced: the text to deliver to the creating session, and whether
+    the turn chain ended normally rather than stopping on a veto, abort, or exception."""
+
+    output: str
+    completed: bool
+
+
 @dataclass
 class SubagentHandle:
     """One subagent session a `Session` has directly created, tracked for as long as this
@@ -53,13 +62,13 @@ class SubagentHandle:
     cancel_event: threading.Event
     role: str
     title: str
-    state: SubagentState = "running"
     delivered: bool = False
     """Whether this subagent's completed output has already been handed to the creating
     session."""
-    output: str | None = None
-    """Set once `state == "finished"`: the subagent's conversational output, or a placeholder
-    noting an empty, aborted, or terminated turn."""
+    outcome: SubagentTurnOutcome | None = None
+    """`None` while running; set once, as a single atomic attribute write, when this subagent's
+    turn ends. `state`/`output` derive from this pair so a reader never observes `state ==
+    "finished"` alongside a stale or absent `output`."""
     parent_interested: bool = True
     """Whether the session that dispatched the turn this handle currently represents was the
     parent itself, versus a human addressing this subagent directly on a dormant turn,
@@ -67,17 +76,28 @@ class SubagentHandle:
     already-running, parent-dispatched turn does not change it. `mark_finished` only queues a
     completion for parent delivery when this is `True`."""
 
+    @property
+    def state(self) -> SubagentState:
+        """This subagent's lifecycle state, derived from `outcome`."""
+        return "finished" if self.outcome is not None else "running"
+
+    @property
+    def output(self) -> str | None:
+        """The subagent's conversational output once `state == "finished"`, or `None` while
+        still running."""
+        return self.outcome.output if self.outcome is not None else None
+
 
 def _format_relay_body(handle: SubagentHandle) -> str:
     """Render `handle`'s completed output as the body a `SystemInterjection subject="subagent"`
     tag carries: the `id`/`role`/`title` metadata lines, a blank line, then the subagent's own
     output."""
-    assert handle.output is not None
+    assert handle.outcome is not None
     return (
         f"id: {handle.session.id}\n"
         f"role: {handle.role}\n"
         f"title: {handle.title}\n\n"
-        f"{handle.output}"
+        f"{handle.outcome.output}"
     )
 
 
@@ -121,18 +141,24 @@ class SubagentTracker:
         dormant subagent as free to resume."""
         return self._dispatch_lock
 
-    def mark_finished(self, child_id: str, output: str) -> None:
-        """Record `child_id`'s background turn as done."""
+    def mark_finished(self, child_id: str, outcome: SubagentTurnOutcome) -> None:
+        """Record `child_id`'s background turn as done, publishing `outcome` in a single atomic
+        attribute write so no reader can observe `state == "finished"` with a stale `output`."""
         with self._lock:
             handle = self._handles[child_id]
-            handle.state = "finished"
-            handle.output = output
+            handle.outcome = outcome
             interested = handle.parent_interested
         if interested:
             self._completion_queue.put(handle)
         logger.debug(
             "Subagent %s finished (parent_interested=%s); %s", child_id, interested,
             "queued for delivery" if interested else "not queued (human-addressed turn)")
+
+    def mark_delivered(self, handle: SubagentHandle) -> None:
+        """Mark `handle` delivered under this tracker's lock, for a delivery path that doesn't go
+        through the completion queue."""
+        with self._lock:
+            handle.delivered = True
 
     def running_count(self) -> int:
         """Subagents this session directly created whose turn is actively processing right now.
@@ -335,5 +361,5 @@ def cascade_close_subagents(session: "Session") -> None:
                 "interjection with the output of a recently-completed subagent."
             )
             session.append_system_note(wrap_system_interjection(SUBAGENT_INTERJECTION_SUBJECT, body))
-            handle.delivered = True
+            session.subagent_tracker.mark_delivered(handle)
         handle.session.close()
