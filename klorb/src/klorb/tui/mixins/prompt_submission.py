@@ -189,7 +189,9 @@ class PromptSubmissionMixin(ReplAppBase):
         return self._session.name or ""
 
     def _replace_session(self, initial_message: str | None) -> None:
-        """Replace the active `Session` with a fresh one and reset the visible history."""
+        """Replace the active `Session` with a fresh one and reset the visible history. If a
+        turn is in flight, cancels it first (as if the user pressed Ctrl+C) and defers the
+        actual replacement until `_finish_turn` observes that it has unwound."""
         if self._replacing_session:
             logger.warning(
                 "Ignoring a session-replacement request that arrived while another one was "
@@ -198,14 +200,25 @@ class PromptSubmissionMixin(ReplAppBase):
         self._replacing_session = True
         try:
             if threading.get_ident() == self._thread_id:
-                self._do_replace_session(initial_message)
+                self._start_replace_session(initial_message)
             else:
-                self.call_from_thread(self._do_replace_session, initial_message)
+                self.call_from_thread(self._start_replace_session, initial_message)
         finally:
             self._replacing_session = False
 
+    def _start_replace_session(self, initial_message: str | None) -> None:
+        """Replaces the session immediately if idle, or cancels the in-flight turn/shell command
+        and defers the replacement to `_finish_turn`'s tail."""
+        if self._turn_in_flight:
+            self._pending_session_replacement = True
+            self._pending_session_replacement_initial_message = initial_message
+            self._release_workers_for_exit()
+            return
+        self._do_replace_session(initial_message)
+
     def _do_replace_session(self, initial_message: str | None) -> None:
-        """`_replace_session`'s body, run under its reentrancy guard."""
+        """Closes the active `Session`, builds a fresh one, and resets the visible history to
+        it."""
         old_session: Session = self._session
 
         workspace = old_session.config.workspace
@@ -273,12 +286,9 @@ class PromptSubmissionMixin(ReplAppBase):
         session_name.update(NEW_SESSION_LABEL)
 
         if initial_message is not None:
-            # Deferred rather than called directly, in case a caller ever replaces the session
-            # from inside the outgoing turn's own `_send_prompt` worker, which hasn't reset
-            # `_turn_in_flight` yet at this point -- `_submit_prompt` would see it still `True`
-            # and silently drop the submit. `call_after_refresh` queues this for after that
-            # worker's own `_finish_turn` clears the flag, and is safe to call from either
-            # thread (`post_message`-backed).
+            # `call_after_refresh` queues the submit for after this refresh cycle, so the
+            # freshly mounted history settles first, and is safe to call from either thread
+            # (`post_message`-backed).
             self.call_after_refresh(self._submit_prompt, initial_message)
 
     def _submit_prompt(self, prompt_text: str) -> None:
@@ -526,7 +536,8 @@ class PromptSubmissionMixin(ReplAppBase):
         response_text: str | None = None,
     ) -> None:
         """Scroll the history into view, refresh the token tally, re-enable the input, and
-        drain any queued messages into a new turn."""
+        either perform a session replacement deferred by `_start_replace_session` or drain any
+        queued messages into a new turn."""
         self._clear_turn_waiting_widget()
         self._scroll_if_pinned(history, was_pinned)
         self._history_virtualizer.close_trailing_region()
@@ -542,21 +553,27 @@ class PromptSubmissionMixin(ReplAppBase):
         self._resolve_interrupt_notice()
         self._interrupt_notice_shown = False
         self.refresh_bindings()
-        # Drain any queued messages so the on_send_queued_message hook fires and, if any
-        # were pending, fold them into a single new turn below. `Session._current_turn_handlers`
-        # is already `None` by now, so the callbacks built for that turn -- stashed by
-        # `_send_prompt` -- are passed explicitly instead.
-        next_turn_text = self._session.drain_next_turn_text(self._active_turn_callbacks)
-        self._active_turn_callbacks = None
-        if next_turn_text is not None:
-            self._submit_prompt(next_turn_text)
-            self._quit_on_success = False
-        elif not agent_turn_succeeded:
-            self._quit_on_success = False
-        elif self._quit_on_success:
-            self._final_turn_response = response_text
-            self._session.close()
-            self._begin_exit()
+        if self._pending_session_replacement:
+            self._pending_session_replacement = False
+            initial_message = self._pending_session_replacement_initial_message
+            self._pending_session_replacement_initial_message = None
+            self._do_replace_session(initial_message)
+        else:
+            # Drain any queued messages so the on_send_queued_message hook fires and, if any
+            # were pending, fold them into a single new turn below.
+            # `Session._current_turn_handlers` is already `None` by now, so the callbacks built
+            # for that turn -- stashed by `_send_prompt` -- are passed explicitly instead.
+            next_turn_text = self._session.drain_next_turn_text(self._active_turn_callbacks)
+            self._active_turn_callbacks = None
+            if next_turn_text is not None:
+                self._submit_prompt(next_turn_text)
+                self._quit_on_success = False
+            elif not agent_turn_succeeded:
+                self._quit_on_success = False
+            elif self._quit_on_success:
+                self._final_turn_response = response_text
+                self._session.close()
+                self._begin_exit()
         if self._exit_requested:
             self.exit()
 

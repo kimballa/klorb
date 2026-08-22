@@ -91,6 +91,8 @@ class ReplAppBase(App[None]):
     _subagent_transcript_notice: Static | None
     _subagent_interrupt_pending: str | None
     _replacing_session: bool
+    _pending_session_replacement: bool
+    _pending_session_replacement_initial_message: str | None
     _history_virtualizer: VirtualizedHistoryContainer
     _subagent_history_virtualizer: VirtualizedHistoryContainer | None
 
@@ -151,6 +153,8 @@ class ReplAppBase(App[None]):
     def _scroll_if_pinned(self, history: VerticalScroll, was_pinned: bool) -> None: ...
 
     def _begin_exit(self) -> None: ...
+
+    def _release_workers_for_exit(self) -> None: ...
 
     def _ensure_turn_finished(self, own_cancel_event: threading.Event) -> None: ...
 

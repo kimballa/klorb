@@ -120,7 +120,7 @@ transition — and finding 5 below can hang off it too.
 **User's response:** Agree that a Session._messages_lock is the missing key to a LOT of this and is
 long-overdue to install.
 
-### 2. `clear_session()` replaces the session out from under a running turn
+### 2. (FIXED) `clear_session()` replaces the session out from under a running turn
 
 **Severity: high.** This is the other half of the orphan-agent family, and the one most likely to
 be what produces "two widgets populating at once".

@@ -182,8 +182,7 @@ class KeyActionsMixin(ReplAppBase):
         self._release_workers_for_exit()
 
     def _release_workers_for_exit(self) -> None:
-        """Signal every kind of in-flight worker to stop so a deferred exit (`_begin_exit`) can
-        complete: cancel a streaming/tool model turn (`_cancel_event`) and a shell command
+        """Cancel an in-flight model turn (`_cancel_event`) and shell command
         (`_shell_cancel_event`), and resolve every pending interaction panel's decision with a
         safe default so a worker parked in `App.call_from_thread` awaiting one is released. Each
         piece is a no-op when that kind of work isn't running."""

@@ -7,8 +7,6 @@
 
 * Cross-thread races catalogued in `/THREADING-AUDIT.md`, in severity order. Each entry names the
   threads involved and the interleaving that produces the bug, and is independently fixable:
-  2. `clear_session()` replaces the `Session` without cancelling or awaiting the turn worker, so
-     the outgoing turn renders into the new history.
   3. `Session.close()` runs `cascade_close_subagents`' multi-second joins on the event-loop
      thread, which can stop the watchdog snooze and force-exit a healthy process.
   4. An ACP `session/cancel` landing between two chained turns reads a cleared

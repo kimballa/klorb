@@ -330,6 +330,12 @@ class ReplApp(
         self._wire_session_notice_handler(session)
         self._wire_session_wake_handler(session)
         self._replacing_session = False
+        self._pending_session_replacement: bool = False
+        """Set by `_replace_session` when it arrives while `_turn_in_flight`, instead of
+        replacing immediately: the in-flight turn is cancelled and `_finish_turn` performs the
+        deferred replacement once that turn actually unwinds.
+        """
+        self._pending_session_replacement_initial_message: str | None = None
         self._initial_message = initial_message
         self._session_log_enabled = session_log_enabled
         self._trust_manager = trust_manager

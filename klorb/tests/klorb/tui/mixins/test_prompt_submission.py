@@ -1032,6 +1032,51 @@ async def test_clear_replaces_session_and_resets_history(
         assert app._session.messages == []
 
 
+async def test_clear_session_mid_turn_aborts_the_turn_before_replacing(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`clear_session()` reaching a still-streaming turn (Ctrl+P -> Clear session, an app-level
+    binding reachable regardless of the disabled input) cancels that turn first and only
+    replaces the session once the worker has actually unwound, so a stale `call_from_thread`
+    from the aborted turn can never mount into the new session's history."""
+    mock_provider = MagicMock()
+    streaming_started = threading.Event()
+
+    def fake_send_prompt(*args: Any, cancel_event: threading.Event | None = None, **kwargs: Any) -> Any:
+        assert cancel_event is not None
+        streaming_started.set()
+        cancel_event.wait(timeout=5)
+        raise ResponseAborted()
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    session = _session(mock_provider, make_session_config)
+    old_session_id = session.id
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "what is 2+2?"
+        await pilot.press("enter")
+        await _wait_until(pilot, streaming_started.is_set)
+
+        app.clear_session()
+
+        # The replacement is deferred until the cancelled turn unwinds. Checked before any
+        # `await` yields control back to the event loop, so the worker's own `call_from_thread`
+        # callback (which performs the actual replacement) cannot have run yet.
+        assert app._session.id == old_session_id
+        assert app._turn_in_flight is True
+
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app._session.id != old_session_id
+        assert app._turn_in_flight is False
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(".prompt")) == 0
+        history.query_one(".notice", Static)
+
+
 async def test_clear_closes_the_outgoing_session(make_session_config: Callable[..., SessionConfig]) -> None:
     """`clear_session()` must tear down the outgoing `Session` (e.g. killing any live
     `BashTool` persistent shell it holds) before replacing it -- otherwise a registered
