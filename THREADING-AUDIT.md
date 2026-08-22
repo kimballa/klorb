@@ -338,8 +338,7 @@ the virtualizer unmounts a chunk (or hold them weakly).
 
 **User's response:**
 
-This seems like a great use of a weak ref array. Agree with explicit eviction on virtualizer-unmount
-and explicit clear on _do_replace_session.
+This seems like a great use of a weak ref array. Agree with explicit clear on _do_replace_session. Regarding eviction on virtualizer-unmount: make an assessment regarding how frequently that would run or how cumbersome (is it O(1) or O(n) to evict a given item?) that would be; if it would adversely impact virtualization performance, just let the weak refs do their job.
 
 ## Testing gaps
 
