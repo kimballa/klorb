@@ -20,6 +20,8 @@
 
 ### Feature backlog
 
+* rework built-in tool responses to just use the content field as a raw string, replying in "plain text" rather than as formal faceted json serialized into a string.
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
