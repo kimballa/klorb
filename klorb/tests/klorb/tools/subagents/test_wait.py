@@ -8,7 +8,7 @@ import pytest
 from tools.subagents.conftest import _FakeProvider
 
 from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
-from klorb.agents.runtime import SubagentHandle
+from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.session.events import QueuedMessage
@@ -269,7 +269,8 @@ def test_a_direct_message_enqueued_into_a_running_parent_dispatched_turn_still_d
 
     never_finishes.set()
     handle.thread.join(timeout=5.0)
-    context.session.subagent_tracker.mark_finished(child.id, "final answer")
+    context.session.subagent_tracker.mark_finished(
+        child.id, SubagentTurnOutcome(output="final answer", completed=True))
 
     result = WaitForSubagentTool(context).apply({})
 

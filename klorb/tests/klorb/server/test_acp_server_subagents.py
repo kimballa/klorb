@@ -16,7 +16,7 @@ import pytest
 from server.acp_harness import AcpHarness, build_acp_harness
 from tools.subagents.conftest import _FakeProvider
 
-from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle
+from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ApiProvider
 from klorb.message import Message, MessageRole
 from klorb.process_config import ProcessConfig
@@ -146,8 +146,8 @@ async def test_subagent_tree_reports_aborted_output(
     root = harness.server.agent.session
     assert root is not None
     handle = _add_subagent(root, make_session_config)
-    handle.state = "finished"
-    handle.output = f"partial output\n\n{SUBAGENT_ABORTED_MARKER}"
+    handle.outcome = SubagentTurnOutcome(
+        output=f"partial output\n\n{SUBAGENT_ABORTED_MARKER}", completed=False)
 
     result = await harness.client.ext_method("klorb/subagentTree", {"sessionId": session_id})
 
@@ -285,7 +285,8 @@ async def test_subagent_prompt_starts_a_fresh_uninterested_turn_on_a_dormant_sub
         tool_registry=ToolRegistry.discover_tools(ProcessConfig(), child_config))
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="find the bug", state="finished", output="earlier output")
+        role="explorer", title="find the bug",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     root.subagent_tracker.register(handle)
 
     result = await harness.client.ext_method(
@@ -310,8 +311,7 @@ async def test_subagent_prompt_raises_json_rpc_error_when_concurrency_limit_exce
     root = harness.server.agent.session
     assert root is not None
     handle = _add_subagent(root, make_session_config)
-    handle.state = "finished"
-    handle.output = "earlier output"
+    handle.outcome = SubagentTurnOutcome(output="earlier output", completed=True)
 
     with pytest.raises(acp.RequestError):
         await harness.client.ext_method(

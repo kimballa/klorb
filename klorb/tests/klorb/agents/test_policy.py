@@ -18,7 +18,7 @@ from klorb.agents.policy import (
     dispatch_subagent_turn,
     plan_subagent_creation,
 )
-from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle
+from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig, TimerEventConfig
 from klorb.process_config import ProcessConfig
@@ -184,7 +184,8 @@ def test_finished_but_undelivered_subagent_does_not_count_toward_concurrent_limi
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="earlier task")
     context.session.subagent_tracker.register(handle)
-    context.session.subagent_tracker.mark_finished(child.id, "done")
+    context.session.subagent_tracker.mark_finished(
+        child.id, SubagentTurnOutcome(output="done", completed=True))
 
     plan = plan_subagent_creation(context, "explorer", None, None)  # must not raise
 
@@ -347,7 +348,8 @@ def test_dispatch_direct_message_starts_a_fresh_uninterested_turn_on_a_dormant_s
     child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     dormant_handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="task", state="finished", output="earlier output")
+        role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     parent.subagent_tracker.register(dormant_handle)
 
     dispatch_direct_message(process_config, child, dormant_handle, "poking in directly")
@@ -385,7 +387,8 @@ def test_dispatch_direct_message_is_atomic_under_concurrent_calls_for_the_same_d
     child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     dormant_handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="task", state="finished", output="earlier output")
+        role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     parent.subagent_tracker.register(dormant_handle)
 
     dispatch_count = 0
@@ -472,8 +475,8 @@ def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the
     dormant_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
     dormant_handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
-        cancel_event=threading.Event(), role="explorer", title="second", state="finished",
-        output="done")
+        cancel_event=threading.Event(), role="explorer", title="second",
+        outcome=SubagentTurnOutcome(output="done", completed=True))
     parent.subagent_tracker.register(dormant_handle)
 
     try:
@@ -502,7 +505,8 @@ def test_deliver_event_message_starts_a_fresh_turn_on_a_dormant_subagent(
         parent=parent)
     dormant_handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="task", state="finished", output="earlier output")
+        role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     parent.subagent_tracker.register(dormant_handle)
 
     child.deliver_event_message("filesystem changed")
@@ -528,7 +532,8 @@ def test_deliver_event_message_skips_a_dormant_subagent_when_concurrency_limits_
         parent=parent)
     dormant_handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="task", state="finished", output="earlier output")
+        role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     parent.subagent_tracker.register(dormant_handle)
 
     child.deliver_event_message("filesystem changed")  # must not raise

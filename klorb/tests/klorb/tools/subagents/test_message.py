@@ -8,7 +8,7 @@ import pytest
 from tools.subagents.conftest import _FakeProvider
 
 from klorb.agents.policy import compute_root_session_grants
-from klorb.agents.runtime import SubagentHandle
+from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import ToolCallError
@@ -89,12 +89,12 @@ def test_raises_transient_when_resuming_would_exceed_the_concurrent_limit(
     session.subagent_tracker.register(running_handle)
     running_handle.thread.start()
     # A second, already-finished (dormant) subagent this call tries to resume. Its thread was
-    # never started -- state="finished" is set directly -- so there's nothing to join.
+    # never started -- outcome is set directly -- so there's nothing to join.
     dormant_child = Session(make_session_config(role_name="explorer"), provider=provider, parent=session)
     dormant_handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
-        cancel_event=threading.Event(), role="explorer", title="second", state="finished",
-        output="done")
+        cancel_event=threading.Event(), role="explorer", title="second",
+        outcome=SubagentTurnOutcome(output="done", completed=True))
     session.subagent_tracker.register(dormant_handle)
 
     try:
@@ -142,8 +142,9 @@ def test_always_produces_a_parent_interested_handle_even_resuming_a_directly_mes
         make_session_config(role_name="explorer"), provider=provider, parent=context.session)
     handle = SubagentHandle(
         session=dormant_child, thread=threading.Thread(target=lambda: None),
-        cancel_event=threading.Event(), role="explorer", title="task", state="finished",
-        output="earlier, human-addressed output", parent_interested=False)
+        cancel_event=threading.Event(), role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier, human-addressed output", completed=True),
+        parent_interested=False)
     context.session.subagent_tracker.register(handle)
 
     provider.reply_text = "parent-addressed reply"

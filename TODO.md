@@ -7,8 +7,6 @@
 
 * Cross-thread races catalogued in `/THREADING-AUDIT.md`, in severity order. Each entry names the
   threads involved and the interleaving that produces the bug, and is independently fixable:
-  5. `SubagentHandle.state`/`output` are published as two separate writes and read without the
-     tracker lock.
   6. `_apply_workspace_config` rewrites live permission tables field-by-field while a turn may be
      reading them.
   7. `Session._next_child_index` increments without synchronization, so two concurrently-created

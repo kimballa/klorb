@@ -19,7 +19,7 @@ from fixtures.sample_models import NO_SUCH_DIR, sample_model_registry
 from PIL import Image
 
 from klorb import process_config as process_config_module
-from klorb.agents.runtime import SubagentHandle
+from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.message import Message, MessageFragment, ToolCallRequest
 from klorb.models.configured_model import ConfiguredModel
@@ -2301,7 +2301,8 @@ def test_close_cascades_into_a_live_subagent_and_relays_its_note(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role="explorer", title="task")
     parent.subagent_tracker.register(handle)
-    parent.subagent_tracker.mark_finished(child.id, "done")
+    parent.subagent_tracker.mark_finished(
+        child.id, SubagentTurnOutcome(output="done", completed=True))
 
     parent.close()
 

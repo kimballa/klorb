@@ -18,7 +18,7 @@ from tui.conftest import (
     _wait_until,
 )
 
-from klorb.agents.runtime import SubagentHandle
+from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.logging_config import session_log_path
 from klorb.permissions.skill_access import SkillRules
@@ -106,7 +106,8 @@ async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurr
     child = Session(make_session_config(role_name="explorer"), provider=mock_provider, parent=session)
     handle = SubagentHandle(
         session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
-        role="explorer", title="task", state="finished", output="earlier output")
+        role="explorer", title="task",
+        outcome=SubagentTurnOutcome(output="earlier output", completed=True))
     session.subagent_tracker.register(handle)
     app = ReplApp(session=session, process_config=process_config)
 

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from klorb.agents.runtime import (
     SubagentHandle,
     SubagentTracker,
+    SubagentTurnOutcome,
     build_agent_group_interjection_provider,
     build_subagent_interjection_provider,
     cascade_close_subagents,
@@ -25,6 +26,10 @@ def _handle(
     return SubagentHandle(
         session=session, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
         role=role, title=title, parent_interested=parent_interested)
+
+
+def _finish(tracker: SubagentTracker, child_id: str, output: str) -> None:
+    tracker.mark_finished(child_id, SubagentTurnOutcome(output=output, completed=True))
 
 
 def _child_session(
@@ -61,7 +66,7 @@ def test_mark_finished_drops_running_count_even_though_still_undelivered(
     handle = _handle(_child_session(parent, make_session_config))
     tracker.register(handle)
 
-    tracker.mark_finished(handle.session.id, "the answer")
+    _finish(tracker, handle.session.id, "the answer")
 
     assert handle.state == "finished"
     assert handle.output == "the answer"
@@ -69,12 +74,42 @@ def test_mark_finished_drops_running_count_even_though_still_undelivered(
     assert tracker.has_undelivered() is True  # finished, but nobody has collected it yet
 
 
+def test_mark_finished_publishes_state_and_output_as_one_atomic_unit(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """Every TUI/ACP reader of `handle.state`/`.output` takes no lock at all, so the pair must
+    never be observable as `state == "finished"` alongside a stale `output is None`."""
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    torn_reads: list[tuple[str, str | None]] = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            state, output = handle.state, handle.output
+            if state == "finished" and output is None:
+                torn_reads.append((state, output))
+
+    readers = [threading.Thread(target=reader) for _ in range(4)]
+    for reader_thread in readers:
+        reader_thread.start()
+
+    _finish(tracker, handle.session.id, "the answer")
+
+    stop.set()
+    for reader_thread in readers:
+        reader_thread.join(timeout=5.0)
+    assert torn_reads == []
+
+
 def test_pop_next_completed_marks_delivered(make_session_config: Callable[..., SessionConfig]) -> None:
     parent = Session(make_session_config(), provider=MagicMock())
     tracker = SubagentTracker()
     handle = _handle(_child_session(parent, make_session_config))
     tracker.register(handle)
-    tracker.mark_finished(handle.session.id, "the answer")
+    _finish(tracker, handle.session.id, "the answer")
 
     popped = tracker.pop_next_completed(timeout=1.0)
 
@@ -96,8 +131,8 @@ def test_pop_next_completed_delivers_oldest_first(make_session_config: Callable[
     second = _handle(_child_session(parent, make_session_config), title="second")
     tracker.register(first)
     tracker.register(second)
-    tracker.mark_finished(first.session.id, "1")
-    tracker.mark_finished(second.session.id, "2")
+    _finish(tracker, first.session.id, "1")
+    _finish(tracker, second.session.id, "2")
 
     assert tracker.pop_next_completed(timeout=1.0) is first
     assert tracker.pop_next_completed(timeout=1.0) is second
@@ -112,8 +147,8 @@ def test_try_pop_completed_is_nonblocking_and_delivers_at_most_one(
     second = _handle(_child_session(parent, make_session_config), title="second")
     tracker.register(first)
     tracker.register(second)
-    tracker.mark_finished(first.session.id, "1")
-    tracker.mark_finished(second.session.id, "2")
+    _finish(tracker, first.session.id, "1")
+    _finish(tracker, second.session.id, "2")
 
     assert tracker.try_pop_completed() is first
     assert first.delivered is True
@@ -143,8 +178,8 @@ def test_pop_all_completed_drains_every_completion_already_waiting(
     tracker.register(first)
     tracker.register(second)
     tracker.register(third)
-    tracker.mark_finished(first.session.id, "1")
-    tracker.mark_finished(second.session.id, "2")
+    _finish(tracker, first.session.id, "1")
+    _finish(tracker, second.session.id, "2")
 
     drained = tracker.pop_all_completed(timeout=1.0)
 
@@ -164,7 +199,7 @@ def test_mark_finished_does_not_queue_an_uninterested_completion(
     handle = _handle(_child_session(parent, make_session_config), parent_interested=False)
     tracker.register(handle)
 
-    tracker.mark_finished(handle.session.id, "the answer")
+    _finish(tracker, handle.session.id, "the answer")
 
     assert handle.state == "finished"
     assert handle.output == "the answer"
@@ -181,13 +216,13 @@ def test_has_undelivered_ignores_uninterested_handles_even_alongside_an_interest
     uninterested = _handle(_child_session(parent, make_session_config), title="uninterested",
         parent_interested=False)
     tracker.register(uninterested)
-    tracker.mark_finished(uninterested.session.id, "human-addressed output")
+    _finish(tracker, uninterested.session.id, "human-addressed output")
 
     assert tracker.has_undelivered() is False  # the only handle is uninterested
 
     interested = _handle(_child_session(parent, make_session_config), title="interested")
     tracker.register(interested)
-    tracker.mark_finished(interested.session.id, "parent-addressed output")
+    _finish(tracker, interested.session.id, "parent-addressed output")
 
     assert tracker.has_undelivered() is True
     assert tracker.try_pop_completed() is interested
@@ -204,7 +239,7 @@ def test_completion_queue_survives_register_replacing_the_handle_dict_entry(
     child = _child_session(parent, make_session_config)
     original = _handle(child, title="original")
     tracker.register(original)
-    tracker.mark_finished(child.id, "original output")
+    _finish(tracker, child.id, "original output")
 
     replacement = _handle(child, title="replacement")
     tracker.register(replacement)  # overwrites _handles[child.id]
@@ -226,7 +261,7 @@ def test_cascade_close_subagents_does_not_relay_an_uninterested_handles_output(
     child = _child_session(parent, make_session_config)
     handle = _handle(child, role="explorer", title="find the bug", parent_interested=False)
     parent.subagent_tracker.register(handle)
-    parent.subagent_tracker.mark_finished(child.id, "human-addressed output")
+    _finish(parent.subagent_tracker, child.id, "human-addressed output")
     message_count_before = len(parent.messages)
 
     cascade_close_subagents(parent)
@@ -244,7 +279,7 @@ def test_build_subagent_interjection_provider_formats_id_role_title_and_output(
     child = _child_session(parent, make_session_config)
     handle = _handle(child, role="explorer", title="find the bug")
     tracker.register(handle)
-    tracker.mark_finished(child.id, "found it in foo.py")
+    _finish(tracker, child.id, "found it in foo.py")
 
     provider = build_subagent_interjection_provider(tracker)
     body = provider()
@@ -284,7 +319,7 @@ def test_total_active_subagents_excludes_finished_but_undelivered_ones(
     child = _child_session(root, make_session_config)
     handle = _handle(child)
     root.subagent_tracker.register(handle)
-    root.subagent_tracker.mark_finished(child.id, "done")
+    _finish(root.subagent_tracker, child.id, "done")
 
     assert total_active_subagents(root) == 0
 
@@ -296,7 +331,7 @@ def test_cascade_close_subagents_relays_undelivered_finished_output_into_parent_
     child = _child_session(parent, make_session_config)
     handle = _handle(child, role="explorer", title="find the bug")
     parent.subagent_tracker.register(handle)
-    parent.subagent_tracker.mark_finished(child.id, "found it in foo.py")
+    _finish(parent.subagent_tracker, child.id, "found it in foo.py")
 
     cascade_close_subagents(parent)
 
@@ -447,10 +482,10 @@ def test_cascade_close_subagents_recurses_into_grandchildren_first(
     grandchild = _child_session(child, make_session_config)
     grandchild_handle = _handle(grandchild)
     child.subagent_tracker.register(grandchild_handle)
-    child.subagent_tracker.mark_finished(grandchild.id, "grandchild output")
+    _finish(child.subagent_tracker, grandchild.id, "grandchild output")
     child_handle = _handle(child)
     parent.subagent_tracker.register(child_handle)
-    parent.subagent_tracker.mark_finished(child.id, "child output")
+    _finish(parent.subagent_tracker, child.id, "child output")
 
     cascade_close_subagents(parent)
 
@@ -512,7 +547,7 @@ def test_agent_group_provider_emits_update_when_subagent_state_changes(
     provider = build_agent_group_interjection_provider(root)
     provider()  # baseline with running child
 
-    root.subagent_tracker.mark_finished(child.id, "done")
+    _finish(root.subagent_tracker, child.id, "done")
     result = provider()
 
     assert result is not None

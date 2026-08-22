@@ -22,6 +22,7 @@ from klorb.agents.runtime import (
     SUBAGENT_ABORTED_MARKER,
     SUBAGENT_MGMT_TOOL_NAMES,
     SubagentHandle,
+    SubagentTurnOutcome,
     total_active_subagents,
 )
 from klorb.api_provider import ResponseAborted
@@ -327,19 +328,9 @@ def _assistant_authored_text(messages: list[Message]) -> str:
     return "\n\n".join(parts)
 
 
-@dataclass
-class _SubagentTurnOutcome:
-    """What one `_run_subagent_turn` call produced: the text to deliver to the creating session,
-    and whether the turn chain ended normally rather than stopping on a veto, abort, or
-    exception."""
-
-    output: str
-    completed: bool
-
-
 def _run_subagent_turn(
     child: Session, message: str, handlers: TurnEventHandlers,
-) -> _SubagentTurnOutcome:
+) -> SubagentTurnOutcome:
     """Run `child`'s conversation to completion, returning the text to deliver to the creating
     session: every assistant-authored message produced, concatenated in order, a placeholder if
     none of it said anything, the same concatenation plus an abort note if
@@ -358,7 +349,7 @@ def _run_subagent_turn(
     parent = child.parent
     effective_message = parent.fire_subagent_start_hook(child, message)
     if effective_message is None:
-        return _SubagentTurnOutcome(
+        return SubagentTurnOutcome(
             output="(Subagent blocked by onSubagentStart hook policy.)", completed=False)
     start_index = len(child.messages)
     pending_message: str | None = effective_message
@@ -372,15 +363,15 @@ def _run_subagent_turn(
             output = _assistant_authored_text(child.messages[start_index:])
             result = f"{output}\n\n{SUBAGENT_ABORTED_MARKER}".strip()
             parent.fire_subagent_turn_end_hook(child, result)
-            return _SubagentTurnOutcome(output=result, completed=False)
+            return SubagentTurnOutcome(output=result, completed=False)
         except Exception as exc:
             logger.exception("Subagent %s turn failed", child.id)
             result = f"(Subagent turn failed: {exc})"
             parent.fire_subagent_turn_end_hook(child, result)
-            return _SubagentTurnOutcome(output=result, completed=False)
+            return SubagentTurnOutcome(output=result, completed=False)
         parent.fire_subagent_turn_end_hook(child, result)
         pending_message = child.drain_next_turn_text(handlers)
-    return _SubagentTurnOutcome(output=result, completed=True)
+    return SubagentTurnOutcome(output=result, completed=True)
 
 
 def dispatch_subagent_turn(
@@ -395,7 +386,7 @@ def dispatch_subagent_turn(
         outcome = _run_subagent_turn(child, message, handlers)
         while True:
             if not outcome.completed:
-                parent.subagent_tracker.mark_finished(child.id, outcome.output)
+                parent.subagent_tracker.mark_finished(child.id, outcome)
                 return
             # The queue-empty check and `mark_finished` happen under the same dispatch guard
             # every enqueue-vs-dispatch decision for this child takes, so a message enqueued
@@ -404,7 +395,7 @@ def dispatch_subagent_turn(
             with parent.subagent_tracker.dispatch_guard():
                 pending = child.drain_next_turn_text(handlers)
                 if pending is None:
-                    parent.subagent_tracker.mark_finished(child.id, outcome.output)
+                    parent.subagent_tracker.mark_finished(child.id, outcome)
                     return
             outcome = _run_subagent_turn(child, pending, handlers)
 

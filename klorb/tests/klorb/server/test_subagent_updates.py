@@ -4,7 +4,7 @@ import threading
 from collections.abc import Callable
 from unittest.mock import MagicMock
 
-from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle
+from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, SubagentTurnOutcome
 from klorb.server.subagent_updates import build_subagent_tree_snapshot
 from klorb.session import Session, SessionConfig
 
@@ -79,8 +79,8 @@ def test_finished_handle_with_abort_marker_reports_aborted(
 ) -> None:
     root = Session(make_session_config(role_name="operator"), provider=MagicMock())
     handle = _add_subagent(root, make_session_config)
-    handle.state = "finished"
-    handle.output = f"partial\n\n{SUBAGENT_ABORTED_MARKER}"
+    handle.outcome = SubagentTurnOutcome(
+        output=f"partial\n\n{SUBAGENT_ABORTED_MARKER}", completed=False)
 
     snapshot = build_subagent_tree_snapshot(root)
 
@@ -94,8 +94,7 @@ def test_finished_handle_without_abort_marker_reports_not_aborted(
 ) -> None:
     root = Session(make_session_config(role_name="operator"), provider=MagicMock())
     handle = _add_subagent(root, make_session_config)
-    handle.state = "finished"
-    handle.output = "all done"
+    handle.outcome = SubagentTurnOutcome(output="all done", completed=True)
 
     snapshot = build_subagent_tree_snapshot(root)
 
