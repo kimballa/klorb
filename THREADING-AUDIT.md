@@ -72,6 +72,11 @@ These are already fixed on this branch; listed so a reader knows they are not op
 
 ## Open findings
 
+*For each of these the situation is described, and then Claude proposes a sketch of how to*
+*address the issue in "Claude's Fix direction." The user sometimes approves in whole or in part*
+*by saying nothing; in other cases the user replies in "User's response", which should be taken*
+*as superseding the recommendation in "Claude's fix."*
+
 ### 1. `reset_session()` fires from a timer/FS thread with no in-flight-turn guard
 
 **Severity: high.** This is the clearest remaining instance of the "orphan agent keeps writing
@@ -107,11 +112,18 @@ Interleaving:
 self.current_turn_handlers() is not None` and hands it to the hook — the harness knows whether a
 turn is live, it just does not act on it.
 
-**Fix direction:** treat a `reset_session` arriving mid-turn the same way a queued message is
+**Claude's Fix direction:** treat a `reset_session` arriving mid-turn the same way a queued message is
 treated — defer it to the turn boundary rather than applying it under the running turn. Either
 queue the reset for the host's drain point, or have `_deliver_or_reset_event` refuse and log when
 `current_turn_handlers() is not None`. `_reset_state()` rebinding `_messages` should additionally
 assert no turn is in flight, so a future caller cannot reintroduce this.
+
+**User's response:** This plan is true if `interrupt` is false. If `interrupt` is true, we should
+treat the reset_session + message with interrupt semantics as if the user pressed ^C to cancel the
+current agent turn, reset the session, and provided a new prompt. We had not yet implemented `interrupt`
+but we should respect the flag, at least for the `reset_session=True` cases.
+
+This should rely on a `Session._messages_lock` that also gets used with #2 and #6.
 
 ### 2. The session-naming thread serializes messages the turn thread is still streaming into
 
@@ -137,12 +149,15 @@ size mid-iteration.
 The same live-list exposure means `total_tokens_used()`/`total_output_tokens_used()` (called
 from thread 1 via `_update_status_bar`) sum a list thread 2 is appending to.
 
-**Fix direction:** `persist_state()` should snapshot under a lock — take a `_messages` copy and
+**Claude's Fix direction:** `persist_state()` should snapshot under a lock — take a `_messages` copy and
 deep-copy (or `model_copy`) any message whose `processing_state == "started_receipt"` before
 serializing. The cheapest correct version is for `_write_session_state_and_touch` to build its
 own list of `for_persistence()` results while holding a messages lock that `_send_and_receive`
 also takes around placeholder mutation. Introducing a `Session._messages_lock` also gives
 findings 1 and 6 somewhere to hang.
+
+**User's response:** Agree that a Session._messages_lock is the missing key to a LOT of this and is
+long-overdue to install.
 
 ### 3. `clear_session()` replaces the session out from under a running turn
 
@@ -171,10 +186,16 @@ Interleaving:
 `_ensure_turn_finished` compares cancel-event identity to avoid finishing a newer turn, but
 nothing performs the equivalent check for the *session* the worker belongs to.
 
-**Fix direction:** give `_send_prompt`'s worker the `Session` it started with and have every
+**Claude's Fix direction:** give `_send_prompt`'s worker the `Session` it started with and have every
 `call_from_thread` render target no-op when `self._session is not that session` — the same
 identity-check shape `_ensure_turn_finished` already uses for cancel events. Additionally, make
 `_replace_session` refuse (or cancel-and-await) while `_turn_in_flight` is set.
+
+**User's response:** Where you wrote "Additionally, make `_replace_session` refuse (or
+cancel-and-await) while `_turn_in_flight` is set."... I disagree with the "Refuse" idea: the user wants a
+new turn. Abort the current one first as if we ^C'd. Wait for that abort to be processed. Then do the
+new one. (Because the user could have just killed the whole process and restarted `klorb --new`. They
+want a clear session. Get there.)
 
 ### 4. `Session.close()` runs a multi-second cascade on the event-loop thread
 
@@ -192,10 +213,18 @@ it stops being snoozed for exactly the duration of the join. The watchdog then f
 
 The same shape applies to `_do_replace_session`'s `old_session.close()`.
 
-**Fix direction:** run `close()`'s cascade off the event loop (a worker thread, awaited by the
+**Claude's Fix direction:** run `close()`'s cascade off the event loop (a worker thread, awaited by the
 quit path), or snooze the watchdog explicitly around a known-blocking teardown. Note that
 `_collect_hang_diagnostics` deliberately calls `persist_state()` rather than `close()` for
 exactly this reason — the quit path should be as careful.
+
+**User's response:** I vote for "snooze the watchdog explicitly around known-blocking teardown. I
+don't think introducing yet *another* thread* is the idea here.
+
+Also fwiw 5 seconds is an eternity, do we actually need that long per subagent? They should all get
+the notification to quit basically simultaneously. We should wait max 5 seconds wall clock time for
+*all* of them, collectively. If that's too crazy to orchestrate, clamp on
+_SHUTDOWN_JOIN_TIMEOUT_SECONDS, maybe 2 seconds?
 
 ### 5. An ACP `session/cancel` is silently dropped between chained turns
 
@@ -232,10 +261,18 @@ A reader landing between the two assignments sees `state == "finished"` with `ou
 `cascade_close_subagents` reads `handle.output`/`handle.delivered` and writes
 `handle.delivered = True` entirely outside the lock while `has_undelivered()` reads it inside.
 
-**Fix direction:** make the finish transition publish one immutable value — set `output` before
+**Claude's Fix direction:** make the finish transition publish one immutable value — set `output` before
 `state`, or better, replace the two mutable fields with a single `SubagentCompletion` object
 assigned in one attribute write. Route `cascade_close_subagents`'s `delivered` write through a
 tracker method that takes the lock.
+
+**User's response:**
+The fix described seems a lot like klorb.agent.policy._SubagentTurnOutcome, which was implemented in
+the same commit that THREADING-AUDIT.md was authored. Can we reuse that? (Maybe it should not be a
+_protected class, but should be more broadly available... dunno if it should actually be defined
+where it is, in that case, or someplace more-universally-accessible.)
+
+This should rely on a `Session._messages_lock` that also gets used with #1 and #2.
 
 ### 7. `_apply_workspace_config` rewrites live config while a turn reads it
 
@@ -250,9 +287,20 @@ inside a tool's permission check reading those exact tables.
 A permission decision computed against a half-updated `read_dirs`/`write_dirs` pair is a
 correctness problem in the security-relevant direction, even if the window is small.
 
-**Fix direction:** build the new `SessionConfig`/`ProcessConfig` values off to the side and
+**Claude's Fix direction:** build the new `SessionConfig`/`ProcessConfig` values off to the side and
 publish them with single attribute assignments, so a reader sees either the old or the new table
 and never a partially-concatenated one.
+
+**User's response:** This is one where I am most skeptical that Claude's proposed fix direction
+is a sound idea. Whereas other places I disagree above are more about choosing a different "product
+direction" than the one implied by Claude's fix, Here I am just not even sure if that works.
+
+The idea of building a new SessionConfig/ProcessConfig and then just saying e.g.
+session.session_config = new_session_config for atomic reassignment seems nice. But do any tools or
+anything else take a reference to the existing SessionConfig and survive for long enough for it to
+be problematic to be stuck with the old session config? Or would they know to use the new one /
+always go back to `session.config` rather than keeping their own maybe-stale `_session_config`
+field?
 
 ### 8. `Session._next_child_index` increments without synchronization
 
@@ -263,7 +311,45 @@ from a *child's* `__init__`, i.e. from whichever thread called `CreateSubagent`.
 (threads 6) creating children under the same parent concurrently can read the same value and both
 receive the same `_child_index`, producing two agents that render the same dotted `address()`.
 
-**Fix direction:** guard with a small lock, or allocate under the tracker's existing `_lock`.
+**Claude's Fix direction:** guard with a small lock, or allocate under the tracker's existing `_lock`.
+
+**User's response:**
+
+make an AtomicCounter util class in a counter.py somewhere:
+
+```py
+import threading
+
+class AtomicCounter:
+    def __init__(self, initial=0):
+        self.value = initial
+        self._lock = threading.Lock()
+
+    def increment(self, step=1):
+        # Ensures only one thread modifies the value at a time
+        with self._lock:
+            self.value += step
+            return self.value
+
+    def decrement(self, step=1):
+        with self._lock:
+            self.value -= step
+            return self.value
+
+    def get_value(self):
+        with self._lock:
+            return self.value
+
+    def __repr__(self):
+        with self._lock:
+            return f"{self._value}"
+
+    def __str__(self):
+        with self._lock:
+            return f"{self._value}"
+```
+
+... Then use that.
 
 ### 9. `ReplApp._tool_call_widgets` is never pruned
 
@@ -276,8 +362,13 @@ clear the list (nor `_running_tool_call_widgets`) when it wipes the history. `Ct
 (`action_toggle_tool_call_detail`) therefore iterates every widget ever created in the process,
 including unmounted ones from cleared sessions, calling `set_detail_shown` on each.
 
-**Fix direction:** clear both collections in `_do_replace_session`, and drop entries when the
-virtualizer unmounts a chunk (or hold them weakly).
+**Claude's Fix direction:** clear both collections in `_do_replace_session`, and drop entries when
+the virtualizer unmounts a chunk (or hold them weakly).
+
+**User's response:**
+
+This seems like a great use of a weak ref array. Agree with explicit eviction on virtualizer-unmount
+and explicit clear on _do_replace_session.
 
 ## Testing gaps
 
