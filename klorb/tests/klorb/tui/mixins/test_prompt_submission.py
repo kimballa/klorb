@@ -1072,7 +1072,9 @@ async def test_clear_session_mid_turn_aborts_the_turn_before_replacing(
 
         assert app._session.id != old_session_id
         assert app._turn_in_flight is False
-        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        # Unclear why the typechecker thinks this should never be hit... because this test does pass.
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll) # type: ignore[unreachable]
+
         assert len(history.query(".prompt")) == 0
         history.query_one(".notice", Static)
 
