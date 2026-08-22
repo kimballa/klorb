@@ -5,10 +5,6 @@
 
 ### Bugs
 
-* Cross-thread races catalogued in `/THREADING-AUDIT.md`, in severity order. Each entry names the
-  threads involved and the interleaving that produces the bug, and is independently fixable:
-  8. `ReplApp._tool_call_widgets` is never pruned on chunk collapse or session clear.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
