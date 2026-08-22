@@ -408,15 +408,12 @@ class ReplApp(
         guarantee that even so a second panel queues behind the first rather than stacking, no
         matter what future path drives a confirmation.
         """
-        self._release_pending_interaction: Callable[[], None] | None = None
-        """While an interaction panel (permission ask, ask-user-questions, escalate-privileges) is
-        mounted and awaiting the user, this resolves that panel's pending decision future with a
-        safe default (deny / cancelled), releasing the worker thread parked inside
-        `App.call_from_thread` waiting on it and freeing `_interaction_lock`. Each `_confirm_*`
-        method sets it right before it awaits and clears it in a `finally`; `None` whenever no
-        interaction is pending. Teardown/abort paths (`_signal_turn_cancellation`,
-        `_release_workers_for_exit`) call it so quitting or interrupting can never strand a worker
-        thread blocked on a decision that will never come.
+        self._pending_interaction_releases: dict[int, tuple[str, Callable[[], None]]] = {}
+        """Every pending interaction panel's `(session_id, release)` pair, keyed by `id()` of its
+        decision future -- `release` resolves that future with its safe default (deny /
+        cancelled), freeing the worker thread parked inside `App.call_from_thread` waiting on it.
+        Several entries can be pending at once, since a subagent's ask registers as soon as it is
+        raised even while an earlier panel is still mounted.
         """
         self._exit_requested: bool = False
         """Set by `_begin_exit` when a quit is requested while a turn or shell command is still in

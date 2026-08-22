@@ -3,6 +3,7 @@
 intersection wiring that produces a subagent's SessionConfig and tool registry.
 """
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +23,7 @@ from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig, TimerEventConfig
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.session.events import QueuedMessage
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
@@ -422,6 +424,35 @@ def test_dispatch_direct_message_is_atomic_under_concurrent_calls_for_the_same_d
     new_handle.thread.join(timeout=5.0)
     assert new_handle.output is not None
     assert "direct reply" in new_handle.output
+
+
+def test_subagent_finish_and_a_concurrent_enqueue_cannot_strand_the_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A message enqueued while the worker is deciding whether to finish is drained into one
+    more turn rather than sitting queued forever on a finished subagent. Holding the dispatch
+    guard while enqueueing forces the worker's own guard-held finish decision to observe it."""
+    provider = _FakeProvider(reply_text="reply")
+    process_config = ProcessConfig()
+    parent = Session(make_session_config(role_name="operator", workspace=Workspace(path=tmp_path)),
+                     provider=provider, process_config=process_config)
+    child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
+
+    with parent.subagent_tracker.dispatch_guard():
+        handle = dispatch_subagent_turn(parent, child, "explorer", "task", "go")
+        deadline = time.monotonic() + 5.0
+        while not provider.calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        child.enqueue_queued_message(QueuedMessage(message_text="one more thing"))
+
+    handle.thread.join(timeout=5.0)
+    current = parent.subagent_tracker.current_handle(child.id)
+    assert current is not None
+    assert current.state == "finished"
+    assert child.pending_queued_message_texts == []
+    assert any(
+        m.role == "user" and "one more thing" in m.content for m in child.messages)
+    assert len(provider.calls) == 2
 
 
 def test_dispatch_direct_message_raises_transient_when_resuming_would_exceed_the_concurrent_limit(

@@ -120,6 +120,9 @@ class KeyActionsMixin(ReplAppBase):
         if self._selected_handle is not None:
             self._note_subagent_interrupt_requested(self._selected_handle)
             self._selected_handle.cancel_event.set()
+            # A subagent parked on an interaction panel's decision never observes its cancel
+            # event until that decision resolves; resolve it with the safe default now.
+            self._release_pending_interactions(self._selected_handle.session.id)
             return
         self._note_interrupt_requested()
         if self._shell_cancel_event is not None:
@@ -131,8 +134,7 @@ class KeyActionsMixin(ReplAppBase):
         """Tell an in-flight model turn's worker thread to unwind."""
         if self._cancel_event is not None:
             self._cancel_event.set()
-        if self._release_pending_interaction is not None:
-            self._release_pending_interaction()
+        self._release_pending_interactions(self._session.id)
 
     def _note_ctrl_c_copy(self) -> None:
         """Record that the most recent Ctrl+C (or Cmd+C) press copied selected text to the
@@ -182,15 +184,14 @@ class KeyActionsMixin(ReplAppBase):
     def _release_workers_for_exit(self) -> None:
         """Signal every kind of in-flight worker to stop so a deferred exit (`_begin_exit`) can
         complete: cancel a streaming/tool model turn (`_cancel_event`) and a shell command
-        (`_shell_cancel_event`), and resolve any pending interaction panel's decision with a safe
-        default (`_release_pending_interaction`) so a worker parked in `App.call_from_thread`
-        awaiting one is released. Each piece is a no-op when that kind of work isn't running."""
+        (`_shell_cancel_event`), and resolve every pending interaction panel's decision with a
+        safe default so a worker parked in `App.call_from_thread` awaiting one is released. Each
+        piece is a no-op when that kind of work isn't running."""
         if self._cancel_event is not None:
             self._cancel_event.set()
         if self._shell_cancel_event is not None:
             self._shell_cancel_event.set()
-        if self._release_pending_interaction is not None:
-            self._release_pending_interaction()
+        self._release_pending_interactions()
 
     def action_toggle_tool_call_detail(self) -> None:
         """Ctrl+O: flip every `ToolCallStatic` currently in the history between its one-line

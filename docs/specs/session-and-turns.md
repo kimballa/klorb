@@ -284,6 +284,14 @@ config) has one place to live.
   for the turn to finish. Because the message is a real `role="user"` message,
   `klorb.server.update_mapping.build_session_replay` renders it as a `"prompt"`-kind entry
   with no special handling.
+* The queue itself (`Session._queued_messages`) is guarded by `Session._queued_message_lock`, so
+  a drain's read-and-clear is atomic against a concurrent enqueue. Enqueues arrive from whichever
+  thread produced the message — the TUI/ACP event loop for a typed one, a `FileSystemWatcher`
+  debounce timer or a `TimerScheduler` timer for an event-driven one, a subagent's own background
+  thread for a relayed one — while drains run on whichever thread is dispatching the turn.
+  `deliver_wake()` is pinged on every `deliver_event_message()` for a session that has a wake
+  handler, in flight or not, so a message enqueued as a turn ends is never left with nothing to
+  deliver it.
 
 ## Session naming
 

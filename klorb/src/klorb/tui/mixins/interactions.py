@@ -106,15 +106,30 @@ class InteractionsMixin(ReplAppBase):
         self._scroll_if_pinned(history, was_pinned)
 
     def _register_interaction_future(
-        self, future: "asyncio.Future[_InteractionResult]", teardown_default: _InteractionResult,
+        self, session_id: str, future: "asyncio.Future[_InteractionResult]",
+        teardown_default: _InteractionResult,
     ) -> Callable[[_InteractionResult], None]:
-        """Wire a just-created interaction panel's decision `future` for safe resolution, returning
-        the guarded `on_dismiss` callback the panel reports its result through."""
+        """Register `future` in `_pending_interaction_releases` under `session_id`, so an abort or
+        quit can resolve it with `teardown_default`, and return the guarded `on_dismiss` callback
+        the panel reports its own result through."""
         def resolve(result: _InteractionResult) -> None:
             if not future.done():
                 future.set_result(result)
-        self._release_pending_interaction = lambda: resolve(teardown_default)
+        self._pending_interaction_releases[id(future)] = (
+            session_id, lambda: resolve(teardown_default))
         return resolve
+
+    def _unregister_interaction_future(self, future: "asyncio.Future[_InteractionResult]") -> None:
+        """Drop `future`'s entry from `_pending_interaction_releases`."""
+        self._pending_interaction_releases.pop(id(future), None)
+
+    def _release_pending_interactions(self, session_id: str | None = None) -> None:
+        """Resolve every pending interaction future registered for `session_id` (or every
+        session, when `None`) with its safe teardown default, releasing any worker thread parked
+        awaiting a decision."""
+        for pending_session_id, release in list(self._pending_interaction_releases.values()):
+            if session_id is None or pending_session_id == session_id:
+                release()
 
     @asynccontextmanager
     async def _reserved_interaction_slot(self, session_id: str) -> AsyncIterator[None]:
@@ -173,7 +188,7 @@ class InteractionsMixin(ReplAppBase):
             risk_rationale=risk_assessment.rationale if risk_assessment is not None else None,
             preview_wrap_width=preview_wrap_width,
             on_dismiss=self._register_interaction_future(
-                decision_future, PermissionDecision(action="deny", scope="once")))
+                session_id, decision_future, PermissionDecision(action="deny", scope="once")))
 
         try:
             async with self._reserved_interaction_slot(session_id):
@@ -183,7 +198,7 @@ class InteractionsMixin(ReplAppBase):
                 await panel.remove()
                 self._exit_interaction_mode()
         finally:
-            self._release_pending_interaction = None
+            self._unregister_interaction_future(decision_future)
 
         self._last_permission_action = decision.action
         self._last_permission_scope = decision.scope
@@ -217,7 +232,7 @@ class InteractionsMixin(ReplAppBase):
         answer_future: asyncio.Future[AskUserQuestionsAnswer] = asyncio.get_running_loop().create_future()
         panel = AskUserQuestionsPanel(
             ask_ctx, on_dismiss=self._register_interaction_future(
-                answer_future, AskUserQuestionsAnswer(cancelled=True)))
+                session_id, answer_future, AskUserQuestionsAnswer(cancelled=True)))
 
         try:
             async with self._reserved_interaction_slot(session_id):
@@ -227,7 +242,7 @@ class InteractionsMixin(ReplAppBase):
                 await panel.remove()
                 self._exit_interaction_mode()
         finally:
-            self._release_pending_interaction = None
+            self._unregister_interaction_future(answer_future)
 
         self._record_interaction_history(
             panel.header_text(), ask_ctx.question, format_ask_user_questions_answer(answer))
@@ -253,7 +268,7 @@ class InteractionsMixin(ReplAppBase):
             asyncio.get_running_loop().create_future())
         panel = EscalatePrivilegesPanel(
             escalate_ctx, on_dismiss=self._register_interaction_future(
-                decision_future, EscalatePrivilegesDecision(approved=False)))
+                session_id, decision_future, EscalatePrivilegesDecision(approved=False)))
 
         try:
             async with self._reserved_interaction_slot(session_id):
@@ -263,7 +278,7 @@ class InteractionsMixin(ReplAppBase):
                 await panel.remove()
                 self._exit_interaction_mode()
         finally:
-            self._release_pending_interaction = None
+            self._unregister_interaction_future(decision_future)
 
         self._record_interaction_history(
             panel.header_text(), escalate_ctx.description,

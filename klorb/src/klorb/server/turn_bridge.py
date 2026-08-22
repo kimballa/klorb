@@ -378,14 +378,23 @@ class TurnBridge:
             async def pump() -> None:
                 while True:
                     item = await queue.get()
-                    if item is _SENTINEL:
+                    try:
+                        if item is _SENTINEL:
+                            return
+                        if isinstance(item, _ExtNotificationItem):
+                            await self._client.ext_notification(item.method, item.params)
+                        else:
+                            await self._client.session_update(
+                                session_id=self._session_id, update=item)
+                    except Exception:
+                        # A failed delivery must not kill the pump: a dead pump leaves later
+                        # items never marked done, and a blocking ask's `queue.join()` would
+                        # then park the worker thread forever.
+                        logger.warning(
+                            "Failed to deliver a session update for ACP session %s.",
+                            self._session_id, exc_info=True)
+                    finally:
                         queue.task_done()
-                        return
-                    if isinstance(item, _ExtNotificationItem):
-                        await self._client.ext_notification(item.method, item.params)
-                    else:
-                        await self._client.session_update(session_id=self._session_id, update=item)
-                    queue.task_done()
 
             pump_task = asyncio.create_task(pump())
             try:

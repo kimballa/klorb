@@ -251,6 +251,9 @@ class SessionCoreMixin(SessionBase):
         """The callback `register_wake_handler()` sets, used by `deliver_wake()` to tell an idle
         host "something just got queued, come drain it" (see `SessionTurnsMixin.
         deliver_event_message`)."""
+        self._queued_message_lock = threading.Lock()
+        """Guards `_queued_messages` so a drain's read-then-clear is atomic against an enqueue
+        from another thread."""
         self._reset_state(scratchpad_path=scratchpad_path)
         self._session_lock: Lockfile | None = None
         """The `session.lock` held on this session's `sessions/<subdir>/` directory, or `None`
@@ -311,7 +314,8 @@ class SessionCoreMixin(SessionBase):
         self._session_started_at = datetime.now()
         self._pending_permission_framework_interjection: str | None = None
         self._standing_interjection_providers: dict[str, Callable[[], str | None]] = {}
-        self._queued_messages: list[QueuedMessage] = []
+        with self._queued_message_lock:
+            self._queued_messages: list[QueuedMessage] = []
         self._user_msg_event: threading.Event = threading.Event()
         self._current_turn_handlers: TurnEventHandlers | None = None
         self._current_turn_mentioned_skill_ids: frozenset[tuple[str, str]] = frozenset()
@@ -680,7 +684,8 @@ class SessionCoreMixin(SessionBase):
         while an agent turn is in flight. If the current turn's `TurnEventHandlers` has an
         `on_enqueue_message` hook, it is called with `queued_msg` so the UI can create the
         italics "queued..." block and save widget references in `queued_msg.history_data`."""
-        self._queued_messages.append(queued_msg)
+        with self._queued_message_lock:
+            self._queued_messages.append(queued_msg)
         self._user_msg_event.set()
         if (self._current_turn_handlers is not None
                 and self._current_turn_handlers.on_enqueue_message is not None):
@@ -691,7 +696,8 @@ class SessionCoreMixin(SessionBase):
         """The text of every message currently queued (see `enqueue_queued_message`), without
         draining it -- for a poller to report a subagent's queued-but-undelivered messages
         without a live `on_enqueue_message` callback to observe."""
-        return [queued_msg.message_text for queued_msg in self._queued_messages]
+        with self._queued_message_lock:
+            return [queued_msg.message_text for queued_msg in self._queued_messages]
 
     def drain_queued_messages(
         self, callbacks: TurnEventHandlers | None = None,
@@ -712,8 +718,9 @@ class SessionCoreMixin(SessionBase):
         explicit `callbacks` is required for a drain that happens *after* the turn that owned it
         has already ended -- `_finish_turn()`'s own end-of-turn drain, since `_dispatch_turn`
         clears `_current_turn_handlers` before `send_turn()` returns to any such caller."""
-        messages = list(self._queued_messages)
-        self._queued_messages.clear()
+        with self._queued_message_lock:
+            messages = list(self._queued_messages)
+            self._queued_messages.clear()
         handlers = callbacks if callbacks is not None else self._current_turn_handlers
         if handlers is not None:
             for queued_msg in messages:

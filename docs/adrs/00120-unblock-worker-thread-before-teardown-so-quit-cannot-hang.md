@@ -1,5 +1,10 @@
 # Unblock the turn worker thread before teardown so quitting cannot hang
 
+> The single `_release_pending_interaction` slot this ADR describes is superseded by the
+> per-future registry in
+> [ADR 00206](00206-track-pending-interaction-releases-per-future-keyed-by-session.md); the
+> decision to unblock the worker before teardown stands unchanged.
+
 * Date: 2026-07-14 01:51
 * Question: Two linked symptoms were reported. (1) A model turn could "hang" indefinitely —
   the worker thread appeared stuck with nothing making progress. (2) Quitting with Ctrl+Q while

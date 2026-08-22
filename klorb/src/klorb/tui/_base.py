@@ -68,7 +68,7 @@ class ReplAppBase(App[None]):
     _watchdog: LivenessWatchdog
     _turn_in_flight: bool
     _interaction_lock: asyncio.Lock
-    _release_pending_interaction: Callable[[], None] | None
+    _pending_interaction_releases: dict[int, tuple[str, Callable[[], None]]]
     _exit_requested: bool
     _last_permission_action: Literal["allow", "deny"]
     _last_permission_scope: Literal["once", "session", "workspace", "homedir"]
@@ -206,6 +206,8 @@ class ReplAppBase(App[None]):
         self, escalate_ctx: EscalatePrivilegesContext,
     ) -> EscalatePrivilegesDecision:
         raise NotImplementedError
+
+    def _release_pending_interactions(self, session_id: str | None = None) -> None: ...
 
     def _maybe_refresh_task_sidebar_after_tool_call(self, event: ToolCallEvent) -> None: ...
 

@@ -368,6 +368,13 @@ aborted mid-stream (`ResponseAborted`, from `cancel_event` firing) appends
 thread's own top-level call, and an unhandled exception there would silently strand the subagent
 as `"running"` forever.
 
+The background thread's own drain-and-finish decision — drain the child's queue, and finish only
+if nothing was queued — runs under `parent.subagent_tracker.dispatch_guard()`, the same lock every
+enqueue-vs-dispatch decision for that child takes. A message enqueued concurrently is therefore
+either drained into one more turn or lands after the handle is already `"finished"` and resumes the
+subagent through the ordinary dormant path; it can never strand on a finished subagent that nothing
+will drain again.
+
 Once a turn ends, `SubagentTracker.mark_finished()` sets `state`/`output` on the handle, then —
 only if the handle is `parent_interested` — queues it for delivery via `WaitForSubagent`,
 described above. An uninterested completion (a human addressed this subagent directly, see
