@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.read_memory import ReadMemoryTool
@@ -22,7 +22,8 @@ def _context(
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
+        session_config=SessionConfig(
+            workspace_access=WorkspaceAccess(workspace=Workspace(path=workspace_root, trusted=trusted))))
 
 
 def _write(context: ToolSetupContext, namespace: Namespace, filename: str, content: str) -> Path:

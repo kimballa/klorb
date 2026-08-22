@@ -191,23 +191,31 @@ def apply_permission_grant(
     touch_read = action == "allow" or not is_write
     touch_write = is_write
 
-    if touch_read:
-        session_config.read_dirs = _apply_decision_to_table(
-            session_config.read_dirs, workspace_root, granted_paths, action)
-    if touch_write:
-        session_config.write_dirs = _apply_decision_to_table(
-            session_config.write_dirs, workspace_root, granted_paths, action)
+    new_read_dirs = (
+        _apply_decision_to_table(session_config.read_dirs, workspace_root, granted_paths, action)
+        if touch_read else session_config.read_dirs)
+    new_write_dirs = (
+        _apply_decision_to_table(session_config.write_dirs, workspace_root, granted_paths, action)
+        if touch_write else session_config.write_dirs)
+    # Published together even when only one changed, so a concurrent
+    # `workspace_access_snapshot()` reader never sees `read_dirs`/`write_dirs` out of sync with
+    # each other or with `workspace`.
+    session_config.apply_workspace_access(
+        workspace=session_config.workspace, read_dirs=new_read_dirs, write_dirs=new_write_dirs)
 
     if scope == "session":
         return
 
     if process_config is not None:
-        if touch_read:
-            process_config.session.read_dirs = _apply_decision_to_table(
-                process_config.session.read_dirs, workspace_root, granted_paths, action)
-        if touch_write:
-            process_config.session.write_dirs = _apply_decision_to_table(
-                process_config.session.write_dirs, workspace_root, granted_paths, action)
+        template_read_dirs = (
+            _apply_decision_to_table(process_config.session.read_dirs, workspace_root, granted_paths, action)
+            if touch_read else process_config.session.read_dirs)
+        template_write_dirs = (
+            _apply_decision_to_table(process_config.session.write_dirs, workspace_root, granted_paths, action)
+            if touch_write else process_config.session.write_dirs)
+        process_config.session.apply_workspace_access(
+            workspace=process_config.session.workspace,
+            read_dirs=template_read_dirs, write_dirs=template_write_dirs)
 
     if scope == "workspace":
         _apply_grant_to_file(

@@ -16,7 +16,7 @@ import klorb.tools as tools_package
 from klorb.openrouter import DEFAULT_MODEL, OpenRouterApiProvider
 from klorb.permissions.directory_access import create_tempdir_for_session
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 
@@ -151,7 +151,7 @@ def _run_self_review(*, model: str, provider: OpenRouterApiProvider, log_path: P
     """
     session_config = SessionConfig(
         model=model, interactive=False, thinking_enabled=False,
-        workspace=Workspace(path=Path.cwd(), trusted=True))
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=Path.cwd(), trusted=True)))
     review_dir = create_tempdir_for_session(session_config, remove_on_exit=True)
     copied_log = review_dir / log_path.name
     logger.debug("Copying eval log %s to scratch tempdir as %s for self-review", log_path, copied_log)

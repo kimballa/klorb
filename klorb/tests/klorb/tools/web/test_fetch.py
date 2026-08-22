@@ -26,7 +26,9 @@ def _context(
     if domain_rules is not None:
         session_config.web_domain_rules = domain_rules
     if workspace_root is not None:
-        session_config.workspace = Workspace(path=workspace_root)
+        session_config.apply_workspace_access(
+            workspace=Workspace(path=workspace_root), read_dirs=session_config.read_dirs,
+            write_dirs=session_config.write_dirs)
     return ToolSetupContext(
         process_config=ProcessConfig(),
         session_config=session_config,

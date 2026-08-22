@@ -10,7 +10,7 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.grep import GrepTool
 from klorb.tools.setup_context import ToolSetupContext
@@ -30,11 +30,11 @@ def _context(
         process_config=ProcessConfig(
             grep_max_results=max_results, grep_context_lines=context_lines,
             grep_max_line_length=max_line_length, grep_spill_bytes=spill_bytes),
-        session_config=SessionConfig(
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(),
             write_dirs=DirRules(),
-        ),
+        )),
     )
 
 

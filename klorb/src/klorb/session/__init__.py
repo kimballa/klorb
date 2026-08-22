@@ -2,7 +2,7 @@
 """The `klorb.session` package: `Session`, the per-conversation state and turn-dispatch loop,
 plus the config/event types every caller exchanges with it."""
 
-from klorb.session.config import SessionConfig
+from klorb.session.config import SessionConfig, WorkspaceAccess
 from klorb.session.constants import (
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
     MAX_TOOL_CALL_ROUNDS,
@@ -79,5 +79,6 @@ __all__ = [
     "ToolCallStartedEvent",
     "TurnEventHandlers",
     "UserSkillActivation",
+    "WorkspaceAccess",
     "generate_session_id",
 ]

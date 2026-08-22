@@ -169,7 +169,9 @@ class KlorbAcpAgent(acp.Agent):
         `mcp_servers` is accepted but never acted on: klorb has no MCP support."""
         workspace = self._trust_manager.resolve_workspace(Path(cwd))
         session_config = self._process_config.session.model_copy()
-        session_config.workspace = workspace
+        session_config.apply_workspace_access(
+            workspace=workspace, read_dirs=session_config.read_dirs,
+            write_dirs=session_config.write_dirs)
         grants = compute_root_session_grants(self._process_config, session_config, session_config.role_name)
         session_config.skill_rules = grants.skill_rules
         if self._session is not None:
@@ -384,17 +386,16 @@ class KlorbAcpAgent(acp.Agent):
                 continue
             setattr(self._process_config, field_name, getattr(reloaded, field_name))
 
-        self._session.config.workspace = workspace
-        self._process_config.session.workspace = workspace
-
-        self._session.config.read_dirs = concat_dir_rules(
-            self._session.config.read_dirs, reloaded.session.read_dirs)
-        self._session.config.write_dirs = concat_dir_rules(
-            self._session.config.write_dirs, reloaded.session.write_dirs)
-        self._process_config.session.read_dirs = concat_dir_rules(
-            self._process_config.session.read_dirs, reloaded.session.read_dirs)
-        self._process_config.session.write_dirs = concat_dir_rules(
-            self._process_config.session.write_dirs, reloaded.session.write_dirs)
+        self._session.config.apply_workspace_access(
+            workspace=workspace,
+            read_dirs=concat_dir_rules(self._session.config.read_dirs, reloaded.session.read_dirs),
+            write_dirs=concat_dir_rules(self._session.config.write_dirs, reloaded.session.write_dirs))
+        self._process_config.session.apply_workspace_access(
+            workspace=workspace,
+            read_dirs=concat_dir_rules(
+                self._process_config.session.read_dirs, reloaded.session.read_dirs),
+            write_dirs=concat_dir_rules(
+                self._process_config.session.write_dirs, reloaded.session.write_dirs))
 
         self._session.reload_skills()
 

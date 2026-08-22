@@ -74,6 +74,26 @@ or slicing a superset.
   Deliberately has **no** on-disk key at all, in either `SESSION_KEY_MAP` or `PROCESS_KEY_MAP` —
   a project must never be able to grant itself trust via its own config file.
 
+  `workspace`, `read_dirs`, and `write_dirs` are stored together as one field,
+  `workspace_access: WorkspaceAccess` (a frozen nested model) — the only fields a workspace-trust
+  reload (`KlorbAcpAgent._apply_workspace_config`/its TUI equivalent) or the interactive-grant
+  flow (`apply_permission_grant`) ever update together, and the only fields a permission check
+  ever needs together. `apply_workspace_access(workspace=..., read_dirs=..., write_dirs=...)`
+  builds a new `WorkspaceAccess` and publishes it in one attribute assignment, under a private
+  lock that also serializes it against a second concurrent writer; `workspace_access_snapshot()`
+  returns the current one. Because a single-field read of an immutable nested value can never be
+  torn, `workspace`/`read_dirs`/`write_dirs` stay available as ordinary read-only properties for
+  the common single-field case, each documenting that a caller needing two or more of them
+  together should take one `workspace_access_snapshot()` instead — which is what
+  `klorb.permissions.workspace`'s `evaluate_write`/`resolve_and_evaluate_read`/
+  `resolve_and_evaluate_write` do, up front, reusing that one snapshot for the whole check rather
+  than re-reading `session_config.workspace`/`.read_dirs`/`.write_dirs` separately. `SessionConfig`
+  itself is never reassigned, since `ToolRegistry` holds `session_config` by reference for a
+  session's whole lifetime; a `model_validator`/`model_serializer` pair keeps both the
+  `SessionConfig(workspace=..., read_dirs=..., write_dirs=...)` constructor shape and the on-disk
+  `session.json`/`klorb-config.json` shape unchanged, so this is purely an in-memory
+  restructuring.
+
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
   copy it can mutate freely without affecting any other session or the template itself. The

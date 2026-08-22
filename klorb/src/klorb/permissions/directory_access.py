@@ -215,16 +215,20 @@ def create_tempdir_for_session(
     `remove_on_exit`, when `True`, registers the directory for automatic `shutil.rmtree()`
     cleanup at process exit instead of leaving cleanup to the caller.
     """
-    workspace_root = session_config.workspace.path
+    access = session_config.workspace_access_snapshot()
+    workspace_root = access.workspace.path
     directory = canonicalize_dir(Path(tempfile.mkdtemp()), workspace_root)
     logger.debug("Created scratch tempdir %s (mode=%r)", directory, mode)
-    session_config.read_dirs = DirRules(
-        deny=session_config.read_dirs.deny, ask=session_config.read_dirs.ask,
-        allow=[*session_config.read_dirs.allow, directory])
-    if mode == "w":
-        session_config.write_dirs = DirRules(
-            deny=session_config.write_dirs.deny, ask=session_config.write_dirs.ask,
-            allow=[*session_config.write_dirs.allow, directory])
+    new_read_dirs = DirRules(
+        deny=access.read_dirs.deny, ask=access.read_dirs.ask,
+        allow=[*access.read_dirs.allow, directory])
+    new_write_dirs = (
+        DirRules(
+            deny=access.write_dirs.deny, ask=access.write_dirs.ask,
+            allow=[*access.write_dirs.allow, directory])
+        if mode == "w" else access.write_dirs)
+    session_config.apply_workspace_access(
+        workspace=access.workspace, read_dirs=new_read_dirs, write_dirs=new_write_dirs)
     if remove_on_exit:
         logger.debug("Registering scratch tempdir %s for atexit cleanup", directory)
         if not _tempdirs_to_remove_on_exit:

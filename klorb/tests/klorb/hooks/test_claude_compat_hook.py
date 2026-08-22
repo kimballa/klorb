@@ -12,7 +12,7 @@ from klorb.hooks.bash_handler import run_bash_handler
 from klorb.hooks.config import HookConfig
 from klorb.hooks.hook_api import HookInput
 from klorb.permissions.directory_access import DirRules
-from klorb.session.config import SessionConfig
+from klorb.session.config import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 
 _SCRIPT_PATH = str(
@@ -33,9 +33,9 @@ def _run(
     hook_input = HookInput(
         hook="onSessionStart", reason="NewSession", workspace_root=str(workspace_root),
         workspace_just_bootstrapped=just_bootstrapped, workspace_trusted=trusted, config=config)
-    session_config = SessionConfig(
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(
         workspace=Workspace(path=workspace_root, trusted=trusted),
-        read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root]))
+        read_dirs=DirRules(allow=[workspace_root]), write_dirs=DirRules(allow=[workspace_root])))
     result = run_bash_handler(
         handler, hook_input, session_config=session_config, bash_command="/bin/bash",
         timeout_seconds=5.0)

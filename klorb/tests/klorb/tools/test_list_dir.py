@@ -8,7 +8,7 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.list_dir import ListDirTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -23,11 +23,11 @@ def _context(
 ) -> ToolSetupContext:
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(
             workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
             read_dirs=read_dirs or DirRules(),
             write_dirs=write_dirs or DirRules(),
-        ),
+        )),
     )
 
 

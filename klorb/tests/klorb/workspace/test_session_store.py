@@ -11,7 +11,7 @@ from klorb.hooks.config import FileSystemModifiedEventConfig, HookConfig
 from klorb.lockfile import create_lockfile
 from klorb.message import Message, MessageFragment, MessageRole
 from klorb.schema_envelope import write_versioned_json
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 from klorb.workspace import input_history as input_history_module
 from klorb.workspace.session_store import (
@@ -60,7 +60,7 @@ class TestSessionState:
 
     def test_write_then_read_round_trips_config_and_messages(self, tmp_path: Path) -> None:
         workspace = _workspace(tmp_path)
-        config = SessionConfig(model="some/model", workspace=workspace)
+        config = SessionConfig(model="some/model", workspace_access=WorkspaceAccess(workspace=workspace))
         messages = [_message("user", "hi there"), _message("assistant", "hello!")]
 
         write_session_state(workspace, "sess-1", config, messages)
@@ -74,7 +74,8 @@ class TestSessionState:
         workspace = _workspace(tmp_path)
         fs_event = FileSystemModifiedEventConfig(
             watch="docs/plans/auto", action=HookConfig(type="bash", command=["echo", "hi"]))
-        config = SessionConfig(workspace=workspace, events={"FileSystemModified": [fs_event]})
+        config = SessionConfig(
+            workspace_access=WorkspaceAccess(workspace=workspace), events={"FileSystemModified": [fs_event]})
 
         write_session_state(workspace, "sess-1", config, [])
         state = read_session_state(workspace, "sess-1")

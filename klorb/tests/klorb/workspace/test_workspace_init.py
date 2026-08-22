@@ -6,7 +6,7 @@ from pathlib import Path
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, project_config_path
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 from klorb.workspace.workspace_init import (
     write_initial_project_config,
@@ -54,7 +54,7 @@ def test_write_initial_project_config_overwrites_existing_file(tmp_path: Path) -
 def test_write_session_defaults_dumps_scalar_fields(tmp_path: Path) -> None:
     config = SessionConfig(
         model="project/model", thinking_enabled=False, thinking_effort="low",
-        max_tool_calls_per_turn=3, workspace=Workspace(path=tmp_path))
+        max_tool_calls_per_turn=3, workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     write_session_defaults_to_project_config(tmp_path, config)
 
@@ -70,9 +70,10 @@ def test_write_session_defaults_dumps_dir_rules_built_up_this_session(tmp_path: 
     ask_dir = tmp_path / "maybe"
     allow_dir = tmp_path / "yes"
     config = SessionConfig(
-        workspace=Workspace(path=tmp_path),
-        read_dirs=DirRules(ask=[ask_dir], allow=[allow_dir]),
-        write_dirs=DirRules(deny=[tmp_path / "no"]),
+        workspace_access=WorkspaceAccess(
+            workspace=Workspace(path=tmp_path),
+            read_dirs=DirRules(ask=[ask_dir], allow=[allow_dir]),
+            write_dirs=DirRules(deny=[tmp_path / "no"])),
     )
 
     write_session_defaults_to_project_config(tmp_path, config)
@@ -86,7 +87,8 @@ def test_write_session_defaults_dumps_dir_rules_built_up_this_session(tmp_path: 
 
 def test_write_session_defaults_overwrites_existing_file(tmp_path: Path) -> None:
     write_initial_project_config(tmp_path, "old/model", trusted=False)
-    config = SessionConfig(model="new/model", workspace=Workspace(path=tmp_path))
+    config = SessionConfig(
+        model="new/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     write_session_defaults_to_project_config(tmp_path, config)
 

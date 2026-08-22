@@ -7,7 +7,7 @@ import pytest
 
 from klorb.permissions.table import PermissionAskRequired, Verdict
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.edit_memory import EditMemoryTool
@@ -25,7 +25,7 @@ def _context(
     return ToolSetupContext(
         process_config=ProcessConfig(),
         session_config=SessionConfig(
-            workspace=Workspace(path=workspace_root, trusted=trusted),
+            workspace_access=WorkspaceAccess(workspace=Workspace(path=workspace_root, trusted=trusted)),
             memory_write_permission=write_permission))
 
 

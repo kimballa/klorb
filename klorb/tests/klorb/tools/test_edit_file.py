@@ -9,7 +9,7 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.edit_file import EditFileTool
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
@@ -29,10 +29,10 @@ def _context(
     integration" tests below pass an explicit override to narrow that default."""
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(allow=[workspace_root]),
-            write_dirs=write_dirs or DirRules(allow=[workspace_root])),
+            write_dirs=write_dirs or DirRules(allow=[workspace_root]))),
         session=session)
 
 

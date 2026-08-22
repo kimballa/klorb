@@ -18,7 +18,7 @@ from klorb.permissions.command_grant import (
 )
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 
 
@@ -76,7 +76,7 @@ def test_apply_decision_to_table_never_mutates_input_in_place() -> None:
 
 
 def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     process_config = ProcessConfig()
     argv = ["git", "status"]
 
@@ -88,7 +88,7 @@ def test_session_scope_mutates_only_in_memory_session_config(tmp_path: Path) -> 
 
 
 def test_session_scope_deny(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     argv = ["rm", "-rf", "/"]
 
     apply_command_permission_grant("deny", "session", session_config, None, argv)
@@ -101,7 +101,7 @@ def test_explicit_patterns_are_recorded_as_is_instead_of_the_literal_argv_fallba
 ) -> None:
     """Regression test: a caller with its own precomputed patterns must have that
     exact pattern persisted."""
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     argv = ["grep", "-rn", "TODO", "src/foo.py"]
 
     apply_command_permission_grant(
@@ -114,7 +114,7 @@ def test_explicit_patterns_are_recorded_as_is_instead_of_the_literal_argv_fallba
 
 
 def test_workspace_scope_mutates_session_and_process_template_and_persists(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     process_config = ProcessConfig()
     argv = ["git", "status"]
 
@@ -136,7 +136,8 @@ def test_workspace_scope_promotes_matched_ask_rule_and_removes_it_from_the_same_
         SESSION_DEFAULTS_KEY: {"commandRules": {"deny": [], "ask": [["git", "push", "?"]], "allow": []}},
     }), encoding="utf-8")
     session_config = SessionConfig(
-        workspace=Workspace(path=tmp_path), command_rules=CommandRules(ask=[["git", "push", "?"]]))
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)),
+        command_rules=CommandRules(ask=[["git", "push", "?"]]))
     process_config = ProcessConfig()
 
     apply_command_permission_grant(
@@ -161,7 +162,8 @@ def test_homedir_scope_cleans_matching_ask_entry_out_of_workspace_file(tmp_path:
             "commandRules": {"deny": [], "ask": [["git", "push", "?"]], "allow": [["ls", "?"]]}},
     }), encoding="utf-8")
     session_config = SessionConfig(
-        workspace=Workspace(path=tmp_path), command_rules=CommandRules(ask=[["git", "push", "?"]]))
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)),
+        command_rules=CommandRules(ask=[["git", "push", "?"]]))
     process_config = ProcessConfig()
 
     apply_command_permission_grant(
