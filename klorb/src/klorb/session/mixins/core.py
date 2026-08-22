@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from klorb.api_provider import ApiProvider
+from klorb.counter import AtomicCounter
 from klorb.images.prepare import ImagePipelineConfig
 from klorb.lockfile import Lockfile
 from klorb.message import Message
@@ -142,7 +143,7 @@ class SessionCoreMixin(SessionBase):
         Set from `CreateSubagent`'s `max_output_tokens` arg for a subagent `Session`; not a
         `klorb-config.json` setting, since it's a one-off per-subagent budget the *creating*
         agent chooses, not a standing preference. See docs/specs/subagents.md."""
-        self._next_child_index = 0
+        self._next_child_index = AtomicCounter()
         """Count of subagents this session has ever spawned, monotonically incremented by
         `_allocate_child_index()` and never decremented or reused -- even after a child
         finishes or is torn down -- so a dotted-decimal `address()` segment always identifies
@@ -664,10 +665,8 @@ class SessionCoreMixin(SessionBase):
 
     def _allocate_child_index(self) -> int:
         """Return the next `_child_index` for a subagent about to be constructed with
-        `parent=self`. Called once per subagent, from that subagent's own `__init__` -- see
-        `_next_child_index`."""
-        self._next_child_index += 1
-        return self._next_child_index
+        `parent=self`. Called once per subagent, from that subagent's own `__init__`."""
+        return self._next_child_index.increment()
 
     def address(self) -> str:
         """Return this session's dotted-decimal display address within its session tree (e.g.

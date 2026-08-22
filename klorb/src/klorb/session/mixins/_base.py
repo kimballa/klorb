@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from klorb.api_provider import ApiProvider
+from klorb.counter import AtomicCounter
 from klorb.images.prepare import ImagePipelineConfig
 from klorb.lockfile import Lockfile
 from klorb.message import Message, ToolCallRequest
@@ -68,7 +69,7 @@ class SessionBase:
     parent: "Session | None"
     effective_subagent_roles: frozenset[str]
     _max_output_tokens: int | None
-    _next_child_index: int
+    _next_child_index: AtomicCounter
     _child_index: int
     cur_chainlink_task_id: int | None
     _session_name: str | None

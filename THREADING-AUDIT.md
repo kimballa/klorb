@@ -295,7 +295,7 @@ separate points. A `model_validator`/`model_serializer` pair keeps both the cons
 (`SessionConfig(workspace=..., read_dirs=..., write_dirs=...)`) and the on-disk `session.json`/
 `klorb-config.json` shape unchanged, so this is purely an in-memory restructuring.
 
-### 7. `Session._next_child_index` increments without synchronization
+### 7. (FIXED) `Session._next_child_index` increments without synchronization
 
 **Severity: low.** Display-only.
 
