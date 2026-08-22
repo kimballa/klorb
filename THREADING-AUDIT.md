@@ -85,7 +85,7 @@ These are already fixed on this branch; listed so a reader knows they are not op
 *by saying nothing; in other cases the user replies in "User's response", which should be taken*
 *as superseding the recommendation in "Claude's fix."*
 
-### 1. The session-naming thread serializes messages the turn thread is still streaming into
+### 1. (FIXED) The session-naming thread serializes messages the turn thread is still streaming into
 
 **Severity: high.** Hits the first turn of every fresh session, which is why it would present as
 intermittent corruption of new sessions specifically.

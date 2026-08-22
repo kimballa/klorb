@@ -7,8 +7,6 @@
 
 * Cross-thread races catalogued in `/THREADING-AUDIT.md`, in severity order. Each entry names the
   threads involved and the interleaving that produces the bug, and is independently fixable:
-  1. The session-naming thread's `persist_state()` serializes `_messages` (the live list, and
-     live `streaming_content`) while the turn thread streams into it.
   2. `clear_session()` replaces the `Session` without cancelling or awaiting the turn worker, so
      the outgoing turn renders into the new history.
   3. `Session.close()` runs `cascade_close_subagents`' multi-second joins on the event-loop
