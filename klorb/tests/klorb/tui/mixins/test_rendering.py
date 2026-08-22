@@ -44,6 +44,24 @@ async def _submit_and_complete(
     await pilot.pause()
 
 
+async def _settle_history_virtualizer(pilot: Pilot[None], app: ReplApp) -> None:
+    """Drive `_history_virtualizer.refresh_visibility()` until chunk state stops changing, so
+    every collapse/expand queued by turn completion or the scroll-position watcher has finished
+    before a test presses `ctrl+e` itself -- otherwise that explicit expand can race one of
+    those still in flight on the same chunk and find nothing left to do."""
+    virtualizer = app._history_virtualizer
+    previous_state: object = None
+    for _ in range(20):
+        await pilot.pause()
+        await virtualizer.refresh_visibility()
+        state = [
+            (chunk.placeholder is not None, chunk.expanding, chunk.collapsing)
+            for chunk in virtualizer._sealed]
+        if state == previous_state:
+            return
+        previous_state = state
+
+
 def _session_with_real_tools(provider: MagicMock, config: SessionConfig) -> Session:
     """Like `tui.conftest._session_with_tools`, but discovers the real production tool package
     (`klorb.tools`, `ToolRegistry.discover_tools`'s default) instead of the test-fixture
@@ -702,6 +720,7 @@ async def test_ctrl_e_expands_the_nearest_collapsed_history_chunk(
         for i in range(turn_count):
             await _submit_and_complete(pilot, app, prompt_input, f"message {i}")
         await _wait_until(pilot, lambda: bool(list(history.query(HistoryPlaceholder))), timeout=5.0)
+        await _settle_history_virtualizer(pilot, app)
         placeholder_count_before = len(list(history.query(HistoryPlaceholder)))
         assert app._history_virtualizer.has_collapsed_chunks()
 
