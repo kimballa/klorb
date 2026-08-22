@@ -74,6 +74,19 @@ or slicing a superset.
   Deliberately has **no** on-disk key at all, in either `SESSION_KEY_MAP` or `PROCESS_KEY_MAP` —
   a project must never be able to grant itself trust via its own config file.
 
+  `workspace`, `read_dirs`, and `write_dirs` are the only fields a workspace-trust reload
+  (`KlorbAcpAgent._apply_workspace_config`/its TUI equivalent) or the interactive-grant flow
+  (`apply_permission_grant`) ever update together, and the only fields a permission check reads
+  together — so `SessionConfig.apply_workspace_access(workspace=..., read_dirs=..., write_dirs=...)`
+  publishes all three under a private lock, and `workspace_access_snapshot()` reads all three
+  under that same lock as one frozen `WorkspaceAccessSnapshot`. `klorb.permissions.workspace`'s
+  `evaluate_write`/`resolve_and_evaluate_read`/`resolve_and_evaluate_write` each take one snapshot
+  up front rather than re-reading `session_config.workspace`/`.read_dirs`/`.write_dirs`
+  separately, so a permission check on one thread can never land between two of a concurrent
+  reload's field writes on another. The lock guards only this trio; `SessionConfig`'s identity
+  is never reassigned, since `ToolRegistry` holds `session_config` by reference for a session's
+  whole lifetime.
+
   `session` is a *template*, not a shared instance — every `Session` created in the process
   (at startup, or via `/clear`) gets `process_config.session.model_copy()`, an independent
   copy it can mutate freely without affecting any other session or the template itself. The

@@ -22,6 +22,7 @@ from klorb.permissions.file_access import FileAccessTable
 from klorb.permissions.table import Verdict, stricter_verdict
 
 if TYPE_CHECKING:
+    from klorb.session.config import WorkspaceAccessSnapshot
     from klorb.tools.setup_context import ToolSetupContext
 
 
@@ -72,7 +73,9 @@ def _privileged_deny(path: Path, workspace_root: Path, *, is_write: bool) -> Ver
     return "deny"
 
 
-def canonicalize_candidate(context: "ToolSetupContext", filename: str) -> Path:
+def canonicalize_candidate(
+    context: "ToolSetupContext", filename: str, *, workspace_root: Path | None = None,
+) -> Path:
     """Resolve `filename` to an absolute, symlink- and `..`-canonicalized path via
     `klorb.permissions.directory_access.canonicalize_dir` (a leading `~`/`~user` is expanded to
     the invoking user's home directory; a still-relative result is joined onto
@@ -80,12 +83,16 @@ def canonicalize_candidate(context: "ToolSetupContext", filename: str) -> Path:
     particular boundary — callers that need a hard boundary should use
     `resolve_within_workspace()` instead; callers that only need canonicalization ahead of a
     permissions-table check (e.g. a trusted-workspace `ReadFile`) call this directly.
+
+    `workspace_root`, when given, is used instead of re-reading `context.session_config.workspace`.
     """
-    root = context.session_config.workspace.path.resolve()
+    root = workspace_root if workspace_root is not None else context.session_config.workspace.path.resolve()
     return canonicalize_dir(Path(filename), root)
 
 
-def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path:
+def resolve_within_workspace(
+    context: "ToolSetupContext", filename: str, *, workspace_root: Path | None = None,
+) -> Path:
     """Resolve `filename` (via `canonicalize_candidate()`) and verify the result is
     `context.session_config.workspace.path` or somewhere beneath it.
 
@@ -94,8 +101,8 @@ def resolve_within_workspace(context: "ToolSetupContext", filename: str) -> Path
 
     Raises `PermissionError` if the resolved path falls outside the workspace root.
     """
-    root = context.session_config.workspace.path.resolve()
-    resolved = canonicalize_candidate(context, filename)
+    root = workspace_root if workspace_root is not None else context.session_config.workspace.path.resolve()
+    resolved = canonicalize_candidate(context, filename, workspace_root=root)
 
     if not resolved.is_relative_to(root):
         raise PermissionError(
@@ -115,7 +122,9 @@ def _normalize_for_write(verdict: Verdict | None) -> Verdict:
     return verdict if verdict is not None else "ask"
 
 
-def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
+def evaluate_write(
+    context: "ToolSetupContext", path: Path, *, access: "WorkspaceAccessSnapshot | None" = None,
+) -> Verdict:
     """Evaluate a write to the already-workspace-confined `path` (the caller must already have
     called `resolve_within_workspace()` to obtain it).
 
@@ -135,8 +144,12 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     an explicit `allow` in *both* tables, not just `writeDirs`. This is deliberately not a
     fallback to `writeDirs` alone — a path `writeDirs` never mentions is `"ask"`, not `"allow"`,
     even if `readDirs` allows it.
+
+    `access`, when given, is used instead of taking a fresh
+    `context.session_config.workspace_access_snapshot()`.
     """
-    workspace_root = context.session_config.workspace.path.resolve()
+    access = access if access is not None else context.session_config.workspace_access_snapshot()
+    workspace_root = access.workspace.path.resolve()
     if is_privileged_path(
             path, workspace_root, _approved_scopes(context),
             claude_skills_compat=_claude_skills_compat(context)):
@@ -144,8 +157,8 @@ def evaluate_write(context: "ToolSetupContext", path: Path) -> Verdict:
     if context.permission_override is not None and path in context.permission_override.paths:
         return "allow"
 
-    read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
-    write_table = DirectoryAccessTable(context.session_config.write_dirs, workspace_root)
+    read_table = DirectoryAccessTable(access.read_dirs, workspace_root)
+    write_table = DirectoryAccessTable(access.write_dirs, workspace_root)
     return stricter_verdict(
         _normalize_for_write(read_table.evaluate(path)),
         _normalize_for_write(write_table.evaluate(path)))
@@ -196,8 +209,9 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     Returns `(path, verdict)` so the caller can enforce the verdict and then open the same
     canonicalized path that was actually checked.
     """
-    workspace_root = context.session_config.workspace.path.resolve()
-    candidate = canonicalize_candidate(context, filename)
+    access = context.session_config.workspace_access_snapshot()
+    workspace_root = access.workspace.path.resolve()
+    candidate = canonicalize_candidate(context, filename, workspace_root=workspace_root)
 
     if is_privileged_path(
             candidate, workspace_root, _approved_scopes(context),
@@ -209,17 +223,17 @@ def resolve_and_evaluate_read(context: "ToolSetupContext", filename: str) -> tup
     if file_verdict is not None:
         return candidate, file_verdict
 
-    if context.session_config.workspace.trusted:
+    if access.workspace.trusted:
         path = candidate
         fallback: Verdict = "ask"
     else:
-        path = resolve_within_workspace(context, filename)
+        path = resolve_within_workspace(context, filename, workspace_root=workspace_root)
         fallback = "allow"
 
     if context.permission_override is not None and path in context.permission_override.paths:
         return path, "allow"
 
-    read_table = DirectoryAccessTable(context.session_config.read_dirs, workspace_root)
+    read_table = DirectoryAccessTable(access.read_dirs, workspace_root)
     verdict = read_table.evaluate(path)
     if verdict is None:
         verdict = fallback
@@ -247,8 +261,9 @@ def resolve_and_evaluate_write(context: "ToolSetupContext", filename: str) -> tu
     Returns `(path, verdict)` so the caller can enforce the verdict and then write to the same
     canonicalized path that was actually checked.
     """
-    workspace_root = context.session_config.workspace.path.resolve()
-    candidate = canonicalize_candidate(context, filename)
+    access = context.session_config.workspace_access_snapshot()
+    workspace_root = access.workspace.path.resolve()
+    candidate = canonicalize_candidate(context, filename, workspace_root=workspace_root)
 
     if is_privileged_path(
             candidate, workspace_root, _approved_scopes(context),
@@ -260,5 +275,5 @@ def resolve_and_evaluate_write(context: "ToolSetupContext", filename: str) -> tu
     if file_verdict is not None:
         return candidate, file_verdict
 
-    path = resolve_within_workspace(context, filename)
-    return path, evaluate_write(context, path)
+    path = resolve_within_workspace(context, filename, workspace_root=workspace_root)
+    return path, evaluate_write(context, path, access=access)

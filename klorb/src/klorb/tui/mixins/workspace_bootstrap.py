@@ -242,15 +242,13 @@ class WorkspaceBootstrapMixin(ReplAppBase):
                 continue
             setattr(self._process_config, field_name, getattr(reloaded, field_name))
 
-        self._session.config.workspace = workspace
-        self._process_config.session.workspace = workspace
-
         clear_cached_redactor(self._session)
 
-        self._session.config.read_dirs = concat_dir_rules(
-            self._session.config.read_dirs, reloaded.session.read_dirs)
-        self._session.config.write_dirs = concat_dir_rules(
-            self._session.config.write_dirs, reloaded.session.write_dirs)
+        self._session.config.apply_workspace_access(
+            workspace=workspace,
+            read_dirs=concat_dir_rules(self._session.config.read_dirs, reloaded.session.read_dirs),
+            write_dirs=concat_dir_rules(self._session.config.write_dirs, reloaded.session.write_dirs))
+        self._process_config.session.workspace = workspace
         self._process_config.session.read_dirs = concat_dir_rules(
             self._process_config.session.read_dirs, reloaded.session.read_dirs)
         self._process_config.session.write_dirs = concat_dir_rules(

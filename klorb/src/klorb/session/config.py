@@ -1,10 +1,11 @@
 # © Copyright 2026 Aaron Kimball
 """`SessionConfig`: per-`Session` configuration set once at startup from parsed CLI arguments."""
 
+import threading
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, SerializeAsAny, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, field_validator
 
 from klorb.hooks.config import EVENT_CONFIG_MODELS, EventConfig, HookConfig
 from klorb.openrouter import DEFAULT_MODEL
@@ -35,6 +36,42 @@ class PermissionFrameworkState(BaseModel):
     clone, nested model references) do the sharing for free."""
 
     value: PermissionFramework = "ask"
+
+
+class _WorkspaceAccessLock:
+    """A non-reentrant lock manufactured fresh on `model_copy(deep=True)`, since a bare
+    `threading.Lock` private attribute can't be deep-copied and would otherwise break cloning a
+    subagent's `SessionConfig` off its parent's."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_WorkspaceAccessLock":
+        return _WorkspaceAccessLock()
+
+    def __eq__(self, other: object) -> bool:
+        """Any two locks are equal: `SessionConfig.__eq__` compares private attributes, and this
+        one has no state that bears on whether two configs represent the same values."""
+        return isinstance(other, _WorkspaceAccessLock)
+
+
+class WorkspaceAccessSnapshot(BaseModel):
+    """A self-consistent `workspace`/`read_dirs`/`write_dirs` triple, returned by
+    `SessionConfig.workspace_access_snapshot()` so a permission check never evaluates
+    `read_dirs`/`write_dirs` against a `workspace_root` from a different config generation than
+    the one an in-place config reload last published."""
+
+    model_config = ConfigDict(frozen=True)
+
+    workspace: Workspace
+    read_dirs: DirRules
+    write_dirs: DirRules
 
 
 class SessionConfig(BaseModel):
@@ -212,3 +249,23 @@ class SessionConfig(BaseModel):
     @permission_framework.setter
     def permission_framework(self, value: PermissionFramework) -> None:
         self.permission_framework_state.value = value
+
+    _workspace_access_lock: _WorkspaceAccessLock = PrivateAttr(default_factory=_WorkspaceAccessLock)
+    """Guards `workspace_access_snapshot()`/`apply_workspace_access()`."""
+
+    def workspace_access_snapshot(self) -> WorkspaceAccessSnapshot:
+        """Read `workspace`/`read_dirs`/`write_dirs` together as one self-consistent triple."""
+        with self._workspace_access_lock:
+            return WorkspaceAccessSnapshot(
+                workspace=self.workspace, read_dirs=self.read_dirs, write_dirs=self.write_dirs)
+
+    def apply_workspace_access(
+        self, *, workspace: Workspace, read_dirs: DirRules, write_dirs: DirRules,
+    ) -> None:
+        """Publish a new `workspace`/`read_dirs`/`write_dirs` triple as one atomic group, so a
+        concurrent `workspace_access_snapshot()` reader never observes a mix of old and new
+        values."""
+        with self._workspace_access_lock:
+            self.workspace = workspace
+            self.read_dirs = read_dirs
+            self.write_dirs = write_dirs

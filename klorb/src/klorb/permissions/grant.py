@@ -191,12 +191,17 @@ def apply_permission_grant(
     touch_read = action == "allow" or not is_write
     touch_write = is_write
 
-    if touch_read:
-        session_config.read_dirs = _apply_decision_to_table(
-            session_config.read_dirs, workspace_root, granted_paths, action)
-    if touch_write:
-        session_config.write_dirs = _apply_decision_to_table(
-            session_config.write_dirs, workspace_root, granted_paths, action)
+    new_read_dirs = (
+        _apply_decision_to_table(session_config.read_dirs, workspace_root, granted_paths, action)
+        if touch_read else session_config.read_dirs)
+    new_write_dirs = (
+        _apply_decision_to_table(session_config.write_dirs, workspace_root, granted_paths, action)
+        if touch_write else session_config.write_dirs)
+    # Published together even when only one changed, so a concurrent
+    # `workspace_access_snapshot()` reader never sees `read_dirs`/`write_dirs` out of sync with
+    # each other or with `workspace`.
+    session_config.apply_workspace_access(
+        workspace=session_config.workspace, read_dirs=new_read_dirs, write_dirs=new_write_dirs)
 
     if scope == "session":
         return

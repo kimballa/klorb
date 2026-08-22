@@ -5,7 +5,9 @@ docs/specs/permissions.md.
 """
 
 import tempfile
+import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,7 +24,7 @@ from klorb.permissions.directory_access import (
 )
 from klorb.permissions.file_access import FileRules
 from klorb.permissions.resource import PermissionOverride
-from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
+from klorb.permissions.table import PermissionAskRequired, Verdict, raise_if_not_allowed
 from klorb.permissions.workspace import (
     canonicalize_candidate,
     evaluate_write,
@@ -453,6 +455,84 @@ def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_pat
     path = (get_klorb_state_dir() / "session-logs" / "a.log").resolve(strict=False)
     with pytest.raises(PermissionError, match="EscalatePrivileges.*homedir"):
         evaluate_write(context, path)
+
+
+# --- workspace/read_dirs/write_dirs atomicity (THREADING-AUDIT.md finding 6) ---
+
+
+def test_workspace_access_snapshot_blocks_until_a_concurrent_multi_field_update_completes(
+    tmp_path: Path,
+) -> None:
+    """A `workspace_access_snapshot()` racing an in-progress `apply_workspace_access()` must
+    block rather than returning a `workspace`/`read_dirs`/`write_dirs` mix from two different
+    config generations."""
+    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    new_workspace = Workspace(path=tmp_path / "new")
+    new_read_dirs = DirRules(allow=[tmp_path / "new"])
+    new_write_dirs = DirRules(allow=[tmp_path / "new"])
+
+    raw_lock = session_config._workspace_access_lock._lock
+    raw_lock.acquire()
+    try:
+        # Simulate `apply_workspace_access()` interrupted after publishing `workspace` but
+        # before `read_dirs`/`write_dirs`.
+        session_config.workspace = new_workspace
+
+        snapshots: list[Any] = []
+        reader = threading.Thread(
+            target=lambda: snapshots.append(session_config.workspace_access_snapshot()))
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive(), "reader must block while the update is mid-publish"
+
+        session_config.read_dirs = new_read_dirs
+        session_config.write_dirs = new_write_dirs
+    finally:
+        raw_lock.release()
+
+    reader.join(timeout=5)
+    assert not reader.is_alive()
+    snapshot = snapshots[0]
+    assert snapshot.workspace.path == new_workspace.path
+    assert snapshot.read_dirs == new_read_dirs
+    assert snapshot.write_dirs == new_write_dirs
+
+
+def test_evaluate_write_never_evaluates_against_a_torn_workspace_read_dirs_write_dirs_triple(
+    tmp_path: Path,
+) -> None:
+    """A tool's `evaluate_write()` permission check racing a `_apply_workspace_config`-style
+    reload must evaluate the old or the new `workspace`/`read_dirs`/`write_dirs` triple, never a
+    mix of the two, so it lands on "ask" rather than incorrectly matching the stale `read_dirs`
+    entry."""
+    old_project = tmp_path / "old"
+    old_project.mkdir()
+    new_project = tmp_path / "new"
+    new_project.mkdir()
+
+    context = _context(
+        old_project, read_dirs=DirRules(allow=[old_project]), write_dirs=DirRules(allow=[old_project]))
+    session_config = context.session_config
+
+    raw_lock = session_config._workspace_access_lock._lock
+    raw_lock.acquire()
+    try:
+        session_config.workspace = Workspace(path=new_project)
+
+        verdicts: list[Verdict] = []
+        reader = threading.Thread(
+            target=lambda: verdicts.append(evaluate_write(context, old_project / "f.txt")))
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive(), "reader must block while the reload is mid-publish"
+
+        session_config.read_dirs = DirRules(allow=[new_project])
+        session_config.write_dirs = DirRules(allow=[new_project])
+    finally:
+        raw_lock.release()
+
+    reader.join(timeout=5)
+    assert verdicts[0] == "ask"
 
 
 # --- resolve_and_evaluate_write ---

@@ -245,7 +245,7 @@ where it is, in that case, or someplace more-universally-accessible.)
 This should rely on `Session._messages_lock`, already introduced for the `reset_session`/
 `interrupt` fix and finding 1's session-naming fix above.
 
-### 6. `_apply_workspace_config` rewrites live config while a turn reads it
+### 6. (FIXED) `_apply_workspace_config` rewrites live config while a turn reads it
 
 **Severity: medium-low.**
 
@@ -272,6 +272,22 @@ anything else take a reference to the existing SessionConfig and survive for lon
 be problematic to be stuck with the old session config? Or would they know to use the new one /
 always go back to `session.config` rather than keeping their own maybe-stale `_session_config`
 field?
+
+**Resolution:** the skepticism was well-founded — `ToolRegistry` holds `session_config` by
+reference for the life of a `Session` and never re-fetches it (its own docstring says as much:
+"`session_config`... is held by reference and mutated in place elsewhere"), so reassigning
+`self._session.config` wholesale would have stranded every future tool call on the stale object.
+The fix keeps `SessionConfig`'s identity untouched and instead makes `workspace`/`read_dirs`/
+`write_dirs` — the only fields `_apply_workspace_config` (and the TUI's equivalent
+`_apply_workspace_config`, and the interactive-grant flow's `apply_permission_grant`) ever update
+together — publish as one group under a private lock:
+`SessionConfig.apply_workspace_access()` writes all three inside the lock,
+`workspace_access_snapshot()` reads all three inside the same lock and returns them as a frozen
+`WorkspaceAccessSnapshot`, and `evaluate_write`/`resolve_and_evaluate_read`/
+`resolve_and_evaluate_write` in `klorb.permissions.workspace` each take one snapshot up front and
+evaluate the whole permission check against it, instead of re-reading `context.session_config.*`
+at several separate points. No writer or reader anywhere else in the codebase touches this trio,
+so the lock's blast radius is exactly the fields at risk.
 
 ### 7. `Session._next_child_index` increments without synchronization
 
