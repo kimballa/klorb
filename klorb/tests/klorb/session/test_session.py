@@ -159,6 +159,36 @@ def test_generate_session_id_is_unique_across_calls() -> None:
     assert generate_session_id() != generate_session_id()
 
 
+def test_allocate_child_index_is_unique_under_concurrent_calls(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Two subagents constructed concurrently under the same parent must receive distinct
+    `_child_index` values, never the same one."""
+    parent = Session(make_session_config(), provider=MagicMock())
+    barrier = threading.Barrier(20)
+
+    def make_child() -> Session:
+        barrier.wait(timeout=5.0)
+        return Session(make_session_config(), provider=MagicMock(), parent=parent)
+
+    children: list[Session] = []
+    children_lock = threading.Lock()
+
+    def make_child_and_record() -> None:
+        child = make_child()
+        with children_lock:
+            children.append(child)
+
+    workers = [threading.Thread(target=make_child_and_record) for _ in range(20)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=5.0)
+
+    indices = [child._child_index for child in children]
+    assert len(indices) == len(set(indices)) == 20
+
+
 def test_session_generates_id_when_not_given_explicitly(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
