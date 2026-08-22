@@ -102,6 +102,7 @@ class SessionBase:
     _standing_interjection_providers: dict[str, Callable[[], str | None]]
     _teardown_callbacks: dict[str, Callable[[], None]]
     _queued_messages: list[QueuedMessage]
+    _queued_message_lock: threading.Lock
     _user_msg_event: threading.Event
     _current_turn_handlers: TurnEventHandlers | None
     _current_turn_mentioned_skill_ids: frozenset[tuple[str, str]]

@@ -44,6 +44,7 @@ from klorb.session import (
     TurnEventHandlers,
     generate_session_id,
 )
+from klorb.session.events import QueuedMessage
 from klorb.session_naming import SessionName
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
@@ -2820,3 +2821,28 @@ def test_multi_ask_persistent_scope_applies_skill_grant(
     assert outcome.error is None
     assert config.skill_rules.allow == [("internal", "s")]
     mock_registry.instantiate_tool.assert_called_once_with("whatever", permission_override=None)
+
+
+# --- queued-message concurrency ---
+
+
+def test_drain_queued_messages_never_drops_a_concurrent_enqueue(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Drains racing a producer thread must hand every enqueued message to exactly one drain."""
+    session = Session(make_session_config(), provider=MagicMock())
+    total = 2000
+
+    def producer() -> None:
+        for index in range(total):
+            session.enqueue_queued_message(QueuedMessage(message_text=str(index)))
+
+    thread = threading.Thread(target=producer)
+    thread.start()
+    drained: list[QueuedMessage] = []
+    while thread.is_alive():
+        drained.extend(session.drain_queued_messages())
+    thread.join(timeout=5.0)
+    drained.extend(session.drain_queued_messages())
+
+    assert sorted(int(m.message_text) for m in drained) == list(range(total))

@@ -306,3 +306,24 @@ def test_deliver_event_message_queues_verbatim_when_a_turn_is_in_flight(
     provider.send_prompt.assert_not_called()
     drained = session.drain_queued_messages()
     assert drained == [QueuedMessage(message_text="something happened", origin="event")]
+
+
+def test_deliver_event_message_pings_a_registered_wake_handler_even_mid_turn(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """The wake ping fires whether or not a turn is in flight: the host's wake handler no-ops
+    while its turn still runs, and an enqueue landing just after that turn's final drain would
+    otherwise sit queued with nothing left to deliver it."""
+    provider = MagicMock()
+    session = Session(make_session_config(workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider)
+    session._current_turn_handlers = TurnEventHandlers()
+    woken: list[bool] = []
+    session.register_wake_handler(lambda: woken.append(True))
+
+    session.deliver_event_message("something happened")
+
+    assert woken == [True]
+    provider.send_prompt.assert_not_called()
+    drained = session.drain_queued_messages()
+    assert drained == [QueuedMessage(message_text="something happened", origin="event")]

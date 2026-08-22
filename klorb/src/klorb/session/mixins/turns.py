@@ -378,40 +378,43 @@ class SessionTurnsMixin(SessionBase):
     def deliver_event_message(self, text: str) -> None:
         """Deliver an event handler's aggregate `message` into this session's conversation.
 
-        If a turn is already running, `text` is queued for that turn's host to pick up once it
-        ends. Otherwise `text` is queued and `deliver_wake()` pings the registered wake handler.
-        A dormant subagent has no such host at all: `_deliver_event_to_dormant_subagent` starts
-        a fresh turn directly instead."""
-        if self.current_turn_handlers() is not None:
-            self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
-            return
+        A session with a wake handler queues `text` and pings the handler, in flight or not, so
+        a message enqueued as a turn ends is never left with nothing to deliver it. A subagent
+        instead has its delivery decided under its parent tracker's dispatch guard, and a session
+        with neither must have a turn in flight to queue into."""
         if self._wake_handler is not None:
             self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             self.deliver_wake()
             return
         if self.parent is not None:
-            self._deliver_event_to_dormant_subagent(text)
+            self._deliver_event_to_subagent(text)
+            return
+        if self.current_turn_handlers() is not None:
+            self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
             return
         raise ChainedHookMessageUndeliverableError(
             f"Event delivered to idle session {self.id} with no live host to show it to: {text!r}")
 
-    def _deliver_event_to_dormant_subagent(self, text: str) -> None:
-        """Starts a fresh, uninterested turn directly, since a dormant subagent has no live host
-        to queue an event message into. Silently skipped, never raising, if doing so would
+    def _deliver_event_to_subagent(self, text: str) -> None:
+        """Deliver an event message to this subagent under its parent tracker's dispatch guard:
+        enqueue into a still-running turn, or start a fresh, uninterested turn if it's dormant.
+        Silently skipped, never raising, if a fresh turn would
         exceed `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`."""
         from klorb.agents.policy import concurrency_limits_exceeded, dispatch_subagent_turn
         assert self.parent is not None
-        assert self._process_config is not None
         tracker = self.parent.subagent_tracker
         with tracker.dispatch_guard():
             current = tracker.current_handle(self.id)
             if current is None:
+                # An untracked child (never dispatched through the tracker) can still queue
+                # into a turn something else is running on it.
+                if self.current_turn_handlers() is not None:
+                    self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
                 return
             if current.state == "running":
-                # Raced between the caller's earlier idle-check and this lock. Queue like an
-                # ordinary in-flight event instead of starting a second, overlapping turn.
                 self.enqueue_queued_message(QueuedMessage(message_text=text, origin="event"))
                 return
+            assert self._process_config is not None
             if concurrency_limits_exceeded(self._process_config, self.parent):
                 logger.info(
                     "Event delivered to dormant subagent %s skipped: would exceed subagent "

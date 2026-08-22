@@ -177,6 +177,28 @@ def test_user_message_interrupts_wait(
         "incomplete": True, "incomplete_reason": "new_message"}
 
 
+def test_message_already_queued_before_the_wait_interrupts_immediately(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A message enqueued before apply() started must interrupt the wait up front rather than
+    letting the wait clear its event signal and block on top of it."""
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    context.session.subagent_tracker.register(SubagentHandle(
+        session=Session(make_session_config(), provider=provider, parent=context.session),
+        thread=threading.Thread(target=lambda: threading.Event().wait(30)),
+        cancel_event=threading.Event(), role="explorer", title="never finishes"))
+    context.session.enqueue_queued_message(QueuedMessage(message_text="already waiting"))
+
+    with pytest.raises(ToolInterruptError) as exc_info:
+        WaitForSubagentTool(context).apply({})
+
+    assert exc_info.value.category == "signaled"
+    assert exc_info.value.response_body == {
+        "incomplete": True, "incomplete_reason": "new_message"}
+
+
 def test_timeout_works_even_when_user_msg_event_is_set(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

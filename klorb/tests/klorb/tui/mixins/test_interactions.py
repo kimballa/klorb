@@ -777,28 +777,24 @@ async def test_release_pending_interaction_unblocks_a_parked_confirm(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """The lever behind both the "model hangs" and "can't quit" fixes: while an interaction panel
-    is awaiting the user, `_release_pending_interaction` resolves its decision future with a safe
+    is awaiting the user, `_release_pending_interactions` resolves its decision future with a safe
     default (deny/once here), releasing whatever is blocked on it -- a real turn's worker thread is
     parked in `App.call_from_thread` on exactly this future. `_signal_turn_cancellation` fires it,
-    and the callback is cleared once the confirm returns. See
+    and the registration is dropped once the confirm returns. See
     docs/adrs/00120-unblock-worker-thread-before-teardown-so-quit-cannot-hang.md."""
     app = ReplApp(session=_session(MagicMock(), make_session_config))
 
     async with app.run_test() as pilot:
         task = asyncio.ensure_future(app._confirm_permission_ask(_command_ask_ctx("echo hi")))
         await _wait_until(pilot, lambda: bool(app.query(PermissionAskPanel)))
-        # Narrow a local rather than the instance attribute: asserting `is not None` directly on
-        # `app._release_pending_interaction` would leave mypy believing it stays non-None across the
-        # `await` below, making the later `is None` check (and everything after it) unreachable.
-        pending_release = app._release_pending_interaction
-        assert pending_release is not None
+        assert len(app._pending_interaction_releases) == 1
 
         app._signal_turn_cancellation()
         decision = await task
 
         assert decision.action == "deny"
         assert decision.scope == "once"
-        assert app._release_pending_interaction is None
+        assert not app._pending_interaction_releases
         assert not app.query(PermissionAskPanel)
 
 

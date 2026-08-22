@@ -403,7 +403,10 @@ richer view from that same detail.
   send in exactly the order the callbacks fired (a small `_ExtNotificationItem` tag on the queue
   item is what lets the pump tell an ext notification apart from an ordinary `session/update`).
   One queue and one pump task per iteration is what makes this an actual guarantee rather than an
-  accident of scheduling — independently-scheduled coroutines wouldn't preserve order. Each
+  accident of scheduling — independently-scheduled coroutines wouldn't preserve order. A failed
+  send is logged and its queue item still marked done: a pump that died on one delivery would
+  leave every later item unacknowledged, and the next blocking ask's `queue.join()` (below) would
+  then park the worker thread forever. Each
   iteration always drains and stops its own pump task in a `finally`, whether that iteration's
   `send_turn()` succeeds, raises `klorb.api_provider.ResponseAborted` (a cancelled turn), or
   raises anything else — the exception is held, not re-raised immediately, so the queued-message

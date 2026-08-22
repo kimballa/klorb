@@ -227,28 +227,32 @@ async def test_selecting_a_subagent_does_not_lose_a_message_appended_mid_render(
     handle.session.load_messages([_message("first")])
     app = ReplApp(session=session)
 
-    async with app.run_test() as pilot:
-        original_render = ReplApp._render_message_range
+    original_render = ReplApp._render_message_range
 
-        def render_then_append(
-            self: ReplApp, messages: list[Message], response_lookup: list[Message] | None = None,
-        ) -> list[Widget]:
-            widgets = original_render(self, messages, response_lookup)
-            handle.session.load_messages([*handle.session.messages, _message("appended mid-render")])
-            return widgets
+    def render_then_append(
+        self: ReplApp, messages: list[Message], response_lookup: list[Message] | None = None,
+    ) -> list[Widget]:
+        widgets = original_render(self, messages, response_lookup)
+        handle.session.load_messages([*handle.session.messages, _message("appended mid-render")])
+        return widgets
 
-        with patch.object(ReplApp, "_render_message_range", render_then_append):
-            await app._select_session(handle.session.id)
-        await pilot.pause()
+    # This test drives `_tick_subagents_panel` itself, so the recurring timer `on_mount` would
+    # otherwise start is suppressed: an automatic tick landing before the rendered-count assertion
+    # below would render the appended message early and legitimately bump the count to 2.
+    with patch.object(ReplApp, "_start_subagents_panel_timer", return_value=None):
+        async with app.run_test() as pilot:
+            with patch.object(ReplApp, "_render_message_range", render_then_append):
+                await app._select_session(handle.session.id)
+            await pilot.pause()
 
-        assert app._subagent_history_rendered_count == 1
+            assert app._subagent_history_rendered_count == 1
 
-        app._tick_subagents_panel()
-        await pilot.pause()
+            app._tick_subagents_panel()
+            await pilot.pause()
 
-        container = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
-        responses = list(container.query(Markdown))
-        assert any(widget.source == "appended mid-render" for widget in responses)
+            container = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+            responses = list(container.query(Markdown))
+            assert any(widget.source == "appended mid-render" for widget in responses)
 
 
 async def test_selecting_a_subagent_with_a_long_transcript_collapses_the_older_messages(
