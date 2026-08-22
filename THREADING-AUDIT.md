@@ -187,7 +187,7 @@ the notification to quit basically simultaneously. We should wait max 5 seconds 
 *all* of them, collectively. If that's too crazy to orchestrate, clamp on
 _SHUTDOWN_JOIN_TIMEOUT_SECONDS, maybe 2 seconds?
 
-### 4. An ACP `session/cancel` is silently dropped between chained turns
+### 4. (FIXED) An ACP `session/cancel` is silently dropped between chained turns
 
 **Severity: medium.**
 

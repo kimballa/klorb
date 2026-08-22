@@ -261,14 +261,13 @@ class KlorbAcpAgent(acp.Agent):
         return acp.PromptResponse(stop_reason="end_turn")
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        """Set the active turn's cancel event, if one is running for `session_id` -- a no-op
-        otherwise (unknown session, or no turn in flight)."""
-        if self._session is None or session_id != self._session.id:
+        """Latch a cancellation request on the turn bridge for `session_id`. A no-op if the
+        session is unknown or no turn is in flight."""
+        if self._session is None or session_id != self._session.id or not self._turn_in_flight:
             return
-        cancel_event = self._session.active_cancel_event
-        if cancel_event is not None:
-            logger.debug("session/cancel signaling in-flight turn for ACP session %s", session_id)
-            cancel_event.set()
+        assert self._turn_bridge is not None
+        logger.debug("session/cancel signaling in-flight turn for ACP session %s", session_id)
+        self._turn_bridge.request_cancel()
 
     def close(self) -> None:
         """Close any live session."""

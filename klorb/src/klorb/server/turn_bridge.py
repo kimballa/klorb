@@ -122,6 +122,10 @@ class TurnBridge:
     `klorb.permissions.risk_classifier.resolve_item_risk_assessment`/`record_decision_history`
     for a `BashTool` ask.
 
+    `request_cancel()` latches a cancellation request on the bridge itself rather than only on
+    whichever `threading.Event` the current chained iteration built, so a `session/cancel`
+    landing in the gap between two chained turns still takes effect on the next one.
+
     `run_turn()` always drains and stops the pump task in a `finally`, whether `send_turn()`
     succeeds, raises `ResponseAborted`, or raises anything else -- and, once drained, sends one
     `_klorb/usage` notification carrying the session's resulting token tally. Intermediate
@@ -159,6 +163,16 @@ class TurnBridge:
         self._process_config = process_config
         self._raise_tool_call_limit_capable = raise_tool_call_limit_capable
         self._ask_user_questions_capable = ask_user_questions_capable
+        self._current_cancel_event: threading.Event | None = None
+        self._cancel_requested = False
+
+    def request_cancel(self) -> None:
+        """Latch a cancellation request for the turn (or chain of turns) `run_turn()` is
+        currently running. Sets the live `threading.Event` immediately if one exists;
+        otherwise the next chained iteration picks up the latch and starts already cancelled."""
+        self._cancel_requested = True
+        if self._current_cancel_event is not None:
+            self._current_cancel_event.set()
 
     def fetch_plan_update(self) -> acp.schema.AgentPlanUpdate | None:
         """Fetch `self._session`'s chainlink issues and build the ACP `plan` update to send, or
@@ -209,6 +223,7 @@ class TurnBridge:
         response_text = ""
         pending_error: Exception | None = None
         _last_usage_update: float = 0.0
+        self._cancel_requested = False
         while True:
             queue: asyncio.Queue[Any] = asyncio.Queue()
             call_id_stack: list[str] = []
@@ -365,6 +380,9 @@ class TurnBridge:
                 return bool(result.get("approved", False))
 
             cancel_event = threading.Event()
+            self._current_cancel_event = cancel_event
+            if self._cancel_requested:
+                cancel_event.set()
             handlers = TurnEventHandlers(
                 on_chunk=on_chunk, on_thinking_chunk=on_thinking_chunk,
                 on_tool_call_started=on_tool_call_started, on_tool_call=on_tool_call,
@@ -408,6 +426,7 @@ class TurnBridge:
                 pending_image_fragments = None
                 enqueue(_SENTINEL)
                 await pump_task
+                self._current_cancel_event = None
 
             # `callbacks` is omitted (not this iteration's `handlers`): this drain runs after
             # this iteration's pump task has already stopped, so `handlers.on_send_queued_message`

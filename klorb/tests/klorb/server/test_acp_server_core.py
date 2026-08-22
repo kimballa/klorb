@@ -17,7 +17,8 @@ from server.acp_harness import AcpHarness, build_acp_harness
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
 from klorb.message import Message
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import Session, SessionConfig
+from klorb.session.events import QueuedMessage
 from klorb.tools.tasks.common import chainlink_available
 from klorb.workspace import TrustManager
 from klorb.workspace.session_store import touch_recent_session, write_session_state
@@ -350,6 +351,56 @@ async def test_cancel_aborts_the_turn_and_keeps_it_in_history(
     assert user_message.processing_state == "aborted"
     assistant_message = next(m for m in session.messages if m.role == "assistant")
     assert assistant_message.processing_state == "aborted"
+
+
+async def test_cancel_landing_between_chained_turns_still_cancels_the_next_one(
+    make_harness: Callable[..., Any], tmp_path: Path,
+) -> None:
+    """A `session/cancel` that lands after one chained turn ends and before the next one
+    starts -- exactly where `Session.active_cancel_event` is momentarily `None` -- must still
+    cancel that next turn instead of being silently dropped."""
+    mock_provider = MagicMock()
+    call_count = 0
+    session: Session | None = None
+
+    def send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
+    ) -> ProviderResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            assert session is not None
+            session.enqueue_queued_message(QueuedMessage(message_text="follow-up"))
+            return _reply("first")
+        assert cancel_event is not None
+        if cancel_event.wait(timeout=5):
+            raise ResponseAborted()
+        raise AssertionError("second chained turn's cancel_event was never set")
+
+    mock_provider.send_prompt.side_effect = send_prompt
+    harness = await make_harness(provider=mock_provider)
+    await harness.client.initialize(protocol_version=acp.PROTOCOL_VERSION)
+    session_response = await harness.client.new_session(cwd=str(tmp_path), mcp_servers=[])
+    session_id = session_response.session_id
+    session = harness.server.agent.session
+    assert session is not None
+    turn_bridge = harness.server.agent._turn_bridge
+    assert turn_bridge is not None
+    real_drain: Callable[..., list[QueuedMessage]] = session.drain_queued_messages
+
+    def drain_then_cancel(*args: Any, **kwargs: Any) -> list[QueuedMessage]:
+        drained = real_drain(*args, **kwargs)
+        turn_bridge.request_cancel()
+        return drained
+
+    session.drain_queued_messages = drain_then_cancel  # type: ignore[method-assign]
+
+    response = await harness.client.prompt(session_id=session_id, prompt=[acp.text_block("hi")])
+
+    assert response.stop_reason == "cancelled"
+    assert call_count == 2
 
 
 async def test_provider_error_is_handled_gracefully(
