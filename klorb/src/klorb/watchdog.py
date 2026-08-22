@@ -8,7 +8,8 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from typing import NoReturn
 
 _DEFAULT_MAX_POLL_SECONDS = 1.0
@@ -76,6 +77,7 @@ class LivenessWatchdog:
         self._last_snooze: float = clock()
         self._stop: threading.Event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._paused: bool = False
         self._fired: bool = False
         """True once `on_expire` has been invoked."""
 
@@ -107,8 +109,22 @@ class LivenessWatchdog:
         more than once, or when never started."""
         self._stop.set()
 
+    @contextmanager
+    def suspended(self) -> Generator[None, None, None]:
+        """Wrap a known-blocking span on the snoozing thread (e.g. a subagent-teardown join
+        cascade) so it can't be mistaken for a wedge. Expiry checks are skipped for the
+        duration, and the clock is re-snoozed on exit."""
+        self._paused = True
+        try:
+            yield
+        finally:
+            self._paused = False
+            self.snooze()
+
     def _run(self) -> None:
         while not self._stop.wait(self._poll):
+            if self._paused:
+                continue
             if self._clock() - self._last_snooze >= self._timeout:
                 self._fired = True
                 self._on_expire()

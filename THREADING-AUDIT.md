@@ -158,7 +158,7 @@ new turn. Abort the current one first as if we ^C'd. Wait for that abort to be p
 new one. (Because the user could have just killed the whole process and restarted `klorb --new`. They
 want a clear session. Get there.)
 
-### 3. `Session.close()` runs a multi-second cascade on the event-loop thread
+### 3. (FIXED) `Session.close()` runs a multi-second cascade on the event-loop thread
 
 **Severity: medium-high.** Can trip the liveness watchdog and force-exit a healthy process.
 

@@ -170,7 +170,8 @@ class KeyActionsMixin(ReplAppBase):
     async def action_quit(self) -> None:
         """Ctrl+Q (and the built-in "Quit the application" system command): close the live
         session and exit."""
-        self._session.close()
+        with self._watchdog.suspended():
+            self._session.close()
         self._begin_exit()
 
     def _begin_exit(self) -> None:

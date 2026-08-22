@@ -334,6 +334,45 @@ def test_cascade_close_subagents_terminates_a_still_running_subagent(
     assert "harness closed before it finished" in relayed.content
 
 
+def test_cascade_close_subagents_signals_every_running_handle_before_joining_any(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """Two siblings should be cancelled together up front, not one-at-a-time behind each
+    other's join -- otherwise N stragglers stack to N times a single join timeout."""
+    parent = Session(make_session_config(), provider=MagicMock())
+    child_a = _child_session(parent, make_session_config)
+    child_b = _child_session(parent, make_session_config)
+    cancel_a = threading.Event()
+    cancel_b = threading.Event()
+    a_started = threading.Event()
+    b_cancelled_before_a_exited = threading.Event()
+
+    def worker_a() -> None:
+        a_started.set()
+        if cancel_b.wait(timeout=5.0):
+            b_cancelled_before_a_exited.set()
+        cancel_a.wait(timeout=5.0)
+
+    def worker_b() -> None:
+        cancel_b.wait(timeout=5.0)
+
+    thread_a = threading.Thread(target=worker_a, daemon=True)
+    thread_b = threading.Thread(target=worker_b, daemon=True)
+    handle_a = SubagentHandle(
+        session=child_a, thread=thread_a, cancel_event=cancel_a, role="explorer", title="a")
+    handle_b = SubagentHandle(
+        session=child_b, thread=thread_b, cancel_event=cancel_b, role="explorer", title="b")
+    parent.subagent_tracker.register(handle_a)
+    parent.subagent_tracker.register(handle_b)
+    thread_a.start()
+    thread_b.start()
+    assert a_started.wait(timeout=5.0)
+
+    cascade_close_subagents(parent)
+
+    assert b_cancelled_before_a_exited.is_set()
+
+
 def test_walk_session_tree_returns_only_the_root_when_it_has_no_subagents(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

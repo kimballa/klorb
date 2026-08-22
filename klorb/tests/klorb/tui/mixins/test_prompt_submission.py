@@ -1098,6 +1098,27 @@ async def test_clear_closes_the_outgoing_session(make_session_config: Callable[.
 
 
 
+async def test_clear_suspends_the_watchdog_around_closing_the_outgoing_session(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`_do_replace_session` closes the outgoing session's subagent-teardown cascade under
+    `_watchdog.suspended()`, so a slow teardown can't be mistaken for a wedged event loop -- see
+    docs/specs/interrupt-and-liveness-watchdog.md."""
+    mock_provider = MagicMock()
+    app = ReplApp(session=_session(mock_provider, make_session_config))
+
+    async with app.run_test() as pilot:
+        outgoing_session = app._session
+        paused_during_teardown: list[bool] = []
+        outgoing_session.register_teardown(
+            "probe", lambda: paused_during_teardown.append(app._watchdog._paused))
+
+        await _invoke_clear_session(pilot)
+
+        assert paused_during_teardown == [True]
+        assert app._watchdog._paused is False
+
+
 async def test_clear_carries_over_thinking_settings_from_process_config(
     tmp_path: Path,
     make_session_config: Callable[..., SessionConfig],

@@ -31,9 +31,11 @@ AGENT_GROUP_INTERJECTION_SUBJECT = "AgentGroup"
 """`SystemInterjection subject=` value the AgentGroup standing interjection uses to notify
 subagents of group membership and activity changes."""
 
-_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
-"""How long `cascade_close_subagents` waits for a still-running subagent's background thread to
-notice `cancel_event` and finish, before giving up and relaying a termination note without it."""
+_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 2.0
+"""How long `cascade_close_subagents` waits, per subagent, for a still-running background thread
+to notice `cancel_event` and finish, before giving up and relaying a termination note without
+it. Every running subagent in the tree is signaled before any join, so this bounds one
+straggler's wait rather than stacking across siblings."""
 
 SubagentState = Literal["running", "finished"]
 """A subagent's own lifecycle state: `"running"` while its background turn is actively
@@ -308,11 +310,16 @@ def find_session_in_group(session: "Session", agent_id: str) -> "Session | None"
 def cascade_close_subagents(session: "Session") -> None:
     """Recursively close every subagent `session` has directly or indirectly created, deepest
     first, relaying any not-yet-delivered output (or, for one still running, a termination
-    note) directly into `session`'s own message history before returning."""
+    note) directly into `session`'s own message history before returning. Every still-running
+    subagent anywhere in the tree is signaled to cancel up front, so they unwind concurrently
+    instead of waiting their turn behind an earlier sibling's join."""
+    for node in walk_session_tree(session):
+        if node.handle is not None and node.handle.state == "running":
+            node.handle.cancel_event.set()
+
     for handle in session.subagent_tracker.handles():
         cascade_close_subagents(handle.session)
         if handle.state == "running":
-            handle.cancel_event.set()
             handle.thread.join(timeout=_SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         if not handle.delivered and handle.parent_interested:
             output = (

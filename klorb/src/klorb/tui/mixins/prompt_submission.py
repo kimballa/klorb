@@ -222,7 +222,8 @@ class PromptSubmissionMixin(ReplAppBase):
         old_session: Session = self._session
 
         workspace = old_session.config.workspace
-        old_session.close()
+        with self._watchdog.suspended():
+            old_session.close()
 
         # Re-read the config layers from disk into a fresh `SessionConfig` (only the
         # session-scoped parts), so a config change made after this process started is
@@ -572,7 +573,8 @@ class PromptSubmissionMixin(ReplAppBase):
                 self._quit_on_success = False
             elif self._quit_on_success:
                 self._final_turn_response = response_text
-                self._session.close()
+                with self._watchdog.suspended():
+                    self._session.close()
                 self._begin_exit()
         if self._exit_requested:
             self.exit()

@@ -41,6 +41,25 @@ def test_watchdog_stop_before_lapse_prevents_fire() -> None:
     assert watchdog.fired is False
 
 
+def test_watchdog_suspended_does_not_fire_for_a_known_blocking_span() -> None:
+    fired = threading.Event()
+    watchdog = LivenessWatchdog(0.05, fired.set, poll_seconds=0.01)
+    watchdog.start()
+    with watchdog.suspended():
+        time.sleep(0.3)
+    assert not fired.is_set()
+
+
+def test_watchdog_suspended_resnoozes_on_exit_so_it_fires_normally_afterward() -> None:
+    fired = threading.Event()
+    watchdog = LivenessWatchdog(0.05, fired.set, poll_seconds=0.01)
+    watchdog.start()
+    with watchdog.suspended():
+        pass
+    assert not fired.wait(0.02), "resume() should have re-snoozed rather than firing immediately"
+    assert fired.wait(2.0), "watchdog never fired after the suspended span ended"
+
+
 def test_watchdog_disabled_when_timeout_not_positive() -> None:
     on_expire = MagicMock()
     watchdog = LivenessWatchdog(0, on_expire)
