@@ -5,6 +5,7 @@ the mixins in `klorb.tui.mixins`.
 
 import asyncio
 import threading
+import weakref
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
@@ -438,7 +439,11 @@ class ReplApp(
         regardless of what was selected before switching to free text, since there's no meaningful
         grid cell an `Input` submission corresponds to).
         """
-        self._tool_call_widgets: list[ToolCallStatic] = []
+        self._tool_call_widgets: weakref.WeakSet[ToolCallStatic] = weakref.WeakSet()
+        """Every `ToolCallStatic` built for this process, for the Ctrl+O detail toggle. A
+        `WeakSet` so a widget the history virtualizer collapses and removes drops out on its
+        own once nothing else references it, without the virtualizer needing to know about
+        this collection."""
         self._running_tool_call_widgets: dict[str, RunningToolCallStatic] = {}
         self._turn_waiting_widget: TurnWaitingStatic | None = None
         """The `TurnWaitingStatic` mounted by `_submit_prompt` for the in-flight turn, if it

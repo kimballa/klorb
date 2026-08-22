@@ -4,6 +4,7 @@
 
 import asyncio
 import threading
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -72,7 +73,7 @@ class ReplAppBase(App[None]):
     _exit_requested: bool
     _last_permission_action: Literal["allow", "deny"]
     _last_permission_scope: Literal["once", "session", "workspace", "homedir"]
-    _tool_call_widgets: list[ToolCallStatic]
+    _tool_call_widgets: weakref.WeakSet[ToolCallStatic]
     _running_tool_call_widgets: dict[str, RunningToolCallStatic]
     _tool_call_detail_shown: bool
     _history_pinned_to_bottom: bool

@@ -204,7 +204,7 @@ class RenderingMixin(ReplAppBase):
         label_widget = Static(TOOL_USE_LABEL, classes="tool-call-label")
         widget = ToolCallStatic(rendered.summary_content, rendered.detail_content, rendered.on_click)
         widget.set_detail_shown(self._tool_call_detail_shown)
-        self._tool_call_widgets.append(widget)
+        self._tool_call_widgets.add(widget)
         return widget, label_widget
 
     def _mount_tool_call_widget(self, rendered: RenderedToolCall) -> tuple[ToolCallStatic, Static]:
@@ -248,7 +248,7 @@ class RenderingMixin(ReplAppBase):
         widget = RunningToolCallStatic(summary_text)
         history.mount(widget)
         self._scroll_if_pinned(history, was_pinned)
-        self._tool_call_widgets.append(widget)
+        self._tool_call_widgets.add(widget)
         self._running_tool_call_widgets[call_id] = widget
         self._update_status_bar()
         return widget

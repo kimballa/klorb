@@ -833,6 +833,34 @@ async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets(
     assert len(app._tool_call_widgets) == 1
 
 
+async def test_clear_session_empties_the_tool_call_widget_trackers(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`/clear` must not leave a stale `ToolCallStatic`/`RunningToolCallStatic` from the
+    outgoing session in `_tool_call_widgets`/`_running_tool_call_widgets`, since Ctrl+O
+    (`action_toggle_tool_call_detail`) walks the former for every widget in the process."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("done"),
+    ]
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "please echo"
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app._tool_call_widgets) == 1
+
+        await _invoke_clear_session(pilot)
+
+        assert len(app._tool_call_widgets) == 0
+        assert app._running_tool_call_widgets == {}
+
+
 async def test_each_tool_call_round_gets_its_own_thinking_and_response_blocks(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

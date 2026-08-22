@@ -344,7 +344,7 @@ class AtomicCounter:
 
 ... Then use that.
 
-### 8. `ReplApp._tool_call_widgets` is never pruned
+### 8. (FIXED) `ReplApp._tool_call_widgets` is never pruned
 
 **Severity: low.** A leak rather than a race, but it is in the same "orphan widget" family and is
 cheap to fix.
@@ -361,6 +361,15 @@ the virtualizer unmounts a chunk (or hold them weakly).
 **User's response:**
 
 This seems like a great use of a weak ref array. Agree with explicit clear on _do_replace_session. Regarding eviction on virtualizer-unmount: make an assessment regarding how frequently that would run or how cumbersome (is it O(1) or O(n) to evict a given item?) that would be; if it would adversely impact virtualization performance, just let the weak refs do their job.
+
+**Resolution:** `_tool_call_widgets` is now a `weakref.WeakSet[ToolCallStatic]`; `_do_replace_session`
+clears it (and `_running_tool_call_widgets`) explicitly alongside `history.remove_children()`.
+Evicting from the virtualizer side was skipped: `VirtualizedHistoryContainer._collapse` already
+drops its own `chunk.widgets` list when it removes a chunk's widgets, so once a widget is out of
+`_tool_call_widgets`' `WeakSet` and out of the virtualizer's own list, nothing keeps it alive and
+the weak entry disappears on its own — teaching the virtualizer about a second, app-level tracking
+collection would add an O(n) linear scan (or a second index) per collapse purely to do
+housekeeping the garbage collector already does for free.
 
 ## Testing gaps
 

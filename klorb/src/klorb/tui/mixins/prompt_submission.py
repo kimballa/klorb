@@ -273,6 +273,8 @@ class PromptSubmissionMixin(ReplAppBase):
 
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
+        self._tool_call_widgets.clear()
+        self._running_tool_call_widgets.clear()
         self._history_virtualizer = self._new_history_virtualizer(history)
         self._mount_mascot_greeting(history)
         history.mount(Static("Session cleared.", classes="notice"))
