@@ -17,7 +17,7 @@ from klorb.permissions.resource import (
     StructuralResource,
 )
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 
 # --- PathResource ---
@@ -37,7 +37,7 @@ def test_path_resource_is_persistable() -> None:
 
 
 def test_path_resource_grant_preview_falls_back_to_containing_directory(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     target = tmp_path / "f.txt"
 
     preview = PathResource(path=target, is_write=True).grant_preview(session_config)
@@ -46,7 +46,7 @@ def test_path_resource_grant_preview_falls_back_to_containing_directory(tmp_path
 
 
 def test_path_resource_apply_grant_persists_to_session_config(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     target = tmp_path / "f.txt"
 
     PathResource(path=target, is_write=True).apply_grant(
@@ -79,7 +79,7 @@ def test_command_resource_header_kind_and_preview_text() -> None:
 
 
 def test_command_resource_grant_preview_falls_back_to_literal_argv(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = CommandResource(argv=("git", "push", "origin"))
 
     preview = resource.grant_preview(session_config)
@@ -89,7 +89,7 @@ def test_command_resource_grant_preview_falls_back_to_literal_argv(tmp_path: Pat
 
 def test_command_resource_grant_preview_promotes_a_matched_ask_rule(tmp_path: Path) -> None:
     session_config = SessionConfig(
-        workspace=Workspace(path=tmp_path),
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)),
         command_rules=CommandRules(ask=[["git", "push", "?"]]))
     resource = CommandResource(argv=("git", "push", "origin"))
 
@@ -99,7 +99,7 @@ def test_command_resource_grant_preview_promotes_a_matched_ask_rule(tmp_path: Pa
 
 
 def test_command_resource_apply_grant_uses_explicit_patterns_when_given(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = CommandResource(argv=("grep", "-rn", "TODO"))
 
     resource.apply_grant(
@@ -109,7 +109,7 @@ def test_command_resource_apply_grant_uses_explicit_patterns_when_given(tmp_path
 
 
 def test_command_resource_apply_grant_recomputes_when_patterns_omitted(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = CommandResource(argv=("git", "status"))
 
     resource.apply_grant("allow", "session", session_config, None)
@@ -135,7 +135,7 @@ def test_skill_resource_header_kind_and_preview_text() -> None:
 
 
 def test_skill_resource_grant_preview_names_itself_with_no_widening(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = SkillResource(skill_id=("internal", "some-skill"))
 
     preview = resource.grant_preview(session_config)
@@ -144,7 +144,7 @@ def test_skill_resource_grant_preview_names_itself_with_no_widening(tmp_path: Pa
 
 
 def test_skill_resource_apply_grant_persists_to_session_config(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = SkillResource(skill_id=("workspace", "add-cli-flag"))
 
     resource.apply_grant("allow", "session", session_config, None)
@@ -178,7 +178,7 @@ def test_domain_resource_domain_is_derived_from_the_url_not_stored_separately() 
 
 
 def test_domain_resource_grant_preview_and_apply_grant_key_on_the_domain(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = DomainResource(url="https://example.com/some/path")
 
     preview = resource.grant_preview(session_config)
@@ -189,7 +189,7 @@ def test_domain_resource_grant_preview_and_apply_grant_key_on_the_domain(tmp_pat
 
 
 def test_domain_resource_bash_rule_set_grants_into_bash_domain_rules(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = DomainResource(url="https://example.com/some/path", rule_set="bash")
 
     resource.apply_grant("allow", "session", session_config, None)
@@ -224,7 +224,7 @@ def test_memory_resource_is_persistable() -> None:
 
 
 def test_memory_resource_grant_preview_names_itself(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     resource = MemoryResource(access="write", filename="notes.md")
 
     preview = resource.grant_preview(session_config)
@@ -233,7 +233,7 @@ def test_memory_resource_grant_preview_names_itself(tmp_path: Path) -> None:
 
 
 def test_memory_resource_apply_grant_persists_to_session_config(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     MemoryResource(access="write", filename="notes.md").apply_grant(
         "allow", "session", session_config, None)
@@ -264,13 +264,13 @@ def test_structural_resource_is_not_persistable() -> None:
 
 
 def test_structural_resource_grant_preview_is_none(tmp_path: Path) -> None:
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     assert StructuralResource(reason="some reason").grant_preview(session_config) is None
 
 
 def test_structural_resource_apply_grant_is_a_noop(tmp_path: Path) -> None:
     """A structural item has no persistable rule."""
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     process_config = ProcessConfig()
     before_command_rules = session_config.command_rules
     before_read_dirs = session_config.read_dirs

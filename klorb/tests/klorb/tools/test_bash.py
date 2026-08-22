@@ -34,7 +34,7 @@ from klorb.permissions.resource import (
 from klorb.permissions.shell_parse import parse_command
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.bash import (
     BashTool,
     _env_export_lines,
@@ -519,7 +519,7 @@ def test_web_domains_and_bash_domains_are_independent(tmp_path: Path) -> None:
     evaluation, and vice versa -- the two tables are genuinely independent, not two views onto
     one shared table."""
     session_config = SessionConfig(
-        workspace=Workspace(path=tmp_path, trusted=True),
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path, trusted=True)),
         bash_domain_rules=DomainRules(allow=["example.com"]))
     assert session_config.web_domain_rules.allow == []
     session_config.web_domain_rules = DomainRules(allow=["other.example"])
@@ -566,7 +566,8 @@ def test_session_dispatch_reports_nonzero_exit_as_business_logic_error(tmp_path:
     exit_status), even though `is_error` is `True`, so a failed command's diagnostic detail isn't
     dropped."""
     config = SessionConfig(
-        model="some/model", workspace=Workspace(path=tmp_path, trusted=True),
+        model="some/model",
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path, trusted=True)),
         command_rules=CommandRules(allow=[["false"]]))
     tool_registry = ToolRegistry.discover_tools(ProcessConfig(), config)
     mock_provider = MagicMock()
@@ -776,19 +777,22 @@ def test_build_bash_env_always_shares_home_and_user(
     monkeypatch.setenv("HOME", "/home/someone")
     monkeypatch.setenv("USER", "someone")
     monkeypatch.delenv("UNRELATED_SECRET", raising=False)
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
+    env = build_bash_env(
+        SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))), _BASH_COMMAND)
     assert env == {
         "HOME": "/home/someone", "USER": "someone", "WORKSPACE_ROOT": str(tmp_path.resolve()),
         "SHELL": _BASH_COMMAND, "BASH": _BASH_COMMAND}
 
 
 def test_build_bash_env_always_sets_workspace_root(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
+    env = build_bash_env(
+        SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))), _BASH_COMMAND)
     assert env["WORKSPACE_ROOT"] == str(tmp_path.resolve())
 
 
 def test_build_bash_env_always_sets_shell_and_bash_to_bash_command(tmp_path: Path) -> None:
-    env = build_bash_env(SessionConfig(workspace=Workspace(path=tmp_path)), _BASH_COMMAND)
+    env = build_bash_env(
+        SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))), _BASH_COMMAND)
     assert env["SHELL"] == _BASH_COMMAND
     assert env["BASH"] == _BASH_COMMAND
 
@@ -799,7 +803,7 @@ def test_build_bash_env_no_longer_includes_no_color_share_env_or_set_env(
     """NO_COLOR, share_env, and set_env now live in the session env file, not build_bash_env."""
     monkeypatch.setenv("MY_VAR", "from-process")
     env = build_bash_env(SessionConfig(
-        workspace=Workspace(path=tmp_path), share_env=["MY_VAR"],
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)), share_env=["MY_VAR"],
         set_env={"NO_COLOR": "0", "EXTRA": "val"}), _BASH_COMMAND)
     assert "NO_COLOR" not in env
     assert "MY_VAR" not in env
@@ -824,7 +828,8 @@ def test_shell_single_quote_with_multiple_apostrophes() -> None:
 def test_session_env_file_populates_no_color(
     tmp_path: Path,
 ) -> None:
-    path = session_env_file("test-session", SessionConfig(workspace=Workspace(path=tmp_path)))
+    path = session_env_file(
+        "test-session", SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))))
     content = path.read_text()
     assert "export NO_COLOR='true'" in content
 
@@ -833,7 +838,8 @@ def test_session_env_file_populates_share_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("KLORB_SHARED", "shared-val")
-    config = SessionConfig(workspace=Workspace(path=tmp_path), share_env=["KLORB_SHARED"])
+    config = SessionConfig(
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)), share_env=["KLORB_SHARED"])
     path = session_env_file("test-session", config)
     content = path.read_text()
     assert "export KLORB_SHARED='shared-val'" in content
@@ -843,7 +849,8 @@ def test_session_env_file_populates_set_env(
     tmp_path: Path,
 ) -> None:
     config = SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"MY_KEY": "my value"})
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)),
+        set_env={"MY_KEY": "my value"})
     path = session_env_file("test-session", config)
     content = path.read_text()
     assert "export MY_KEY='my value'" in content
@@ -853,7 +860,8 @@ def test_session_env_file_single_quotes_set_env_apostrophe(
     tmp_path: Path,
 ) -> None:
     config = SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"FOO": "home's"})
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)),
+        set_env={"FOO": "home's"})
     path = session_env_file("test-session", config)
     content = path.read_text()
     assert "export FOO='home'\\''s'" in content
@@ -863,12 +871,12 @@ def test_session_env_file_not_repopulated_on_second_call(
     tmp_path: Path,
 ) -> None:
     config = SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"KEY": "first"})
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)), set_env={"KEY": "first"})
     path = session_env_file("test-session", config)
     first_content = path.read_text()
     # Second call should not overwrite
     config2 = SessionConfig(
-        workspace=Workspace(path=tmp_path), set_env={"KEY": "second"})
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)), set_env={"KEY": "second"})
     path2 = session_env_file("test-session", config2)
     assert path2 == path
     assert path2.read_text() == first_content
@@ -884,7 +892,7 @@ def test_env_export_lines_includes_share_env(
 ) -> None:
     monkeypatch.setenv("MY_SHARED", "abc")
     config = SessionConfig(
-        workspace=Workspace(path=Path("/tmp")), share_env=["MY_SHARED"])
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=Path("/tmp"))), share_env=["MY_SHARED"])
     lines = _env_export_lines(config)
     assert any("MY_SHARED" in line for line in lines)
     assert any("'abc'" in line for line in lines)
@@ -892,7 +900,7 @@ def test_env_export_lines_includes_share_env(
 
 def test_env_export_lines_includes_set_env() -> None:
     config = SessionConfig(
-        workspace=Workspace(path=Path("/tmp")), set_env={"X": "val"})
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=Path("/tmp"))), set_env={"X": "val"})
     lines = _env_export_lines(config)
     assert any("X" in line and "'val'" in line for line in lines)
 
@@ -902,7 +910,7 @@ def test_env_export_lines_set_env_overrides_share_env(
 ) -> None:
     monkeypatch.setenv("FOO", "from-process")
     config = SessionConfig(
-        workspace=Workspace(path=Path("/tmp")), share_env=["FOO"],
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=Path("/tmp"))), share_env=["FOO"],
         set_env={"FOO": "overridden"})
     lines = _env_export_lines(config)
     foo_lines = [line for line in lines if "FOO" in line]
@@ -1259,7 +1267,9 @@ def test_persistent_sandbox_rebuilds_and_preserves_state_when_a_grant_grows(
     # Grant a brand-new directory outside the workspace and home, so the allowed-dir snapshot
     # actually grows (a dir under either would already be covered and wouldn't widen it).
     granted = tmp_path_factory.mktemp("granted")
-    context.session_config.read_dirs = DirRules(allow=[tmp_path, granted])
+    context.session_config.apply_workspace_access(
+        workspace=context.session_config.workspace, read_dirs=DirRules(allow=[tmp_path, granted]),
+        write_dirs=context.session_config.write_dirs)
 
     # printenv reads the exported var with a literal argument (echo "$VAR" would be a non-literal
     # token the classifier force-asks on, which is beside the point here).
@@ -1305,7 +1315,9 @@ def test_persistent_sandbox_refuses_to_rebuild_over_live_background_jobs(
     assert shell.has_live_jobs()
 
     granted = tmp_path_factory.mktemp("granted")
-    context.session_config.read_dirs = DirRules(allow=[tmp_path, granted])
+    context.session_config.apply_workspace_access(
+        workspace=context.session_config.workspace, read_dirs=DirRules(allow=[tmp_path, granted]),
+        write_dirs=context.session_config.write_dirs)
 
     result = _run_session(tool, "echo after")
     assert result["success"] is False

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks import common as tasks_common
 from klorb.tools.tasks.common import ChainlinkClient, ChainlinkError, chainlink_available, open_blocker_count
@@ -23,7 +23,8 @@ def _context(tmp_path: Path, session: Session | None) -> ToolSetupContext:
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=True)),
+        session_config=SessionConfig(
+            workspace_access=WorkspaceAccess(workspace=Workspace(path=workspace_root, trusted=True))),
         session=session)
 
 

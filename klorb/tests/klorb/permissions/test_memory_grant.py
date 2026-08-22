@@ -11,7 +11,7 @@ from klorb import process_config as process_config_module
 from klorb.permissions.memory_grant import apply_memory_permission_grant
 from klorb.process_config import CONFIG_SCHEMA_NAME, SESSION_DEFAULTS_KEY, ProcessConfig, project_config_path
 from klorb.schema_envelope import read_versioned_json
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 
 
@@ -29,7 +29,7 @@ def _read_session_defaults(path: Path) -> dict[str, Any]:
 def _session_config(tmp_path: Path) -> SessionConfig:
     ws = tmp_path / "workspace"
     ws.mkdir(exist_ok=True)
-    return SessionConfig(workspace=Workspace(path=ws, trusted=True))
+    return SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=ws, trusted=True)))
 
 
 def test_session_scope_updates_live_config_only(tmp_path: Path) -> None:

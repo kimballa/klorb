@@ -23,7 +23,7 @@ from klorb.hooks.hook_api import EventInput, HookInput
 from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
-from klorb.session.config import SessionConfig
+from klorb.session.config import SessionConfig, WorkspaceAccess
 from klorb.workspace import Workspace
 
 
@@ -39,9 +39,10 @@ def _process_config(workspace_root: Path, hooks: dict[str, list[HookConfig]]) ->
     process_hooks = {name: h for name, h in hooks.items() if name in PROCESS_SCOPED_HOOK_NAMES}
     session_hooks = {name: h for name, h in hooks.items() if name not in PROCESS_SCOPED_HOOK_NAMES}
     session = SessionConfig(
-        workspace=Workspace(path=workspace_root, trusted=True),
-        read_dirs=DirRules(allow=[workspace_root]),
-        write_dirs=DirRules(allow=[workspace_root]),
+        workspace_access=WorkspaceAccess(
+            workspace=Workspace(path=workspace_root, trusted=True),
+            read_dirs=DirRules(allow=[workspace_root]),
+            write_dirs=DirRules(allow=[workspace_root])),
         hooks=session_hooks)
     return ProcessConfig(session=session, hooks=process_hooks)
 
@@ -340,9 +341,9 @@ def test_dispatch_uses_a_live_session_config_over_the_process_template(tmp_path:
     })
     other_root = tmp_path / "other"
     other_root.mkdir()
-    live_session_config = SessionConfig(
+    live_session_config = SessionConfig(workspace_access=WorkspaceAccess(
         workspace=Workspace(path=other_root, trusted=True),
-        read_dirs=DirRules(allow=[other_root]), write_dirs=DirRules(allow=[other_root]))
+        read_dirs=DirRules(allow=[other_root]), write_dirs=DirRules(allow=[other_root])))
     result = HookDispatcher(process_config).dispatch(
         "onSessionEnd", _hook_input(tmp_path, hook="onSessionEnd", reason="SuspendSession"),
         session_config=live_session_config)

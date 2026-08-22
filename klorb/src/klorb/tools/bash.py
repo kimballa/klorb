@@ -1393,9 +1393,13 @@ class BashTool(InterruptibleTool):
     def _grant_tmp_dir_read_access(self, tmp_dir: Path) -> None:
         """Auto-grant read access to `tmp_dir` so a follow-up `ReadFile`/`Grep` call against
         a spilled `stdout_file`/`stderr_file` doesn't itself hit an "ask"."""
-        read_dirs = self.context.session_config.read_dirs
-        self.context.session_config.read_dirs = DirRules(
-            deny=list(read_dirs.deny), ask=list(read_dirs.ask), allow=[*read_dirs.allow, tmp_dir])
+        access = self.context.session_config.workspace_access_snapshot()
+        self.context.session_config.apply_workspace_access(
+            workspace=access.workspace,
+            read_dirs=DirRules(
+                deny=list(access.read_dirs.deny), ask=list(access.read_dirs.ask),
+                allow=[*access.read_dirs.allow, tmp_dir]),
+            write_dirs=access.write_dirs)
 
     def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
         """A shell command that ran but failed doesn't raise — `apply()` returns a result

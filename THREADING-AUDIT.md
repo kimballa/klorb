@@ -277,17 +277,23 @@ field?
 reference for the life of a `Session` and never re-fetches it (its own docstring says as much:
 "`session_config`... is held by reference and mutated in place elsewhere"), so reassigning
 `self._session.config` wholesale would have stranded every future tool call on the stale object.
-The fix keeps `SessionConfig`'s identity untouched and instead makes `workspace`/`read_dirs`/
-`write_dirs` — the only fields `_apply_workspace_config` (and the TUI's equivalent
-`_apply_workspace_config`, and the interactive-grant flow's `apply_permission_grant`) ever update
-together — publish as one group under a private lock:
-`SessionConfig.apply_workspace_access()` writes all three inside the lock,
-`workspace_access_snapshot()` reads all three inside the same lock and returns them as a frozen
-`WorkspaceAccessSnapshot`, and `evaluate_write`/`resolve_and_evaluate_read`/
-`resolve_and_evaluate_write` in `klorb.permissions.workspace` each take one snapshot up front and
-evaluate the whole permission check against it, instead of re-reading `context.session_config.*`
-at several separate points. No writer or reader anywhere else in the codebase touches this trio,
-so the lock's blast radius is exactly the fields at risk.
+`SessionConfig`'s own identity stays untouched. Instead, `workspace`/`read_dirs`/`write_dirs`
+moved into one nested field, `workspace_access: WorkspaceAccess` (a frozen model), always
+replaced as a whole rather than mutated field-by-field: a single attribute read of
+`workspace_access` can never observe a mix of two config generations, so
+`workspace_access_snapshot()` needs no lock to be self-consistent for readers.
+`apply_workspace_access(workspace=..., read_dirs=..., write_dirs=...)` builds a new
+`WorkspaceAccess` and publishes it in one assignment; a private lock around both still prevents a
+lost update between two concurrent writers (`_apply_workspace_config` and the interactive-grant
+flow's `apply_permission_grant` can both compute a new value off the same stale read). `workspace`/
+`read_dirs`/`write_dirs` stay available as read-only properties for the common single-field case,
+each documenting that a caller needing two or more together should take one
+`workspace_access_snapshot()` instead. `evaluate_write`/`resolve_and_evaluate_read`/
+`resolve_and_evaluate_write` in `klorb.permissions.workspace` do exactly that: one snapshot up
+front, reused for the whole check, rather than re-reading `context.session_config.*` at several
+separate points. A `model_validator`/`model_serializer` pair keeps both the constructor
+(`SessionConfig(workspace=..., read_dirs=..., write_dirs=...)`) and the on-disk `session.json`/
+`klorb-config.json` shape unchanged, so this is purely an in-memory restructuring.
 
 ### 7. `Session._next_child_index` increments without synchronization
 

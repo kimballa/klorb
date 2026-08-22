@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks import todo_next as todo_next_module
@@ -223,7 +223,8 @@ def test_name_and_parameters(tmp_path: Path, make_session_config: Callable[..., 
 def test_requires_an_active_session(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    config = SessionConfig(workspace=Workspace(path=workspace_root, trusted=True))
+    config = SessionConfig(
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=workspace_root, trusted=True)))
     context = ToolSetupContext(process_config=ProcessConfig(), session_config=config, session=None)
 
     with pytest.raises(ValueError, match="active Session"):

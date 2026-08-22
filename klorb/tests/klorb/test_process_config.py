@@ -37,7 +37,12 @@ from klorb.process_config import (
     persist_theme,
     user_config_path,
 )
-from klorb.session import DEFAULT_MAX_TOOL_CALLS_PER_TURN, THINKING_EFFORT_TOKEN_BUDGETS, SessionConfig
+from klorb.session import (
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    THINKING_EFFORT_TOKEN_BUDGETS,
+    SessionConfig,
+    WorkspaceAccess,
+)
 from klorb.workspace import Workspace
 
 
@@ -68,7 +73,8 @@ def test_defaults_when_no_config_files_exist(tmp_path: Path) -> None:
     process_config = load_process_config(cwd=tmp_path)
     # workspace_root is always set from find_workspace_root(cwd), not SessionConfig's own
     # Path.cwd() default_factory — see test_workspace_root_falls_back_to_cwd_when_no_klorb_dir_found.
-    assert process_config.session == SessionConfig(workspace=Workspace(path=tmp_path))
+    assert process_config.session == SessionConfig(
+        workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
     assert process_config.session.model == DEFAULT_MODEL
     assert process_config.session.max_tool_calls_per_turn == DEFAULT_MAX_TOOL_CALLS_PER_TURN
     assert process_config.prompt_input_max_lines == DEFAULT_PROMPT_INPUT_MAX_LINES

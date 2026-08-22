@@ -12,7 +12,7 @@ from klorb.cli._common import SYSTEM_PROMPT_SUBCOMMAND, TABLE_GUTTER
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import load_process_config
 from klorb.role import OPERATOR_ROLE_NAME, get_role
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.system_prompt import SystemPrompt
 from klorb.token_estimate import configure_tiktoken_cache_env, estimate_tokens, tool_token_counts
 from klorb.workspace import TrustManager
@@ -114,7 +114,7 @@ def run_system_prompt_cli(argv: list[str]) -> int:
     session_config = SessionConfig(
         model=process_config.session.model,
         role_name=args.role,
-        workspace=workspace,
+        workspace_access=WorkspaceAccess(workspace=workspace),
     )
     role = get_role(args.role)
     system_prompt = SystemPrompt(session_config, role, ModelRegistry(), process_config)

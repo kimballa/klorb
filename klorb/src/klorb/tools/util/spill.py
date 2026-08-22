@@ -75,9 +75,12 @@ class SpillDir:
         if tool_state.get(_DIR_ADDED_KEY):
             return
 
-        read_dirs = session.config.read_dirs
-        session.config.read_dirs = DirRules(
-            deny=list(read_dirs.deny), ask=list(read_dirs.ask),
-            allow=[*read_dirs.allow, tmpdir_path])
+        access = session.config.workspace_access_snapshot()
+        session.config.apply_workspace_access(
+            workspace=access.workspace,
+            read_dirs=DirRules(
+                deny=list(access.read_dirs.deny), ask=list(access.read_dirs.ask),
+                allow=[*access.read_dirs.allow, tmpdir_path]),
+            write_dirs=access.write_dirs)
         tool_state[_DIR_ADDED_KEY] = True
         logger.debug("Granted read access to %s spill tmpdir: %s", self._tool_name, tmpdir_path)

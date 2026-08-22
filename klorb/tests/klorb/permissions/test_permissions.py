@@ -7,7 +7,6 @@ docs/specs/permissions.md.
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -24,7 +23,7 @@ from klorb.permissions.directory_access import (
 )
 from klorb.permissions.file_access import FileRules
 from klorb.permissions.resource import PermissionOverride
-from klorb.permissions.table import PermissionAskRequired, Verdict, raise_if_not_allowed
+from klorb.permissions.table import PermissionAskRequired, raise_if_not_allowed
 from klorb.permissions.workspace import (
     canonicalize_candidate,
     evaluate_write,
@@ -33,7 +32,7 @@ from klorb.permissions.workspace import (
     resolve_within_workspace,
 )
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -51,8 +50,9 @@ def _context(
     return ToolSetupContext(
         process_config=ProcessConfig(compatibility_claude_skills=claude_skills_compat),
         session_config=SessionConfig(
-            workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
-            read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules(),
+            workspace_access=WorkspaceAccess(
+                workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
+                read_dirs=read_dirs or DirRules(), write_dirs=write_dirs or DirRules()),
             read_files=read_files or FileRules(), write_files=write_files or FileRules()),
     )
 
@@ -233,9 +233,10 @@ def test_resolve_and_evaluate_write_unlocks_klorb_after_workspace_escalation(tmp
     context = ToolSetupContext(
         process_config=process_config,
         session_config=SessionConfig(
-            workspace=Workspace(path=tmp_path),
-            write_dirs=DirRules(allow=[tmp_path]),
-            read_dirs=DirRules(allow=[tmp_path]),
+            workspace_access=WorkspaceAccess(
+                workspace=Workspace(path=tmp_path),
+                write_dirs=DirRules(allow=[tmp_path]),
+                read_dirs=DirRules(allow=[tmp_path])),
             approved_scopes={"workspace"},
         ),
     )
@@ -298,9 +299,10 @@ def test_resolve_and_evaluate_write_unlocks_claude_skills_after_workspace_escala
     context = ToolSetupContext(
         process_config=process_config,
         session_config=SessionConfig(
-            workspace=Workspace(path=tmp_path),
-            write_dirs=DirRules(allow=[tmp_path]),
-            read_dirs=DirRules(allow=[tmp_path]),
+            workspace_access=WorkspaceAccess(
+                workspace=Workspace(path=tmp_path),
+                write_dirs=DirRules(allow=[tmp_path]),
+                read_dirs=DirRules(allow=[tmp_path])),
             approved_scopes={"workspace"},
         ),
     )
@@ -460,79 +462,57 @@ def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_pat
 # --- workspace/read_dirs/write_dirs atomicity (THREADING-AUDIT.md finding 6) ---
 
 
-def test_workspace_access_snapshot_blocks_until_a_concurrent_multi_field_update_completes(
-    tmp_path: Path,
-) -> None:
-    """A `workspace_access_snapshot()` racing an in-progress `apply_workspace_access()` must
-    block rather than returning a `workspace`/`read_dirs`/`write_dirs` mix from two different
-    config generations."""
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
-    new_workspace = Workspace(path=tmp_path / "new")
-    new_read_dirs = DirRules(allow=[tmp_path / "new"])
-    new_write_dirs = DirRules(allow=[tmp_path / "new"])
+def test_workspace_access_snapshot_blocks_until_a_concurrent_apply_completes(tmp_path: Path) -> None:
+    """`workspace_access_snapshot()` and `apply_workspace_access()` share one lock, so a snapshot
+    racing an in-progress publish blocks until it finishes and then sees the fully-published
+    `workspace_access`, never a call caught mid-swap."""
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
+    new_access = WorkspaceAccess(
+        workspace=Workspace(path=tmp_path / "new"),
+        read_dirs=DirRules(allow=[tmp_path / "new"]), write_dirs=DirRules(allow=[tmp_path / "new"]))
 
     raw_lock = session_config._workspace_access_lock._lock
     raw_lock.acquire()
     try:
-        # Simulate `apply_workspace_access()` interrupted after publishing `workspace` but
-        # before `read_dirs`/`write_dirs`.
-        session_config.workspace = new_workspace
-
-        snapshots: list[Any] = []
+        # Simulate `apply_workspace_access()` holding the lock mid-publish.
+        snapshots: list[WorkspaceAccess] = []
         reader = threading.Thread(
             target=lambda: snapshots.append(session_config.workspace_access_snapshot()))
         reader.start()
         reader.join(timeout=0.2)
-        assert reader.is_alive(), "reader must block while the update is mid-publish"
+        assert reader.is_alive(), "reader must block while the lock is held"
 
-        session_config.read_dirs = new_read_dirs
-        session_config.write_dirs = new_write_dirs
+        session_config.workspace_access = new_access
     finally:
         raw_lock.release()
 
     reader.join(timeout=5)
     assert not reader.is_alive()
-    snapshot = snapshots[0]
-    assert snapshot.workspace.path == new_workspace.path
-    assert snapshot.read_dirs == new_read_dirs
-    assert snapshot.write_dirs == new_write_dirs
+    assert snapshots[0] == new_access
 
 
-def test_evaluate_write_never_evaluates_against_a_torn_workspace_read_dirs_write_dirs_triple(
-    tmp_path: Path,
+def test_evaluate_write_takes_exactly_one_workspace_access_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A tool's `evaluate_write()` permission check racing a `_apply_workspace_config`-style
-    reload must evaluate the old or the new `workspace`/`read_dirs`/`write_dirs` triple, never a
-    mix of the two, so it lands on "ask" rather than incorrectly matching the stale `read_dirs`
-    entry."""
-    old_project = tmp_path / "old"
-    old_project.mkdir()
-    new_project = tmp_path / "new"
-    new_project.mkdir()
-
+    """`evaluate_write()` must read `workspace_access_snapshot()` once, up front, and reuse that
+    same triple throughout the check -- not re-read `workspace`/`read_dirs`/`write_dirs`
+    separately at different points, which would let a concurrent `apply_workspace_access()` mix
+    two config generations into one decision."""
     context = _context(
-        old_project, read_dirs=DirRules(allow=[old_project]), write_dirs=DirRules(allow=[old_project]))
-    session_config = context.session_config
+        tmp_path, read_dirs=DirRules(allow=[tmp_path]), write_dirs=DirRules(allow=[tmp_path]))
+    real_snapshot = SessionConfig.workspace_access_snapshot
+    call_count = 0
 
-    raw_lock = session_config._workspace_access_lock._lock
-    raw_lock.acquire()
-    try:
-        session_config.workspace = Workspace(path=new_project)
+    def counting_snapshot(self: SessionConfig) -> WorkspaceAccess:
+        nonlocal call_count
+        call_count += 1
+        return real_snapshot(self)
 
-        verdicts: list[Verdict] = []
-        reader = threading.Thread(
-            target=lambda: verdicts.append(evaluate_write(context, old_project / "f.txt")))
-        reader.start()
-        reader.join(timeout=0.2)
-        assert reader.is_alive(), "reader must block while the reload is mid-publish"
+    monkeypatch.setattr(SessionConfig, "workspace_access_snapshot", counting_snapshot)
+    path = resolve_within_workspace(context, "f.txt")
 
-        session_config.read_dirs = DirRules(allow=[new_project])
-        session_config.write_dirs = DirRules(allow=[new_project])
-    finally:
-        raw_lock.release()
-
-    reader.join(timeout=5)
-    assert verdicts[0] == "ask"
+    assert evaluate_write(context, path) == "allow"
+    assert call_count == 1
 
 
 # --- resolve_and_evaluate_write ---
@@ -892,7 +872,8 @@ def test_matching_rules_respects_category(tmp_path: Path) -> None:
 def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Path) -> None:
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))),
         permission_override=PermissionOverride(paths=frozenset({path})))
     assert evaluate_write(context, path) == "allow"
 
@@ -900,7 +881,8 @@ def test_permission_override_short_circuits_evaluate_write_to_allow(tmp_path: Pa
 def test_permission_override_short_circuits_resolve_and_evaluate_read_to_allow(tmp_path: Path) -> None:
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))),
         permission_override=PermissionOverride(paths=frozenset({path})))
     _, verdict = resolve_and_evaluate_read(context, "f.txt")
     assert verdict == "allow"
@@ -910,7 +892,8 @@ def test_permission_override_has_no_effect_on_a_different_path(tmp_path: Path) -
     path = resolve_within_workspace(_context(tmp_path), "f.txt")
     other_path = resolve_within_workspace(_context(tmp_path), "other.txt")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))),
         permission_override=PermissionOverride(paths=frozenset({other_path})))
     assert evaluate_write(context, path) == "ask"
 
@@ -920,13 +903,15 @@ def test_permission_override_never_bypasses_privileged_path_deny(tmp_path: Path)
     KLORB_*_DIR locations, even if a caller somehow set the override to that exact path."""
     path = resolve_within_workspace(_context(tmp_path), ".klorb/klorb-config.json")
     context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))),
         permission_override=PermissionOverride(paths=frozenset({path})))
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
         evaluate_write(context, path)
 
     read_context = ToolSetupContext(
-        process_config=ProcessConfig(), session_config=SessionConfig(workspace=Workspace(path=tmp_path)),
+        process_config=ProcessConfig(),
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path))),
         permission_override=PermissionOverride(paths=frozenset({path})))
     with pytest.raises(PermissionError, match="EscalatePrivileges"):
         resolve_and_evaluate_read(read_context, ".klorb/klorb-config.json")
@@ -946,7 +931,7 @@ def test_create_tempdir_for_session_grants_read_access_and_returns_the_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _redirect_system_tempdir(monkeypatch, tmp_path)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     directory = create_tempdir_for_session(session_config)
 
@@ -958,7 +943,7 @@ def test_create_tempdir_for_session_default_mode_grants_no_write_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _redirect_system_tempdir(monkeypatch, tmp_path)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     directory = create_tempdir_for_session(session_config)
 
@@ -969,7 +954,7 @@ def test_create_tempdir_for_session_mode_w_also_grants_write_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _redirect_system_tempdir(monkeypatch, tmp_path)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     directory = create_tempdir_for_session(session_config, mode="w")
 
@@ -984,8 +969,8 @@ def test_create_tempdir_for_session_preserves_existing_dirrules_entries(
     deny = [tmp_path / "denied"]
     ask = [tmp_path / "asked"]
     allow = [tmp_path / "existing-allow"]
-    session_config = SessionConfig(
-        workspace=Workspace(path=tmp_path), read_dirs=DirRules(deny=deny, ask=ask, allow=allow))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(deny=deny, ask=ask, allow=allow)))
 
     directory = create_tempdir_for_session(session_config)
 
@@ -1003,7 +988,8 @@ def test_create_tempdir_for_session_does_not_mutate_a_shared_allow_list(
     _redirect_system_tempdir(monkeypatch, tmp_path)
     shared_allow = [tmp_path / "template-allow"]
     shared_rules = DirRules(allow=shared_allow)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path), read_dirs=shared_rules)
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(
+        workspace=Workspace(path=tmp_path), read_dirs=shared_rules))
 
     create_tempdir_for_session(session_config)
 
@@ -1018,7 +1004,8 @@ def test_create_tempdir_for_session_mode_w_does_not_mutate_a_shared_write_allow_
     _redirect_system_tempdir(monkeypatch, tmp_path)
     shared_allow = [tmp_path / "template-allow"]
     shared_rules = DirRules(allow=shared_allow)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path), write_dirs=shared_rules)
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(
+        workspace=Workspace(path=tmp_path), write_dirs=shared_rules))
 
     create_tempdir_for_session(session_config, mode="w")
 
@@ -1032,7 +1019,7 @@ def test_create_tempdir_for_session_without_remove_on_exit_is_not_registered_for
 ) -> None:
     _redirect_system_tempdir(monkeypatch, tmp_path)
     monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     directory = create_tempdir_for_session(session_config)
 
@@ -1045,7 +1032,7 @@ def test_create_tempdir_for_session_with_remove_on_exit_registers_and_cleans_up(
 ) -> None:
     _redirect_system_tempdir(monkeypatch, tmp_path)
     monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     directory = create_tempdir_for_session(session_config, remove_on_exit=True)
 
@@ -1064,7 +1051,7 @@ def test_create_tempdir_for_session_registers_the_atexit_handler_only_once(
     monkeypatch.setattr(directory_access_module, "_tempdirs_to_remove_on_exit", [])
     register_calls: list[object] = []
     monkeypatch.setattr(directory_access_module.atexit, "register", register_calls.append)
-    session_config = SessionConfig(workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     create_tempdir_for_session(session_config, remove_on_exit=True)
     create_tempdir_for_session(session_config, remove_on_exit=True)

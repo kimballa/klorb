@@ -239,7 +239,9 @@ class PromptSubmissionMixin(ReplAppBase):
         new_warnings: list[str] = reloaded_pc.config_warnings
 
         # The existing workspace is carried into the new session.
-        new_session_config.workspace = workspace
+        new_session_config.apply_workspace_access(
+            workspace=workspace, read_dirs=new_session_config.read_dirs,
+            write_dirs=new_session_config.write_dirs)
 
         # The choice of model is a "live" setting that the user may have been manipulating
         # throughout; we carry forward their choice from the prior session, here.

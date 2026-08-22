@@ -62,7 +62,10 @@ def try_restore_session(
         lock.release()
         return None
 
-    restored_config = state.config.model_copy(update={"workspace": workspace})
+    restored_config = state.config.model_copy()
+    restored_config.apply_workspace_access(
+        workspace=workspace, read_dirs=restored_config.read_dirs,
+        write_dirs=restored_config.write_dirs)
     grants = compute_root_session_grants(process_config, restored_config, restored_config.role_name)
     restored_config.skill_rules = grants.skill_rules
     session = Session(

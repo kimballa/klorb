@@ -22,7 +22,7 @@ from klorb.permissions.file_access import FileAccessTable
 from klorb.permissions.table import Verdict, stricter_verdict
 
 if TYPE_CHECKING:
-    from klorb.session.config import WorkspaceAccessSnapshot
+    from klorb.session.config import WorkspaceAccess
     from klorb.tools.setup_context import ToolSetupContext
 
 
@@ -123,7 +123,7 @@ def _normalize_for_write(verdict: Verdict | None) -> Verdict:
 
 
 def evaluate_write(
-    context: "ToolSetupContext", path: Path, *, access: "WorkspaceAccessSnapshot | None" = None,
+    context: "ToolSetupContext", path: Path, *, access: "WorkspaceAccess | None" = None,
 ) -> Verdict:
     """Evaluate a write to the already-workspace-confined `path` (the caller must already have
     called `resolve_within_workspace()` to obtain it).

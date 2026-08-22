@@ -39,7 +39,7 @@ from klorb.server.update_mapping import (
     tool_call_finished_update,
     tool_call_started_update,
 )
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.session.events import (
     AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
@@ -60,9 +60,11 @@ _UNMAPPED_OK: frozenset[str] = frozenset()
 def _registry(tmp_path: Path) -> ToolRegistry:
     config = SessionConfig(
         model="some/model",
-        workspace=Workspace(path=tmp_path, trusted=True),
-        read_dirs=DirRules(allow=[tmp_path]),
-        write_dirs=DirRules(allow=[tmp_path]),
+        workspace_access=WorkspaceAccess(
+            workspace=Workspace(path=tmp_path, trusted=True),
+            read_dirs=DirRules(allow=[tmp_path]),
+            write_dirs=DirRules(allow=[tmp_path]),
+        ),
     )
     return ToolRegistry.discover_tools(ProcessConfig(), config)
 
@@ -445,7 +447,8 @@ def test_permission_ask_tool_call_update_synthesizes_an_id_when_none_in_flight()
 def test_permission_ask_meta_for_a_non_bash_ask_only_carries_resource_description(tmp_path: Path) -> None:
     resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
     ctx = PermissionAskContext(resource=resource, resource_description="Read foo.txt")
-    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(
+        model="some/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     meta = permission_ask_meta(ctx, None, 0, 1, session_config)
 
@@ -458,7 +461,8 @@ def test_permission_ask_meta_for_a_bash_ask_carries_command_and_item_fields(tmp_
         command_text="echo hi; echo bye", is_compound=True, item_command_text="echo hi")
     ctx = PermissionAskContext(
         resource=resource, bash_context=bash_context, resource_description="Run command: echo hi")
-    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(
+        model="some/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     meta = permission_ask_meta(ctx, None, 0, 2, session_config)
 
@@ -483,7 +487,8 @@ def test_permission_ask_meta_prefers_the_risk_classifiers_suggested_pattern(tmp_
     risk = ItemRiskAssessment(
         item_id="item-0", risk_score=2, rationale="routine test run",
         suggested_pattern=["pytest", "**"])
-    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(
+        model="some/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     meta = permission_ask_meta(ctx, risk, 0, 1, session_config)
 
@@ -510,7 +515,8 @@ def test_escalate_privileges_meta_carries_scope_and_description(tmp_path: Path) 
 def test_permission_ask_meta_omits_origin_session_id_when_unset(tmp_path: Path) -> None:
     resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
     ctx = PermissionAskContext(resource=resource, resource_description="Read foo.txt")
-    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(
+        model="some/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     meta = permission_ask_meta(ctx, None, 0, 1, session_config)
 
@@ -521,7 +527,8 @@ def test_permission_ask_meta_carries_origin_session_id_for_a_subagent_ask(tmp_pa
     resource = PathResource(path=tmp_path / "foo.txt", is_write=False)
     ctx = PermissionAskContext(
         resource=resource, resource_description="Read foo.txt", origin_session_id="child-1")
-    session_config = SessionConfig(model="some/model", workspace=Workspace(path=tmp_path))
+    session_config = SessionConfig(
+        model="some/model", workspace_access=WorkspaceAccess(workspace=Workspace(path=tmp_path)))
 
     meta = permission_ask_meta(ctx, None, 0, 1, session_config)
 

@@ -22,7 +22,7 @@ from klorb.api_provider import ApiProvider
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 
@@ -224,9 +224,10 @@ def run_case(
         try:
             session_config = SessionConfig(
                 model=model, interactive=False, thinking_enabled=False,
-                workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
-                read_dirs=DirRules(allow=[workspace_root]),
-                write_dirs=DirRules(allow=[workspace_root]),
+                workspace_access=WorkspaceAccess(
+                    workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
+                    read_dirs=DirRules(allow=[workspace_root]),
+                    write_dirs=DirRules(allow=[workspace_root])),
                 skill_rules=case.skill_rules if case.skill_rules is not None else SkillRules())
             process_config = ProcessConfig()
             grants = compute_root_session_grants(

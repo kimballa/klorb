@@ -12,7 +12,7 @@ import pytest
 from klorb.message import Message, MessageFragment
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig
+from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.session.restore import try_restore_session
 from klorb.workspace import Workspace
 from klorb.workspace import input_history as input_history_module
@@ -40,7 +40,8 @@ def test_restore_rehydrates_a_path_backed_image_fragment(tmp_path: Path) -> None
             MessageFragment(
                 type="image_url", image_url=None, image_path=image_path, mime_type="image/webp"),
         ])
-    write_session_state(workspace, "sess-1", SessionConfig(workspace=workspace), [message])
+    write_session_state(
+        workspace, "sess-1", SessionConfig(workspace_access=WorkspaceAccess(workspace=workspace)), [message])
 
     session = try_restore_session(
         workspace, RecentSession(session_id="sess-1", subdir="sess-1"),

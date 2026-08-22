@@ -65,7 +65,9 @@ class WorkspaceBootstrapMixin(ReplAppBase):
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
         history.remove_children()
         if restored is None:
-            new_config = self._process_config.session.model_copy(update={"workspace": workspace})
+            new_config = self._process_config.session.model_copy()
+            new_config.apply_workspace_access(
+                workspace=workspace, read_dirs=new_config.read_dirs, write_dirs=new_config.write_dirs)
             grants = compute_root_session_grants(self._process_config, new_config, new_config.role_name)
             new_config.skill_rules = grants.skill_rules
             self._session = Session(
@@ -248,11 +250,12 @@ class WorkspaceBootstrapMixin(ReplAppBase):
             workspace=workspace,
             read_dirs=concat_dir_rules(self._session.config.read_dirs, reloaded.session.read_dirs),
             write_dirs=concat_dir_rules(self._session.config.write_dirs, reloaded.session.write_dirs))
-        self._process_config.session.workspace = workspace
-        self._process_config.session.read_dirs = concat_dir_rules(
-            self._process_config.session.read_dirs, reloaded.session.read_dirs)
-        self._process_config.session.write_dirs = concat_dir_rules(
-            self._process_config.session.write_dirs, reloaded.session.write_dirs)
+        self._process_config.session.apply_workspace_access(
+            workspace=workspace,
+            read_dirs=concat_dir_rules(
+                self._process_config.session.read_dirs, reloaded.session.read_dirs),
+            write_dirs=concat_dir_rules(
+                self._process_config.session.write_dirs, reloaded.session.write_dirs))
 
         self._session.reload_skills()
 

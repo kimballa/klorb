@@ -5,7 +5,17 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializeAsAny, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializeAsAny,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from klorb.hooks.config import EVENT_CONFIG_MODELS, EventConfig, HookConfig
 from klorb.openrouter import DEFAULT_MODEL
@@ -39,9 +49,7 @@ class PermissionFrameworkState(BaseModel):
 
 
 class _WorkspaceAccessLock:
-    """A non-reentrant lock manufactured fresh on `model_copy(deep=True)`, since a bare
-    `threading.Lock` private attribute can't be deep-copied and would otherwise break cloning a
-    subagent's `SessionConfig` off its parent's."""
+    """A non-reentrant lock wrapper."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -53,25 +61,21 @@ class _WorkspaceAccessLock:
         self._lock.release()
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_WorkspaceAccessLock":
+        # threading.Lock can't be deep-copied, so cloning a subagent's SessionConfig off its
+        # parent's needs a freshly manufactured one instead.
         return _WorkspaceAccessLock()
 
-    def __eq__(self, other: object) -> bool:
-        """Any two locks are equal: `SessionConfig.__eq__` compares private attributes, and this
-        one has no state that bears on whether two configs represent the same values."""
-        return isinstance(other, _WorkspaceAccessLock)
 
-
-class WorkspaceAccessSnapshot(BaseModel):
-    """A self-consistent `workspace`/`read_dirs`/`write_dirs` triple, returned by
-    `SessionConfig.workspace_access_snapshot()` so a permission check never evaluates
-    `read_dirs`/`write_dirs` against a `workspace_root` from a different config generation than
-    the one an in-place config reload last published."""
+class WorkspaceAccess(BaseModel):
+    """The `workspace`/`read_dirs`/`write_dirs` triple `SessionConfig.workspace_access` holds as
+    one field, always replaced as a whole rather than mutated field-by-field, so a reader's
+    single attribute access can never observe a mix of two config generations."""
 
     model_config = ConfigDict(frozen=True)
 
-    workspace: Workspace
-    read_dirs: DirRules
-    write_dirs: DirRules
+    workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
+    read_dirs: DirRules = Field(default_factory=DirRules)
+    write_dirs: DirRules = Field(default_factory=DirRules)
 
 
 class SessionConfig(BaseModel):
@@ -95,31 +99,17 @@ class SessionConfig(BaseModel):
     behalf of an `onAgentTurnEnd`/`onSubagentTurnEnd` `chat` handler before refusing further
     ones -- see `DEFAULT_MAX_CHAINED_HOOK_TURNS`. `0` disables chaining; negative means
     unlimited."""
-    workspace: Workspace = Field(default_factory=lambda: Workspace(path=Path.cwd()))
+    workspace_access: WorkspaceAccess = Field(default_factory=WorkspaceAccess)
     """Which directory this session considers its project root, whether it's a registered
-    project, and whether it's trusted — see `klorb.workspace.Workspace`.
-    Lives on `SessionConfig`, not `ProcessConfig`: multiple
-    sessions can run concurrently within one process, each against a different directory (and
-    so a different trust decision), which makes workspace identity a per-session concern, not
-    a process-wide one.
-
-    `workspace.path` is the directory the file-editing tools (`EditFile`, `ReplaceAll`,
-    `CreateFile`) are always confined to — a hard, non-config-overridable
-    boundary. `ReadFile` gets the same hard boundary unless `workspace.trusted` is set (via the
-    interactive workspace-trust flow). Defaults to `Workspace(path=Path.cwd())` for callers
-    that construct `SessionConfig` directly; real runs get an explicit,
-    ancestor-searched `path` from `klorb.permissions.directory_access.find_workspace_root()` via
-    `load_process_config()`."""
-    read_dirs: DirRules = Field(default_factory=DirRules)
-    """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults — see
-    `klorb.permissions.directory_access`. Lives on
-    `SessionConfig`, not `ProcessConfig`, because a future "ask" flow will let a user approve a
-    rule for the rest of the session — the same reason `max_tool_calls_per_turn` lives here
-    too."""
-    write_dirs: DirRules = Field(default_factory=DirRules)
-    """`writeDirs`-config-driven allow/ask/deny rules the write tools (`EditFile`,
-    `ReplaceAll`, `CreateFile`) consult, together with `read_dirs`, in addition to the hard
-    `workspace.path` boundary — see `klorb.permissions.workspace.evaluate_write`."""
+    project and whether it's trusted, plus the `readDirs`/`writeDirs`-config-driven allow/ask/
+    deny rules `ReadFile`/the write tools consult against it. Lives on `SessionConfig`, not
+    `ProcessConfig`: multiple sessions can run concurrently within one process, each against a
+    different directory with its own trust decision and its own interactively-approved directory
+    grants. Read via the `workspace`/`read_dirs`/`write_dirs` properties below, or
+    `workspace_access_snapshot()` for all three together; written only via
+    `apply_workspace_access()`. `workspace.path` is a hard, non-config-overridable boundary the
+    file-editing tools (`EditFile`, `ReplaceAll`, `CreateFile`) are always confined to; `ReadFile`
+    gets the same hard boundary unless `workspace.trusted` is set."""
     read_files: FileRules = Field(default_factory=FileRules)
     """`readFiles`-config-driven allow/ask/deny rules for individual files, consulted by
     `klorb.permissions.workspace.resolve_and_evaluate_read` ahead of, and independently from,
@@ -253,11 +243,71 @@ class SessionConfig(BaseModel):
     _workspace_access_lock: _WorkspaceAccessLock = PrivateAttr(default_factory=_WorkspaceAccessLock)
     """Guards `workspace_access_snapshot()`/`apply_workspace_access()`."""
 
-    def workspace_access_snapshot(self) -> WorkspaceAccessSnapshot:
+    @model_validator(mode="before")
+    @classmethod
+    def _pack_workspace_access(cls, data: Any) -> Any:
+        """Accept `workspace`/`read_dirs`/`write_dirs` as flat constructor kwargs, folding them
+        into `workspace_access` before validation, so every existing call site (and any
+        `session.json` persisted before `workspace_access` existed) keeps working unchanged."""
+        if not isinstance(data, dict):
+            return data
+        flat_keys = ("workspace", "read_dirs", "write_dirs")
+        if not any(key in data for key in flat_keys):
+            return data
+        data = dict(data)
+        access = dict(data.pop("workspace_access", None) or {})
+        for key in flat_keys:
+            if key in data:
+                access[key] = data.pop(key)
+        data["workspace_access"] = access
+        return data
+
+    @model_serializer(mode="wrap")
+    def _flatten_workspace_access(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Serialize `workspace_access`'s three fields back to flat top-level `workspace`/
+        `read_dirs`/`write_dirs` keys, so persisted `session.json`/`klorb-config.json` keep the
+        on-disk shape they had before `workspace_access` existed."""
+        dumped: dict[str, Any] = handler(self)
+        access = dumped.pop("workspace_access")
+        dumped["workspace"] = access["workspace"]
+        dumped["read_dirs"] = access["read_dirs"]
+        dumped["write_dirs"] = access["write_dirs"]
+        return dumped
+
+    def __eq__(self, other: object) -> bool:
+        """Compares field values only, unlike pydantic's default which also compares private
+        attributes and would spuriously call two configs unequal over their distinct
+        `_workspace_access_lock` instances."""
+        if not isinstance(other, SessionConfig):
+            return NotImplemented
+        return type(self) is type(other) and self.__dict__ == other.__dict__
+
+    @property
+    def workspace(self) -> Workspace:
+        """Which directory this session considers its project root, whether it's a registered
+        project, and whether it's trusted. Grab `workspace_access_snapshot()` instead of this
+        property if you need it together with `read_dirs`/`write_dirs`, so all three come from
+        the same config generation."""
+        return self.workspace_access.workspace
+
+    @property
+    def read_dirs(self) -> DirRules:
+        """`readDirs`-config-driven allow/ask/deny rules `ReadFile` consults. Grab
+        `workspace_access_snapshot()` instead of this property if you need it together with
+        `workspace`/`write_dirs`, so all three come from the same config generation."""
+        return self.workspace_access.read_dirs
+
+    @property
+    def write_dirs(self) -> DirRules:
+        """`writeDirs`-config-driven allow/ask/deny rules the write tools consult. Grab
+        `workspace_access_snapshot()` instead of this property if you need it together with
+        `workspace`/`read_dirs`, so all three come from the same config generation."""
+        return self.workspace_access.write_dirs
+
+    def workspace_access_snapshot(self) -> WorkspaceAccess:
         """Read `workspace`/`read_dirs`/`write_dirs` together as one self-consistent triple."""
         with self._workspace_access_lock:
-            return WorkspaceAccessSnapshot(
-                workspace=self.workspace, read_dirs=self.read_dirs, write_dirs=self.write_dirs)
+            return self.workspace_access
 
     def apply_workspace_access(
         self, *, workspace: Workspace, read_dirs: DirRules, write_dirs: DirRules,
@@ -266,6 +316,5 @@ class SessionConfig(BaseModel):
         concurrent `workspace_access_snapshot()` reader never observes a mix of old and new
         values."""
         with self._workspace_access_lock:
-            self.workspace = workspace
-            self.read_dirs = read_dirs
-            self.write_dirs = write_dirs
+            self.workspace_access = WorkspaceAccess(
+                workspace=workspace, read_dirs=read_dirs, write_dirs=write_dirs)

@@ -9,7 +9,7 @@ import pytest
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINE_LENGTH, DEFAULT_READ_FILE_MAX_LINES, ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.read_file import ReadFileTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
@@ -32,11 +32,11 @@ def _context(
             read_file_max_lines=max_lines,
             read_file_max_line_length=max_line_length,
         ),
-        session_config=SessionConfig(
+        session_config=SessionConfig(workspace_access=WorkspaceAccess(
             workspace=Workspace(path=workspace_root, trusted=is_workspace_trusted),
             read_dirs=read_dirs or DirRules(),
             write_dirs=write_dirs or DirRules(),
-        ),
+        )),
         session=session,
     )
 

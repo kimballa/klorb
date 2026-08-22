@@ -207,12 +207,15 @@ def apply_permission_grant(
         return
 
     if process_config is not None:
-        if touch_read:
-            process_config.session.read_dirs = _apply_decision_to_table(
-                process_config.session.read_dirs, workspace_root, granted_paths, action)
-        if touch_write:
-            process_config.session.write_dirs = _apply_decision_to_table(
-                process_config.session.write_dirs, workspace_root, granted_paths, action)
+        template_read_dirs = (
+            _apply_decision_to_table(process_config.session.read_dirs, workspace_root, granted_paths, action)
+            if touch_read else process_config.session.read_dirs)
+        template_write_dirs = (
+            _apply_decision_to_table(process_config.session.write_dirs, workspace_root, granted_paths, action)
+            if touch_write else process_config.session.write_dirs)
+        process_config.session.apply_workspace_access(
+            workspace=process_config.session.workspace,
+            read_dirs=template_read_dirs, write_dirs=template_write_dirs)
 
     if scope == "workspace":
         _apply_grant_to_file(

@@ -9,7 +9,7 @@ from klorb.permissions.directory_access import DirRules
 from klorb.process_config import ProcessConfig
 from klorb.search_index.catalogs import MEMORIES_GLOBAL_CATALOG, MEMORIES_WORKSPACE_CATALOG
 from klorb.search_index.chunk import Chunk
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.search_memories import SearchMemoriesTool
@@ -25,7 +25,8 @@ def _context(
     workspace_root.mkdir(exist_ok=True)
     return ToolSetupContext(
         process_config=ProcessConfig(),
-        session_config=SessionConfig(workspace=Workspace(path=workspace_root, trusted=trusted)))
+        session_config=SessionConfig(
+            workspace_access=WorkspaceAccess(workspace=Workspace(path=workspace_root, trusted=trusted))))
 
 
 def _context_with_session(
