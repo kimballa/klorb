@@ -282,9 +282,11 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   combination (`old_text` alongside a meaningful `old_text_start`/`old_text_end`, only one of
   `old_text_start`/`old_text_end`, neither form present) with a specific `ValueError` naming the
   problem. `new_text` is the only field every edit tool's schema lists as `required` (plus
-  `filename`/`namespace` where applicable) — `old_text`/`old_text_start`/`old_text_end` aren't,
-  since the accepted combinations are cross-field rules `_normalize_edit_args()` enforces, not
-  something a JSON-schema `anyOf`/`oneOf` can express cleanly.
+  `namespace`/`filename` for `EditMemoryTool`) — `EditFileTool` relaxes `filename` too, since
+  `path` is an equally valid, mutually exclusive alias `resolve_filename_arg()` enforces at
+  `apply()` time. `old_text`/`old_text_start`/`old_text_end` aren't required either, since the
+  accepted combinations are cross-field rules `_normalize_edit_args()` enforces, not something a
+  JSON-schema `anyOf`/`oneOf` can express cleanly.
 * `klorb.tools.replace_all.ReplaceAllTool` (`klorb/src/klorb/tools/replace_all.py`), name
   `ReplaceAll`. Replaces every occurrence of `search` in a single `filename` with `new_text`.
   `search` is matched as a literal substring by default; `is_regex` treats it as a Python
@@ -419,6 +421,10 @@ recurse forever — see
 cycle.
 
 ## Path safety
+
+`EditFile` and `CreateFile` also accept `path` as an alias for `filename`, used only when
+`filename` is omitted; `klorb.tools.tool.resolve_filename_arg()` raises `ValueError` if both or
+neither are given.
 
 `EditFile`, `ReplaceAll`, and `CreateFile` all resolve their `filename` argument through
 `klorb.permissions.workspace.resolve_within_workspace` before touching the filesystem, then

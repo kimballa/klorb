@@ -9,7 +9,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import DiffPreview, Tool, truncate_lines
+from klorb.tools.tool import DiffPreview, Tool, display_filename_arg, resolve_filename_arg, truncate_lines
 from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 class EditFileTool(Tool):
     """Replaces a block of a text file's current content with `new_text`.
 
-    `filename` is checked against `writeFiles` and otherwise confined to
-    `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
+    `filename` (or `path`, mutually exclusive with `filename`) is checked against `writeFiles`
+    and otherwise confined to `SessionConfig.workspace.path` and further checked against
+    `writeDirs` before any disk I/O.
 
     A nonexistent `filename` doesn't need a separate `CreateFile` call first: `old_text=""`
     creates it directly, including any missing parent directories.
@@ -65,20 +66,20 @@ class EditFileTool(Tool):
             "properties": {
                 "filename": {
                     "type": "string",
-                    "description": "Path to the text file to edit.",
+                    "description": "Path to the text file to edit. Mutually exclusive with path.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Alias for filename, used only when filename is not given.",
                 },
                 **self.edit_file_core.parameter_properties(),
             },
-            "required": ["filename", "new_text"],
+            "required": ["new_text"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        try:
-            filename = args["filename"]
-        except KeyError:
-            raise ValueError(
-                "Missing required argument: 'filename'. Provide the path of the file to edit.")
+        filename = resolve_filename_arg(args, action="edit")
         logger.debug("EditFile %s", filename)
 
         path, verdict = resolve_and_evaluate_write(self.context, filename)
@@ -107,7 +108,7 @@ class EditFileTool(Tool):
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts come from
         `result`'s `replaced_lines` and the call's `new_text`."""
-        filename = args.get("filename", "?")
+        filename = display_filename_arg(args)
         diff = ""
         new_text = args.get("new_text")
         if isinstance(result, dict) and isinstance(new_text, str):

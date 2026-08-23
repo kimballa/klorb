@@ -587,9 +587,37 @@ def test_name_and_parameters(tmp_path: Path) -> None:
     parameters = tool.parameters()
 
     assert tool.name() == "EditFile"
-    assert set(parameters["required"]) == {"filename", "new_text"}
-    assert {"old_text", "old_text_start", "old_text_end"} <= set(parameters["properties"])
+    assert set(parameters["required"]) == {"new_text"}
+    assert {"filename", "path", "old_text", "old_text_start", "old_text_end"} <= set(
+        parameters["properties"])
     assert not {"old_text", "old_text_start", "old_text_end"} & set(parameters["required"])
+
+
+def test_edits_a_file_via_path(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "path": str(file_path), "old_text": "b", "new_text": "B",
+    })
+
+    assert file_path.read_text() == "a\nB\nc\n"
+    assert result["filename"] == str(file_path)
+
+
+def test_filename_and_path_both_given_raises(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="Provide either 'filename' or 'path', not both"):
+        EditFileTool(_context(tmp_path)).apply({
+            "filename": str(file_path), "path": str(file_path), "old_text": "b", "new_text": "B",
+        })
+
+    assert file_path.read_text() == "a\nb\nc\n"
+
+
+def test_neither_filename_nor_path_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Missing required argument: 'filename' or 'path'"):
+        EditFileTool(_context(tmp_path)).apply({"old_text": "b", "new_text": "B"})
 
 
 # --- Permission-table integration (see docs/specs/permissions.md) ---

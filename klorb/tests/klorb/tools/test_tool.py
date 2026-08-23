@@ -17,6 +17,8 @@ from klorb.tools.tool import (
     default_tool_call_detail,
     default_tool_call_summary,
     describe_tool_arg_json_error,
+    display_filename_arg,
+    resolve_filename_arg,
     truncate_lines,
 )
 
@@ -145,6 +147,34 @@ def test_truncate_lines_caps_long_text_with_an_ellipsis_line() -> None:
     text = "\n".join(str(i) for i in range(20))
     truncated = truncate_lines(text, max_lines=8)
     assert truncated == "\n".join(str(i) for i in range(8)) + "\n..."
+
+
+# --- resolve_filename_arg()/display_filename_arg() (see docs/specs/tool-framework.md's
+# "Path safety" section) ---
+
+
+def test_resolve_filename_arg_prefers_filename() -> None:
+    assert resolve_filename_arg({"filename": "a.py"}, action="edit") == "a.py"
+
+
+def test_resolve_filename_arg_falls_back_to_path() -> None:
+    assert resolve_filename_arg({"path": "a.py"}, action="edit") == "a.py"
+
+
+def test_resolve_filename_arg_raises_when_both_given() -> None:
+    with pytest.raises(ValueError, match="Provide either 'filename' or 'path', not both"):
+        resolve_filename_arg({"filename": "a.py", "path": "b.py"}, action="edit")
+
+
+def test_resolve_filename_arg_raises_when_neither_given() -> None:
+    with pytest.raises(ValueError, match="Missing required argument: 'filename' or 'path'"):
+        resolve_filename_arg({}, action="edit")
+
+
+def test_display_filename_arg_falls_back_to_path_then_placeholder() -> None:
+    assert display_filename_arg({"filename": "a.py"}) == "a.py"
+    assert display_filename_arg({"path": "a.py"}) == "a.py"
+    assert display_filename_arg({}) == "?"
 
 
 # --- describe_tool_arg_json_error() (see docs/specs/tool-framework.md's

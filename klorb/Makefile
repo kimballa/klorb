@@ -83,8 +83,8 @@ endif
 
 TEST_CI_ARGS=$(CI_SUITE_ARG) $(TEST_ARGS)
 
-# Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
-EVALARGS ?=--model xiaomi/mimo-v2.5 --self-review
+# Extra args forwarded to `evals/run_evals.py`, e.g. `EVAL_ARGS='--model openai/gpt-4o' make evals`.
+EVAL_ARGS ?=--model xiaomi/mimo-v2.5 --self-review
 
 all: lint typecheck test
 
@@ -200,7 +200,7 @@ test-ci:
 # Tool-efficacy evals: makes real calls to a real hosted model (see docs/specs/tool-eval-harness.md,
 # docs/adrs/tool-evals-skip-without-api-key.md).
 evals:
-	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(VENV_PYTHON)" -m evals.run_evals $(EVALARGS)
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(VENV_PYTHON)" -m evals.run_evals $(EVAL_ARGS)
 
 
 .PHONY: ${COMMANDS}

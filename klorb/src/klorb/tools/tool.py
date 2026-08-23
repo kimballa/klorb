@@ -164,6 +164,38 @@ class ReadPreview:
     open_full: "Callable[[], FullFileView]"
 
 
+def resolve_filename_arg(args: dict[str, Any], *, action: str) -> str:
+    """Return `args["filename"]`, or `args["path"]` when `filename` is absent -- the two name
+    the same thing and are mutually exclusive. Raises `ValueError` if both are given, neither
+    is, or the given value isn't a string, naming `action` (e.g. `"create"` or `"edit"`) in the
+    message.
+    """
+    has_filename = "filename" in args
+    has_path = "path" in args
+    if has_filename and has_path:
+        raise ValueError("Provide either 'filename' or 'path', not both.")
+    if has_filename:
+        value = args["filename"]
+        label = "filename"
+    elif has_path:
+        value = args["path"]
+        label = "path"
+    else:
+        raise ValueError(
+            f"Missing required argument: 'filename' or 'path'. Provide the path of the file "
+            f"to {action}.")
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string, got {value!r} ({type(value).__name__})")
+    return value
+
+
+def display_filename_arg(args: dict[str, Any]) -> str:
+    """`args["filename"]` or `args["path"]`, for display purposes such as a tool-call summary;
+    `"?"` when neither is present.
+    """
+    return args.get("filename") or args.get("path") or "?"
+
+
 def truncate_lines(text: str, max_lines: int) -> str:
     """Return `text` unchanged if it has at most `max_lines` lines, otherwise its first
     `max_lines` lines followed by a trailing `"..."` line — used by a `detail_view()` override

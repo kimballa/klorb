@@ -9,7 +9,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import DiffPreview, Tool
+from klorb.tools.tool import DiffPreview, Tool, display_filename_arg, resolve_filename_arg
 from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,9 @@ class CreateFileTool(Tool):
     already exists. Missing parent directories are created automatically. Delegates the
     file-creation mechanic to `self.create_file_core`.
 
-    `filename` is checked against `writeFiles` and otherwise confined to
-    `SessionConfig.workspace.path` and further checked against `writeDirs` before any disk I/O.
+    `filename` (or `path`, mutually exclusive with `filename`) is checked against `writeFiles`
+    and otherwise confined to `SessionConfig.workspace.path` and further checked against
+    `writeDirs` before any disk I/O.
 
     `self._secret_redactor` resolves any `[[SECRET:<type>:<hash>]]` token in the call's
     `content` back to real plaintext before writing, and re-masks the diff before it's returned.
@@ -57,20 +58,20 @@ class CreateFileTool(Tool):
             "properties": {
                 "filename": {
                     "type": "string",
-                    "description": "Path of the new text file to create.",
+                    "description": "Path of the new text file to create. Mutually exclusive with path.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Alias for filename, used only when filename is not given.",
                 },
                 **self.create_file_core.parameter_properties(),
             },
-            "required": ["filename", "content"],
+            "required": ["content"],
             "additionalProperties": False,
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        try:
-            filename = args["filename"]
-        except KeyError:
-            raise ValueError(
-                "Missing required argument: 'filename'. Provide the path of the file to create.")
+        filename = resolve_filename_arg(args, action="create")
         try:
             content = args["content"]
         except KeyError:
@@ -100,7 +101,7 @@ class CreateFileTool(Tool):
         return format_create_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
-        filename = args.get("filename", "?")
+        filename = display_filename_arg(args)
         if error is not None:
             return f"Create file: {filename} failed: {error}"
         if not isinstance(result, dict):

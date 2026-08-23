@@ -101,9 +101,36 @@ def test_symlinked_parent_directory_escape_rejected(tmp_path: Path) -> None:
 
 def test_name_and_parameters(tmp_path: Path) -> None:
     tool = CreateFileTool(_context(tmp_path))
+    parameters = tool.parameters()
 
     assert tool.name() == "CreateFile"
-    assert set(tool.parameters()["required"]) == {"filename", "content"}
+    assert set(parameters["required"]) == {"content"}
+    assert {"filename", "path"} <= set(parameters["properties"])
+
+
+def test_creates_a_new_file_via_path(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+
+    result = CreateFileTool(_context(tmp_path)).apply(
+        {"path": str(file_path), "content": "a\nb\nc\n"})
+
+    assert file_path.read_text() == "a\nb\nc\n"
+    assert result["filename"] == str(file_path)
+
+
+def test_filename_and_path_both_given_raises(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+
+    with pytest.raises(ValueError, match="Provide either 'filename' or 'path', not both"):
+        CreateFileTool(_context(tmp_path)).apply(
+            {"filename": str(file_path), "path": str(file_path), "content": "x\n"})
+
+    assert not file_path.exists()
+
+
+def test_neither_filename_nor_path_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Missing required argument: 'filename' or 'path'"):
+        CreateFileTool(_context(tmp_path)).apply({"content": "x\n"})
 
 
 def test_delegates_file_creation_to_create_file_core(tmp_path: Path) -> None:
