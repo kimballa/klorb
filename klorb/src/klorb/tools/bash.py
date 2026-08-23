@@ -51,6 +51,7 @@ from klorb.session import SessionConfig
 from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import truncate_lines
+from klorb.tools.util.response_headers import format_header_lines
 from klorb.workspace.session_store import session_subdir_path
 
 logger = logging.getLogger(__name__)
@@ -666,6 +667,34 @@ def _network_command_domains(argv: list[str], recognized_clients: frozenset[str]
             if domain is not None and domain not in domains:
                 domains.append(domain)
     return domains
+
+
+_BASH_RESULT_HEADER_ORDER = (
+    "command", "success", "failure_reason", "exit_status", "stdout_file", "stderr_file",
+    "runtime", "terminal_alive", "terminal_cwd", "sandbox_rebuilt", "sandbox_notice",
+    "blocked_domains",
+)
+"""Key order `format_bash_result()` renders a `BashTool.apply()`-shaped result dict's header
+lines in."""
+
+
+def format_bash_result(result: dict[str, Any]) -> str:
+    """Render a `BashTool.apply()`-shaped result dict as `key: value` header lines in
+    `_BASH_RESULT_HEADER_ORDER` followed by labeled `stdout`/`stderr` blocks, each omitted when
+    its `..._file` spill counterpart is present instead."""
+    header_result = dict(result)
+    if not header_result.get("sandbox_rebuilt"):
+        header_result.pop("sandbox_rebuilt", None)
+    if not header_result.get("blocked_domains"):
+        header_result.pop("blocked_domains", None)
+    header_lines = format_header_lines(
+        header_result, _BASH_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"stdout", "stderr"}))
+    blocks = ["\n".join(header_lines)]
+    if result.get("stdout_file") is None:
+        blocks.append(f"stdout\n========\n{result.get('stdout') or ''}")
+    if result.get("stderr_file") is None:
+        blocks.append(f"stderr\n========\n{result.get('stderr') or ''}")
+    return "\n\n".join(blocks)
 
 
 class BashTool(InterruptibleTool):
@@ -1400,6 +1429,9 @@ class BashTool(InterruptibleTool):
                 deny=list(access.read_dirs.deny), ask=list(access.read_dirs.ask),
                 allow=[*access.read_dirs.allow, tmp_dir]),
             write_dirs=access.write_dirs)
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_bash_result(apply_output)
 
     def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
         """A shell command that ran but failed doesn't raise — `apply()` returns a result

@@ -41,6 +41,7 @@ from klorb.tools.bash import (
     _network_command_domains,
     _shell_single_quote,
     build_bash_env,
+    format_bash_result,
     session_env_file,
 )
 from klorb.tools.registry import ToolRegistry
@@ -1442,3 +1443,87 @@ def test_sandboxed_curl_to_localhost_succeeds_once_granted(
     server.close()
     assert result["success"] is True
     assert "OK" in result["stdout"]
+
+
+def _one_shot_result(**overrides: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "command": "echo hi", "exit_status": 0, "success": True, "failure_reason": None,
+        "stdout": "hi\n", "stderr": "", "stdout_file": None, "stderr_file": None,
+        "runtime": 0.01, "blocked_domains": [],
+    }
+    result.update(overrides)
+    return result
+
+
+def test_format_bash_result_renders_headers_then_stdout_and_stderr_blocks() -> None:
+    rendered = format_bash_result(_one_shot_result())
+
+    assert rendered == (
+        "command: echo hi\nsuccess: true\nexit_status: 0\nruntime: 0.01\n\n"
+        "stdout\n========\nhi\n\n\n"
+        "stderr\n========\n")
+
+
+def test_format_bash_result_omits_stream_block_when_its_file_is_present() -> None:
+    rendered = format_bash_result(_one_shot_result(
+        stdout=None, stdout_file="/tmp/klorb-bash-x/stdout"))
+
+    header, _, rest = rendered.partition("\n\n")
+    assert "stdout_file: /tmp/klorb-bash-x/stdout" in header
+    assert "stdout\n========" not in rendered
+    assert rest == "stderr\n========\n"
+
+
+def test_format_bash_result_omits_falsy_sandbox_rebuilt_and_blocked_domains() -> None:
+    rendered = format_bash_result(_one_shot_result(
+        sandbox_rebuilt=False, blocked_domains=[]))
+
+    assert "sandbox_rebuilt" not in rendered
+    assert "blocked_domains" not in rendered
+
+
+def test_format_bash_result_shows_sandbox_rebuilt_and_blocked_domains_when_truthy() -> None:
+    rendered = format_bash_result(_one_shot_result(
+        sandbox_rebuilt=True, blocked_domains=["evil.example.com"]))
+
+    header, _, _ = rendered.partition("\n\n")
+    assert "sandbox_rebuilt: true" in header
+    assert "blocked_domains: ['evil.example.com']" in header
+
+
+def test_format_bash_result_includes_persistent_shell_fields_in_order() -> None:
+    rendered = format_bash_result(_one_shot_result(
+        terminal_alive=True, terminal_cwd="/workspace"))
+
+    header, _, _ = rendered.partition("\n\n")
+    assert header.splitlines() == [
+        "command: echo hi", "success: true", "exit_status: 0", "runtime: 0.01",
+        "terminal_alive: true", "terminal_cwd: /workspace",
+    ]
+
+
+def test_format_bash_result_omits_failure_reason_and_sandbox_notice_when_absent() -> None:
+    rendered = format_bash_result(_one_shot_result())
+
+    assert "failure_reason" not in rendered
+    assert "sandbox_notice" not in rendered
+
+
+def test_format_bash_result_shows_failure_reason_and_sandbox_notice_when_present() -> None:
+    rendered = format_bash_result(_one_shot_result(
+        success=False, exit_status=1, failure_reason="Process completed normally with non-zero status",
+        sandbox_notice="Sandbox layer unavailable; running unsandboxed."))
+
+    header, _, _ = rendered.partition("\n\n")
+    assert "failure_reason: Process completed normally with non-zero status" in header
+    assert "sandbox_notice: Sandbox layer unavailable; running unsandboxed." in header
+
+
+def test_bash_tool_format_response_matches_format_bash_result(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    context = _context(tmp_path, make_session_config, command_rules=CommandRules(allow=[["echo", "**"]]))
+    tool = BashTool(context)
+    result = _apply(tool, "echo hi")
+
+    assert tool.format_response(result) == format_bash_result(result)

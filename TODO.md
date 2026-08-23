@@ -16,33 +16,6 @@
   * ReplaceAll: add "no verification ReadFile needed" language to response.
   * Append to the FindFile description:
     *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
-  * bash tool: print in format:
-
-    ```text
-    command: (str)
-    success: bool
-    [failure_reason: str]
-    exit_status: 0
-    [stdout_file: <str>]
-    [stderr_file: <str>]
-    runtime: <num>
-    terminal_alive: bool
-    terminal_cwd: bool
-    [sandbox_rebuilt: bool if true]
-    [sandbox_notice: str]
-    [blocked_domains: list of str]
-
-    stdout
-    ========
-    <stdout text follows. empty just means print nothing here>
-
-    stderr
-    ========
-    <stderr text follows. empty just means print nothing here>
-    ```
-
-    key order there is chosen literally.
-    if stdout_file is given, omit the `stdout` plaintext block. same for stderr.
   * GrepTool should likewise be a bunch of k/v stuff at the top then it should have
     mostly plaintext blocks, per matched file:
 
