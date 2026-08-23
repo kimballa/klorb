@@ -165,6 +165,8 @@
 
 ### Bugs
 
+* test_rendering.py::test_scrolling_to_the_top_expands_a_collapsed_history_chunk is flaky in CI runs and sometimes fails even with timeout raised from 5 to 10s.
+
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird
   ways. We need to be robust if the LLM accidentally starts sending mis-matched XML
