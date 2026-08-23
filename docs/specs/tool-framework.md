@@ -334,7 +334,13 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   needed. `summary()` names the queries,
   root, and match count; `detail_view()` caps `files` to its first 20 entries (adding a
   `files_omitted` count) when present, since a full result can span up to `grep_max_results`
-  matching lines across that many files.
+  matching lines across that many files. `format_response()` renders the
+  result as `key: value` header lines followed by one plain-text block per matched file — the
+  filename on its own line, then its `lines` entries verbatim — the same wire-text convention
+  `ReadFile`/`EditFile`/`BashTool` use (see
+  docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md); `ListFiles` mode's
+  block is just the matched filenames, one per line, and a spilled result (`results_data_file`
+  present) has no block at all.
 * `klorb.tools.semantic_search.SemanticSearchTool` (`klorb/src/klorb/tools/semantic_search.py`),
   name `SemanticSearch`. Searches the workspace's local hybrid (BM25 + vector KNN) search index
   (see docs/specs/local-search-index.md) for chunks related to any of `queries` by meaning rather
