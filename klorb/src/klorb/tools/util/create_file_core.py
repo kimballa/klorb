@@ -6,11 +6,30 @@ delegates to it."""
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from klorb.tools.util.diff_lines import build_diff_hunks
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
+from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
+from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
 if TYPE_CHECKING:
     from klorb.session import Session
+
+_CREATE_RESULT_HEADER_ORDER = (
+    "namespace", "filename",
+    "created", "total_lines", "warning", "note",
+)
+"""Key order `format_create_result()` renders a `CreateFileCore.apply()`-shaped result dict's
+header lines in."""
+
+
+def format_create_result(result: dict[str, Any]) -> str:
+    """Render a `CreateFileCore.apply()`-shaped result dict as `key: value` header lines in
+    `_CREATE_RESULT_HEADER_ORDER`, followed by `diff` as a plain-text block."""
+    header_lines = format_header_lines(
+        result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"diff"}))
+    diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
+    diff_block = format_diff_hunks(diff_hunks)
+    return "\n".join(header_lines) + "\n\n" + diff_block
 
 
 class CreateFileCore:
@@ -34,10 +53,8 @@ class CreateFileCore:
         self, path: Path, args: dict[str, Any], *, subject: str, edit_hint: str,
         redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
-        """Create `path` with `args["content"]`, returning `total_lines`, `created`, and `diff` --
-        a jsonable rendering of `klorb.tools.util.diff_lines.build_diff_hunks()`'s all-insert
-        diff against an empty old subject, for a `Tool`'s `diff_preview()` to parse back into
-        `DiffHunk`s (the caller adds `filename` if it has one).
+        """Create `path` with `args["content"]`, returning `total_lines`, `created`, `note`, and
+        `diff` (the caller adds `filename` if it has one).
 
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
@@ -68,4 +85,5 @@ class CreateFileCore:
             "total_lines": len(new_lines),
             "created": True,
             "diff": [hunk.model_dump() for hunk in diff_hunks],
+            "note": NO_READFILE_VERIFICATION_NOTE,
         }

@@ -227,6 +227,32 @@ def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
     assert tool.diff_preview({"filename": "existing.txt"}, None, "already exists") is None
 
 
+# --- format_response() (see docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md) ---
+
+
+def test_apply_result_carries_a_no_readfile_verification_note(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+
+    result = CreateFileTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "content": "a\nb\n"})
+
+    assert result["note"] == "No verification ReadFile needed."
+
+
+def test_format_response_renders_headers_then_diff(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+    tool = CreateFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "content": "a\nb\n"}
+
+    result = tool.apply(args)
+    rendered = tool.format_response(result)
+
+    header, diff_block = rendered.split("\n\n")
+    assert header.splitlines()[0] == f"filename: {file_path}"
+    assert "note: No verification ReadFile needed." in header
+    assert diff_block != ""
+
+
 # --- Secret redaction (see docs/specs/secret-redaction.md) ---
 
 _AWS_KEY = "AKIAABCDEFGHIJKLMNOP"

@@ -15,7 +15,7 @@ from textual.containers import VerticalScroll
 from textual.content import Content
 from textual.widget import Widget
 
-from klorb.tools.util.diff_lines import DiffHunk, DiffLine
+from klorb.tools.util.diff_lines import DiffHunk, DiffLine, diff_gutter_width
 
 
 def random_greeting() -> str:
@@ -204,19 +204,6 @@ _TRUNCATION_MARKER = "..."
 short -- the same convention for a truncated diff preview and a truncated read preview."""
 
 
-def _diff_gutter_width(hunks: list[DiffHunk]) -> int:
-    """The number of characters needed to right-align the largest old/new line number appearing
-    anywhere in `hunks`, so every gutter column in the rendered diff lines up."""
-    max_lineno = 1
-    for hunk in hunks:
-        for line in hunk.lines:
-            if line.old_lineno is not None:
-                max_lineno = max(max_lineno, line.old_lineno)
-            if line.new_lineno is not None:
-                max_lineno = max(max_lineno, line.new_lineno)
-    return len(str(max_lineno))
-
-
 _COMPACT_CONTEXT_BEFORE_LINES = 2
 """How many lines of unchanged context `render_diff_content`'s compact (`max_lines`-capped) view
 keeps immediately before the first changed line: spending most of an already-short `max_lines`
@@ -235,7 +222,7 @@ def render_diff_content(hunks: list[DiffHunk], *, max_lines: int | None) -> Cont
     start of the first hunk's own (much longer) leading context. The full leading context is
     still there for the uncapped view.
     """
-    width = _diff_gutter_width(hunks)
+    width = diff_gutter_width(hunks)
     flat: list[DiffLine | None] = []
     for hunk_index, hunk in enumerate(hunks):
         if hunk_index > 0:

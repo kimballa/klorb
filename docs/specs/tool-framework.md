@@ -251,12 +251,16 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `start_line`/`end_line` (1-indexed, renumbered to reflect `new_text`'s own line count),
   `replaced_lines` (the line count of the block that was matched and replaced — possibly
   different from `end_line - start_line + 1`, since `end_line` reflects `new_text`'s length,
-  not the original match's), the file's new `new_total_lines`, and `content` — the changed
+  not the original match's), the file's new `new_total_lines`, `post_edit_content` — the changed
   region in `ReadFile`'s `"N|text"` format, so the model can see the result without a follow-up
-  `ReadFile` call. `summary()` reports a `"+A/-R"` line-diff count computed from `replaced_lines`
-  and `new_text`'s own line count — available only on success, since a failed match never
-  resolves a location to count lines removed from; `detail_view()` caps `content` to 8 lines via
-  `truncate_lines()`, same as `ReadFile`.
+  `ReadFile` call — and `note`, a fixed reminder of that same fact. `summary()` reports a
+  `"+A/-R"` line-diff count computed from `replaced_lines` and `new_text`'s own line count —
+  available only on success, since a failed match never resolves a location to count lines
+  removed from; `detail_view()` caps `post_edit_content` to 8 lines via `truncate_lines()`, same
+  as `ReadFile`. Every edit/create tool's `format_response()` renders its result as `key: value`
+  header lines followed by `post_edit_content` (edit only) and `diff` as plain-text blocks, the
+  same wire-text convention `ReadFile` uses (see
+  docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md).
 
   `EditFileCore.apply()` (`klorb/src/klorb/tools/util/edit_file_core.py` — the mechanic
   `EditFileTool`, `EditScratchpadTool`, and `EditMemoryTool` all delegate to, see
@@ -285,8 +289,9 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   file goes through `EditFile` with `old_text` set to the file's entire current content
   instead. Missing
   parent directories are created automatically. The result is a dict: `filename`,
-  `total_lines`, and `created: true`. `summary()` names the file and its line count; no
-  `detail_view()` override, same reasoning as `ReplaceAll`.
+  `total_lines`, `created: true`, and `note`, a fixed reminder that no follow-up `ReadFile` call
+  is needed to verify. `summary()` names the file and its line count; no `detail_view()`
+  override, same reasoning as `ReplaceAll`.
 * `klorb.tools.grep.GrepTool` (`klorb/src/klorb/tools/grep.py`), name `Grep`. Recursively
   searches the directory tree rooted at `dirname` (`""` means the whole project root) for lines
   matching any of `queries` — each matched as a literal substring by default, or as a distinct

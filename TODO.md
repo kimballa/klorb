@@ -13,16 +13,12 @@
 ### Feature backlog
 
 * Rework various tool calls to be less json-like.
-  * edit_file_core & related: move most content to k/v pair lines, then fmt `post_edit_content` and `diff`
-    as plain text blocks with line number prefixes.
-  * create_file_core, likewise, plaintext "diff" block.
-  * CreateFile and ReplaceAll: add "no verification ReadFile needed" language to response.
-    * ... and same for EditFile.
+  * ReplaceAll: add "no verification ReadFile needed" language to response.
   * Append to the FindFile description:
     *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
   * bash tool: print in format:
 
-    ```
+    ```text
     command: (str)
     success: bool
     [failure_reason: str]
@@ -50,7 +46,7 @@
   * GrepTool should likewise be a bunch of k/v stuff at the top then it should have
     mostly plaintext blocks, per matched file:
 
-    ```
+    ```text
     matching_file_1.py
      2|bla
     *3|the match

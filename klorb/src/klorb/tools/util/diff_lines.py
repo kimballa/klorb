@@ -69,3 +69,39 @@ def build_diff_hunks(
                         text=new_lines[new_index]))
         hunks.append(DiffHunk(lines=lines))
     return hunks
+
+
+DIFF_LINE_MARKERS: dict[str, str] = {"add": "+", "del": "-", "context": " "}
+"""Marker character for one `DiffLine.kind`."""
+
+
+def diff_gutter_width(hunks: list[DiffHunk]) -> int:
+    """The number of characters needed to right-align the largest old/new line number appearing
+    anywhere in `hunks`, so every gutter column in a rendered diff lines up."""
+    max_lineno = 1
+    for hunk in hunks:
+        for line in hunk.lines:
+            if line.old_lineno is not None:
+                max_lineno = max(max_lineno, line.old_lineno)
+            if line.new_lineno is not None:
+                max_lineno = max(max_lineno, line.new_lineno)
+    return len(str(max_lineno))
+
+
+def format_diff_hunks(hunks: list[DiffHunk]) -> str:
+    """Render `hunks` as plain text for a model: a right-aligned `old_lineno new_lineno` gutter,
+    a `+`/`-`/` ` marker, and the line's text, with a `⋮` separator line between two hunks that
+    aren't adjacent. Empty `hunks` renders as an empty string."""
+    if not hunks:
+        return ""
+    width = diff_gutter_width(hunks)
+    lines: list[str] = []
+    for hunk_index, hunk in enumerate(hunks):
+        if hunk_index > 0:
+            lines.append("⋮")
+        for entry in hunk.lines:
+            old_str = str(entry.old_lineno) if entry.old_lineno is not None else ""
+            new_str = str(entry.new_lineno) if entry.new_lineno is not None else ""
+            marker = DIFF_LINE_MARKERS[entry.kind]
+            lines.append(f"{old_str:>{width}} {new_str:>{width}} {marker} {entry.text}")
+    return "\n".join(lines)

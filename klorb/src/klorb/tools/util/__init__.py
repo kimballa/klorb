@@ -1,10 +1,18 @@
 # © Copyright 2026 Aaron Kimball
 """Core mechanics (read, edit, create, search, diff, secret redaction) for tool pairs."""
 
-from klorb.tools.util.create_file_core import CreateFileCore
-from klorb.tools.util.diff_lines import DIFF_CONTEXT_LINES, DiffHunk, DiffLine, build_diff_hunks
+from klorb.tools.util.create_file_core import CreateFileCore, format_create_result
+from klorb.tools.util.diff_lines import (
+    DIFF_CONTEXT_LINES,
+    DIFF_LINE_MARKERS,
+    DiffHunk,
+    DiffLine,
+    build_diff_hunks,
+    diff_gutter_width,
+    format_diff_hunks,
+)
 from klorb.tools.util.dir_walk import walk_readable_tree
-from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit
+from klorb.tools.util.edit_file_core import EditFileCore, LineRangeEdit, format_edit_result
 from klorb.tools.util.read_file_core import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
@@ -37,6 +45,7 @@ from klorb.tools.util.spill import SpillDir
 __all__ = [
     "CreateFileCore",
     "DIFF_CONTEXT_LINES",
+    "DIFF_LINE_MARKERS",
     "DiffHunk",
     "DiffLine",
     "EditFileCore",
@@ -55,6 +64,10 @@ __all__ = [
     "clear_cached_redactor",
     "compile_queries",
     "context_lines_for_matches",
+    "diff_gutter_width",
+    "format_create_result",
+    "format_diff_hunks",
+    "format_edit_result",
     "format_match_line",
     "format_read_result",
     "get_or_create_secret_redactor",

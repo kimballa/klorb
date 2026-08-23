@@ -7,13 +7,38 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from klorb.tools.util.diff_lines import build_diff_hunks
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
+from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
+from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
 if TYPE_CHECKING:
     from klorb.session import Session
 
 logger = logging.getLogger(__name__)
+
+_EDIT_RESULT_HEADER_ORDER = (
+    "namespace", "filename",
+    "edit_success", "created",
+    "start_line", "end_line", "replaced_lines", "new_total_lines",
+    "fuzzy_whitespace_match", "whitespace", "warning", "note",
+)
+"""Key order `format_edit_result()` renders an `EditFileCore.apply()`-shaped result dict's
+header lines in."""
+
+
+def format_edit_result(result: dict[str, Any]) -> str:
+    """Render an `EditFileCore.apply()`-shaped result dict as `key: value` header lines in
+    `_EDIT_RESULT_HEADER_ORDER`, followed by `post_edit_content` and `diff` as separate
+    plain-text blocks, each set off by a blank line."""
+    header_lines = format_header_lines(
+        result, _EDIT_RESULT_HEADER_ORDER,
+        known_elsewhere=frozenset({"post_edit_content", "diff"}))
+    post_edit_content: str = result.get("post_edit_content", "")
+    diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
+    diff_block = format_diff_hunks(diff_hunks)
+    return "\n\n".join(["\n".join(header_lines), post_edit_content, diff_block])
+
 
 _FUZZY_TRANSLATION = str.maketrans({
     "—": "-", "–": "-", "−": "-",
@@ -123,7 +148,7 @@ class EditFileCore:
     ) -> dict[str, Any]:
         """Apply one block substitution to `path` per `args`, returning `start_line`/`end_line`
         (the edited region, 1-indexed, renumbered to reflect `new_text`'s own line count),
-        `new_total_lines`, `post_edit_content`, `edit_success`, and `diff`.
+        `new_total_lines`, `post_edit_content`, `edit_success`, `diff`, and `note`.
 
         When `redactor` is given, `old_text`/`old_text_start`/`old_text_end`/`new_text` are each
         passed through `redactor.detokenize(session, ...)` before matching or writing.
@@ -221,6 +246,7 @@ class EditFileCore:
             "post_edit_content": snippet,
             "edit_success": True,
             "diff": [hunk.model_dump() for hunk in diff_hunks],
+            "note": NO_READFILE_VERIFICATION_NOTE,
         }
         if not file_existed:
             out["created"] = True

@@ -9,7 +9,7 @@ from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool
-from klorb.tools.util import CreateFileCore, DiffHunk, get_or_create_secret_redactor
+from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,9 @@ class CreateFileTool(Tool):
 
         logger.debug("CreateFile %s created (%d lines)", filename, result["total_lines"])
         return result
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_create_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         filename = args.get("filename", "?")

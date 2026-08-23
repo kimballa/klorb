@@ -191,6 +191,11 @@ Here are the officially-sanctioned CI commands:
 * If you edit `TODO.md` or any documentation (specs, ADRs, etc), run `make lint_docs` from
   the root directory to run markdownlint.
 
+If a lint run turns up a minor, pre-existing issue unrelated to your change (e.g. a stray
+`TODO.md` fenced-code-block missing its language tag), fix it anyway rather than leaving it red —
+CI checks the whole repo, not just your diff, so an unrelated pre-existing lint failure still
+fails your PR's CI run.
+
 The full `klorb` test suite takes a few minutes, so within a dev loop run `make
 TEST_SUITE=<keyword> test` against the suite(s) covering the code you're touching, and save one
 unscoped `make test` for the end, before declaring the task done.
