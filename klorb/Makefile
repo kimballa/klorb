@@ -8,7 +8,7 @@
 #   * `make sync_deps` to resolve and update dependency locks from the pkg manager.
 
 COMMANDS=help lint typecheck clean distclean sync_deps \
-	install_deps install_dev_deps install test evals venv init all
+	install_deps install_dev_deps install test test-ci evals venv init all
 
 PYFLAKES=venv/bin/flake8
 FLAKE8RC=`pwd`/.flake8
@@ -73,6 +73,16 @@ endif
 
 TEST_FULL_ARGS=$(FORMATTED_SUITE_ARG) $(TEST_ARGS)
 
+# test-ci never uses stepwise, so a full run collects and reports every failing test instead of
+# stopping at the first one.
+ifeq ($(strip $(TEST_SUITE)),)
+CI_SUITE_ARG=
+else
+CI_SUITE_ARG=-k "$(TEST_SUITE)"
+endif
+
+TEST_CI_ARGS=$(CI_SUITE_ARG) $(TEST_ARGS)
+
 # Extra args forwarded to `evals/run_evals.py`, e.g. `EVALARGS='--model openai/gpt-4o' make evals`.
 EVALARGS ?=--model xiaomi/mimo-v2.5 --self-review
 
@@ -83,9 +93,10 @@ help:
 	@echo "${COMMANDS}"
 	@echo ""
 	@echo "Test selection:"
-	@echo "  make test                             # full suite, resumes from last failure on rerun"
+	@echo "  make test                              # full suite, resumes from last failure on rerun"
 	@echo "  make TEST_SUITE=<pytest -k expr> test  # only tests matching the given substring/expression"
 	@echo "  make TEST_ARGS='<pytest flags>' test   # extra args forwarded to pytest verbatim"
+	@echo "  make test-ci                           # full suite, never stops early; reports every failure"
 
 
 lint:
@@ -179,6 +190,12 @@ distclean: clean
 test:
 	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)" -o cache_dir=.pytest_cache tests/ \
 		--show-capture=log $(TEST_FULL_ARGS)
+
+# Full-suite run for CI: runs every test regardless of prior failures and reports them all,
+# rather than stopping at the first.
+test-ci:
+	$(LOAD_VENV); PYTHONPATH="$(PYTHONPATH)" "$(PYTEST)" -o cache_dir=.pytest_cache tests/ \
+		--show-capture=log $(TEST_CI_ARGS)
 
 # Tool-efficacy evals: makes real calls to a real hosted model (see docs/specs/tool-eval-harness.md,
 # docs/adrs/tool-evals-skip-without-api-key.md).

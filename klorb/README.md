@@ -51,7 +51,8 @@ hooks'`). Run a scoped `TEST_SUITE` while iterating on a change, then a single u
 test` before calling the work done — the full suite takes a few minutes. An unscoped run also
 uses pytest's stepwise plugin: it stops at the first failure and resumes there next time instead
 of re-running everything, until a clean run or `make clean` (which clears `.pytest_cache`) resets
-it.
+it. Use `make test-ci` instead when you want every failing test reported in one pass, such as in
+CI, since it always runs the full suite without stopping at the first failure.
 
 ## Evals
 

@@ -9,7 +9,7 @@ APT_GET=sudo apt-get
 NPM=npm
 
 COMMANDS=help cloud_setup lint lint_docs typecheck sync_deps \
-	install_deps install_dev_deps install test clean distclean all secrets_baseline
+	install_deps install_dev_deps install test test-ci clean distclean all secrets_baseline
 
 # Python executable to use when creating the venv. Can be overridden on the command line
 # (e.g. PYTHON=python3.12 make cloud_setup) or via the cloud session-start script.
@@ -67,6 +67,11 @@ install:
 test:
 	$(MAKE) -C klorb test
 	$(MAKE) -C vscode-plugin test
+
+# Full-suite run for CI: reports every failing test in one pass instead of stopping at the first.
+test-ci:
+	$(MAKE) -C klorb test-ci
+	$(MAKE) -C vscode-plugin test-ci
 
 clean:
 	$(MAKE) -C klorb clean
