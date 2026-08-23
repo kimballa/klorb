@@ -13,6 +13,7 @@ from klorb.tools.util import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
     ReadFileCore,
+    format_read_result,
     get_or_create_secret_redactor,
     parse_numbered_content,
     read_full_file_lines,
@@ -62,7 +63,7 @@ class ReadFileTool(Tool):
             f"Lines longer than {max_line_len} characters are wrapped. "
             "Wrapped continuation lines repeat the same line number prefix.\n"
             "Use start_line and end_line to page through long files."
-            "When the response contains `\"truncated\": true`, the included `next_start_line` "
+            "When the response contains `truncated: true`, the included `next_start_line` "
             "tells you the value of `start_line` to use for the next call.\n"
             "Use ReadFile to fully absorb a large number of lines of text. "
             "To search for a specific word or phrase, use the Grep tool instead.\n"
@@ -108,6 +109,9 @@ class ReadFileTool(Tool):
             result["truncated"],
         )
         return result
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_read_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         filename = args.get("filename", "?")

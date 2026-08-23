@@ -114,6 +114,14 @@ def test_default_invalid_tool_call_summary_and_detail_show_the_raw_arguments() -
     assert "Expecting ',' delimiter: line 1 column 34" in detail
 
 
+def test_default_format_response_is_a_json_dump() -> None:
+    context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
+    tool = EchoTool(context)
+
+    assert tool.format_response({"matches": ["a.py"], "count": 1}) == (
+        json.dumps({"matches": ["a.py"], "count": 1}, ensure_ascii=False))
+
+
 def test_truncate_lines_leaves_short_text_unchanged() -> None:
     assert truncate_lines("a\nb\nc", max_lines=8) == "a\nb\nc"
 

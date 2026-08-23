@@ -59,6 +59,20 @@ def test_reads_whole_short_file_by_default(tmp_path: Path) -> None:
     assert result["content"] == "1|line 1\n2|line 2\n3|line 3"
 
 
+def test_format_response_renders_headers_and_content(tmp_path: Path) -> None:
+    tool = ReadFileTool(_context(tmp_path))
+    result = {
+        "filename": "sample.txt", "start_line": 1, "end_line": 2, "total_lines": 2,
+        "truncated": False, "content": "1|line 1\n2|line 2",
+    }
+
+    formatted = tool.format_response(result)
+
+    assert formatted == (
+        "filename: sample.txt\nstart_line: 1\nend_line: 2\ntotal_lines: 2\ntruncated: false"
+        "\n\n1|line 1\n2|line 2")
+
+
 def test_start_line_zero_means_start_at_beginning(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 3)
 

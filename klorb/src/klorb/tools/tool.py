@@ -222,6 +222,12 @@ class Tool(ABC):
     def apply(self, args: dict[str, Any]) -> Any:
         """Execute the tool with the given arguments and return its result."""
 
+    def format_response(self, apply_output: Any) -> str:
+        """Render `apply_output` as the text a model sees for this call's `response_body`.
+        Defaults to a JSON dump; override for a more model-readable rendering of a tool-specific
+        result shape."""
+        return json.dumps(apply_output, ensure_ascii=False)
+
     def category(self) -> str:
         """Return this tool's category (e.g. `"FILES"`, `"MEMORY"`), used by
         `klorb.agents.intersection.compute_child_tool_set` to filter which tools a subagent

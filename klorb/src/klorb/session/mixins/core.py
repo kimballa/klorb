@@ -394,10 +394,9 @@ class SessionCoreMixin(SessionBase):
 
     @staticmethod
     def _create_subagent_tracker() -> "SubagentTracker":
-        """Construct a `SubagentTracker`, deferring the import since `klorb.agents.runtime`
-        itself imports `klorb.session.mixins.turns` (for `wrap_system_interjection`) -- a
-        module-level import here, while `klorb.session`'s own `__init__.py` is still assembling
-        this very mixin, would be circular."""
+        """Construct a `SubagentTracker`, deferring the import since a module-level import here,
+        while `klorb.session`'s own `__init__.py` is still assembling this very mixin, would be
+        circular."""
         from klorb.agents.runtime import SubagentTracker
         return SubagentTracker()
 

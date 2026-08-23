@@ -22,6 +22,8 @@ from klorb.session.events import QueuedMessage, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
 from klorb.token_estimate import estimate_message_tokens, estimate_tokens
+from klorb.tools.exceptions import NoSuchToolException
+from klorb.tools.response_envelope import ToolResponseEnvelope, wrap_system_interjection
 from klorb.workspace.session_store import write_session_image
 
 if TYPE_CHECKING:
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
     # importing it for real here would be circular; needed only to `cast` `self` to `Session`
     # below, matching `klorb.session.mixins.core`'s own use of this pattern.
     from klorb.session import Session
+    from klorb.tools.tool import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +74,6 @@ class HookDeniedTurnError(Exception):
     refusing to send this turn to the model at all."""
 
 
-def wrap_system_interjection(subject: str, message: str) -> str:
-    """Wrap `message` in a `<SystemInterjection subject="{subject}">...</SystemInterjection>`
-    tag pair, so a model can tell an out-of-band harness notice apart from the user's own
-    turn content within the same `Message.content`."""
-    return f'<SystemInterjection subject="{subject}">\n{message}\n</SystemInterjection>'
-
-
 def _image_header_text(index: int, image_fragment: MessageFragment) -> str:
     """Text-fragment header prepended immediately ahead of each image fragment. Names the
     image's 1-indexed position among the ones attached to this turn, plus its origin."""
@@ -91,6 +87,42 @@ class SessionTurnsMixin(SessionBase):
     """The turn-dispatch loop and its three public entry points: `send_turn`, `retry_last_turn`,
     `run_one_shot`."""
 
+    def _build_wire_message_snapshot(self, messages: list[Message]) -> list[Message]:
+        """Return `messages` with every `role="tool_response"` entry's `content` replaced by
+        `ToolResponseEnvelope.to_wire_content()`'s rendering: the free-text form actually sent
+        to the model, resolved fresh from the persisted envelope and the originating tool
+        (correlated via `tool_call_id` back to the preceding `tool_use` message's matching
+        call). `self._messages`/persisted storage are never mutated by this."""
+        tool_names_by_call_id: dict[str, str] = {}
+        for message in messages:
+            if message.role == "tool_use" and message.tool_calls:
+                for call in message.tool_calls:
+                    tool_names_by_call_id[call.id] = call.name
+
+        tool_cache: dict[str, "Tool | None"] = {}
+
+        def resolve_tool(name: str) -> "Tool | None":
+            if name not in tool_cache:
+                if self._tool_registry is None:
+                    tool_cache[name] = None
+                else:
+                    try:
+                        tool_cache[name] = self._tool_registry.instantiate_tool(name)
+                    except NoSuchToolException:
+                        tool_cache[name] = None
+            return tool_cache[name]
+
+        result: list[Message] = []
+        for message in messages:
+            if message.role != "tool_response" or message.tool_call_id is None:
+                result.append(message)
+                continue
+            envelope = ToolResponseEnvelope.model_validate_json(message.content)
+            tool_name = tool_names_by_call_id.get(message.tool_call_id)
+            tool = resolve_tool(tool_name) if tool_name is not None else None
+            result.append(message.model_copy(update={"content": envelope.to_wire_content(tool)}))
+        return result
+
     def _send_and_receive(
         self,
         message_snapshot: list[Message],
@@ -102,6 +134,10 @@ class SessionTurnsMixin(SessionBase):
         callbacks: TurnEventHandlers,
     ) -> tuple[Message, ProviderResponse]:
         """Send one request to the active model and return `(reply, result)`.
+
+        `message_snapshot` is first rebuilt via `_build_wire_message_snapshot()` so every
+        `tool_response` entry carries its free-text wire rendering rather than the persisted
+        envelope JSON.
 
         Streams the reply: on the first chunk, a placeholder `Message` is appended to
         `self._messages`, and each chunk's text is appended to it. On success, that same
@@ -121,6 +157,7 @@ class SessionTurnsMixin(SessionBase):
         finalized with `processing_state="aborted"` and whatever `streaming_content` had
         arrived is folded into `content`.
         """
+        message_snapshot = self._build_wire_message_snapshot(message_snapshot)
         placeholder: Message | None = None
         thinking_placeholder: Message | None = None
 

@@ -13,6 +13,7 @@ from klorb.tools.util import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
     ReadFileCore,
+    format_read_result,
     parse_numbered_content,
     read_full_file_lines,
 )
@@ -113,6 +114,9 @@ class ReadSkillFileTool(Tool):
             result["total_lines"], result["truncated"],
         )
         return result
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_read_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         namespace = args.get("namespace", "?")

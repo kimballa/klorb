@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from klorb.session.mixins.turns import wrap_system_interjection
+from klorb.tools.response_envelope import wrap_system_interjection
 
 if TYPE_CHECKING:
     from klorb.session import Session

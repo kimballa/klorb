@@ -9,6 +9,7 @@ from klorb.tools.util.read_file_core import (
     READ_PREVIEW_MAX_LINES,
     FullFileView,
     ReadFileCore,
+    format_read_result,
     parse_numbered_content,
     read_full_file_lines,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "compile_queries",
     "context_lines_for_matches",
     "format_match_line",
+    "format_read_result",
     "get_or_create_secret_redactor",
     "load_secrets_baseline",
     "match_line_indices",

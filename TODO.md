@@ -12,8 +12,6 @@
 
 ### Feature backlog
 
-* rework built-in tool responses to just use the content field as a raw string, replying in "plain text" rather than as formal faceted json serialized into a string.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -155,6 +153,14 @@
 ## VSCode plugin
 
 ### Feature backlog
+
+* A tool call's `system_interjections` never reach the history view today, live or replayed
+  (`ToolCallEvent` carries no such field, and `update_mapping.py`'s replay builder discards
+  `system_interjections` when decoding a saved `tool_response`). Surface them the same way
+  `parseSystemInterjections.ts`/`HistoryView.tsx` already render a `role="user"` prompt's
+  `<SystemInterjection>` blocks: thread a structured field through the live ACP update and
+  `_replay_tool_call_entry`/`build_session_replay`, and add a webview rendering path fed that
+  structured data instead of text-parsed. See docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 

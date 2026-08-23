@@ -15,6 +15,31 @@ READ_PREVIEW_MAX_LINES = 4
 """How many numbered lines a `Tool.read_preview()` override keeps in `ReadPreview.preview_lines`
 for the inline compact preview."""
 
+_READ_RESULT_HEADER_ORDER = (
+    "namespace", "filename", "name", "path",
+    "start_line", "end_line", "total_lines", "truncated", "truncation_cause", "next_start_line",
+)
+"""Key order `format_read_result()` renders a `ReadFileCore.apply()`-shaped result dict's header
+lines in."""
+
+
+def _format_header_value(value: Any) -> str:
+    """Render one header line's value: lowercase `true`/`false` for a bool, `str()` otherwise."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def format_read_result(result: dict[str, Any]) -> str:
+    """Render a `ReadFileCore.apply()`-shaped result dict as `key: value` header lines in
+    `_READ_RESULT_HEADER_ORDER`, followed by a blank line and `result["content"]`."""
+    header_lines = [
+        f"{key}: {_format_header_value(result[key])}"
+        for key in _READ_RESULT_HEADER_ORDER if key in result
+    ]
+    content: str = result.get("content", "")
+    return "\n".join(header_lines) + "\n\n" + content
+
 
 @dataclass
 class FullFileView:

@@ -383,6 +383,29 @@ def test_total_tokens_used_sums_every_message_across_a_multi_round_turn(
     assert session.total_tokens_used() == sum(m.num_tokens for m in session.messages)
 
 
+def test_send_turn_sends_tool_response_as_wire_formatted_text_but_persists_json(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3),
+        _reply("final answer", num_tokens=4),
+    ]
+    config = make_session_config(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    second_round_messages = mock_provider.send_prompt.call_args_list[1].args[0]
+    sent_tool_response = next(m for m in second_round_messages if m.role == "tool_response")
+    assert sent_tool_response.content == '"hi"'
+
+    persisted_tool_response = next(m for m in session.messages if m.role == "tool_response")
+    assert json.loads(persisted_tool_response.content) == {
+        "is_error": False, "is_retryable": False, "response_body": "hi"}
+
+
 def test_total_output_tokens_used_sums_completion_tokens_across_rounds(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
