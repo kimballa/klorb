@@ -799,6 +799,34 @@ def test_edit_file_matches_a_token_via_old_text_start_end_form(
         session.close()
 
 
+# --- format_response() (see docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md) ---
+
+
+def test_apply_result_carries_a_no_readfile_verification_note(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+
+    result = EditFileTool(_context(tmp_path)).apply({
+        "filename": str(file_path), "old_text": "b", "new_text": "B",
+    })
+
+    assert result["note"] == "No verification ReadFile needed."
+
+
+def test_format_response_renders_headers_then_content_then_diff(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    tool = EditFileTool(_context(tmp_path))
+    args = {"filename": str(file_path), "old_text": "b", "new_text": "B"}
+
+    result = tool.apply(args)
+    rendered = tool.format_response(result)
+
+    header, post_edit_content, diff_block = rendered.split("\n\n")
+    assert header.splitlines()[0] == f"filename: {file_path}"
+    assert "note: No verification ReadFile needed." in header
+    assert post_edit_content == "2|B"
+    assert diff_block != ""
+
+
 def test_edit_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
     """A redactor is always attached, but an edit that never mentions a token is unaffected."""
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")

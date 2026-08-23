@@ -6,11 +6,29 @@ delegates to it."""
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from klorb.tools.util.diff_lines import build_diff_hunks
+from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
+from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
 if TYPE_CHECKING:
     from klorb.session import Session
+
+_CREATE_RESULT_HEADER_ORDER = (
+    "namespace", "filename",
+    "created", "total_lines", "warning", "note",
+)
+"""Key order `format_create_result()` renders a `CreateFileCore.apply()`-shaped result dict's
+header lines in."""
+
+
+def format_create_result(result: dict[str, Any]) -> str:
+    """Render a `CreateFileCore.apply()`-shaped result dict as `key: value` header lines in
+    `_CREATE_RESULT_HEADER_ORDER`, followed by `diff` as a plain-text block."""
+    header_lines = format_header_lines(
+        result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"diff"}))
+    diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
+    diff_block = format_diff_hunks(diff_hunks)
+    return "\n".join(header_lines) + "\n\n" + diff_block
 
 
 class CreateFileCore:

@@ -8,8 +8,8 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore, get_or_create_secret_redactor
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE, DiffPreview, Tool, truncate_lines
+from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +88,16 @@ class EditFileTool(Tool):
             path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}",
             create_hint="CreateFile", redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
+        result["note"] = NO_READFILE_VERIFICATION_NOTE
 
         logger.debug(
             "EditFile %s replaced %d line(s) at line %d of what is now a %d-line file",
             filename, result["replaced_lines"], result["start_line"], result["new_total_lines"],
         )
         return result
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_edit_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts come from

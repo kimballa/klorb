@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.util.diff_lines."""
 
-from klorb.tools.util import DIFF_CONTEXT_LINES, build_diff_hunks
+from klorb.tools.util import DIFF_CONTEXT_LINES, build_diff_hunks, format_diff_hunks
 
 
 def test_no_change_yields_no_hunks() -> None:
@@ -98,3 +98,30 @@ def test_line_numbers_are_one_indexed_and_match_original_positions() -> None:
     by_kind = {line.kind: line for line in lines if line.kind in ("del", "add")}
     assert by_kind["del"].old_lineno == 2
     assert by_kind["add"].new_lineno == 2
+
+
+# --- format_diff_hunks() ---
+
+
+def test_format_diff_hunks_renders_gutter_marker_and_text() -> None:
+    hunks = build_diff_hunks(["a", "b", "c"], ["a", "B", "c"], context=1)
+
+    rendered = format_diff_hunks(hunks)
+
+    assert rendered == "1 1   a\n2   - b\n  2 + B\n3 3   c"
+
+
+def test_format_diff_hunks_separates_non_adjacent_hunks_with_a_marker_line() -> None:
+    old_lines = [str(i) for i in range(2 * DIFF_CONTEXT_LINES + 20)]
+    new_lines = list(old_lines)
+    new_lines[0] = "X"
+    new_lines[-1] = "Y"
+
+    hunks = build_diff_hunks(old_lines, new_lines)
+    rendered = format_diff_hunks(hunks)
+
+    assert "\n⋮\n" in rendered
+
+
+def test_format_diff_hunks_empty_list_yields_empty_string() -> None:
+    assert format_diff_hunks([]) == ""

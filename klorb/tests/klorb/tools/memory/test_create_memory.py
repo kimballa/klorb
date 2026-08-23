@@ -246,3 +246,17 @@ def test_diff_preview_is_an_all_add_hunk(tmp_path: Path, monkeypatch: pytest.Mon
     assert preview.label == tool.summary(args, result)
     kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
     assert kinds == ["add", "add"]
+
+
+def test_format_response_renders_headers_then_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = CreateMemoryTool(_context(tmp_path, monkeypatch))
+    args = {"namespace": "global", "filename": "notes.md", "content": "Topic\nbody\n"}
+
+    result = tool.apply(args)
+    rendered = tool.format_response(result)
+
+    header, diff_block = rendered.split("\n\n")
+    assert header.splitlines()[:2] == ["namespace: global", "filename: notes.md"]
+    assert diff_block != ""

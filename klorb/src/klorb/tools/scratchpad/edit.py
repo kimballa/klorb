@@ -9,7 +9,7 @@ from typing import Any
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore
+from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,9 @@ class EditScratchpadTool(Tool):
             result["replaced_lines"], result["start_line"], result["new_total_lines"],
         )
         return result
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_edit_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts come from `result`'s

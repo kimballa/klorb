@@ -6,6 +6,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable
 
+from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
 if TYPE_CHECKING:
@@ -23,20 +24,11 @@ _READ_RESULT_HEADER_ORDER = (
 lines in."""
 
 
-def _format_header_value(value: Any) -> str:
-    """Render one header line's value: lowercase `true`/`false` for a bool, `str()` otherwise."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
 def format_read_result(result: dict[str, Any]) -> str:
     """Render a `ReadFileCore.apply()`-shaped result dict as `key: value` header lines in
     `_READ_RESULT_HEADER_ORDER`, followed by a blank line and `result["content"]`."""
-    header_lines = [
-        f"{key}: {_format_header_value(result[key])}"
-        for key in _READ_RESULT_HEADER_ORDER if key in result
-    ]
+    header_lines = format_header_lines(
+        result, _READ_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"content"}))
     content: str = result.get("content", "")
     return "\n".join(header_lines) + "\n\n" + content
 

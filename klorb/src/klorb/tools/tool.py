@@ -65,6 +65,10 @@ def default_invalid_tool_call_detail(name: str, raw_arguments: str, error: str) 
     )
 
 
+NO_READFILE_VERIFICATION_NOTE = "No verification ReadFile needed."
+"""`response_body["note"]` value `EditFileTool`/`CreateFileTool` attach to a successful call,
+telling the model its own `post_edit_content`/`diff` already confirms the write."""
+
 _EDIT_ARG_NAMES = ("old_text", "old_text_start", "old_text_end", "new_text")
 
 _COMMON_JSON_MISTAKES = (

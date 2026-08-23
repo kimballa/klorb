@@ -226,3 +226,19 @@ def test_diff_preview_reflects_the_applied_change(
     assert preview.label == tool.summary(args, result)
     kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
     assert kinds == ["context", "del", "add", "context"]
+
+
+def test_format_response_renders_headers_then_content_then_diff(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\n")
+    tool = EditScratchpadTool(_context(str(scratchpad), make_session_config))
+    args = {"old_text": "b", "new_text": "B"}
+
+    result = tool.apply(args)
+    rendered = tool.format_response(result)
+
+    header, post_edit_content, diff_block = rendered.split("\n\n")
+    assert header.splitlines()[0] == "edit_success: true"
+    assert post_edit_content == "2|B"
+    assert diff_block != ""
