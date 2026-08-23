@@ -68,6 +68,9 @@ class SessionToolExecutionMixin(SessionBase):
 
         `call.arguments` is parsed as JSON before any of the above: a parse failure
         is reported back as this call's `tool_response` rather than aborting the whole turn.
+
+        Once a call's `tool_response` is built, `tool_use_message.tool_calls`' own record of
+        that call is mutated in place with the `Tool.update_args()` rewrite, if any.
         """
         assert self._tool_registry is not None
         assert tool_use_message.tool_calls is not None
@@ -206,6 +209,8 @@ class SessionToolExecutionMixin(SessionBase):
             if tool is not None:
                 new_args = tool.update_args(args, result, envelope.error_info())
                 if new_args != args:
+                    # Mutates this call's own record in tool_use_message.tool_calls in place,
+                    # augmenting it with the post-execution args rewrite for future turns.
                     call.reflected_tool_args = json.dumps(new_args, ensure_ascii=False)
             content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
             if self._log_tool_calls:

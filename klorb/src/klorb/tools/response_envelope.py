@@ -45,9 +45,7 @@ class SystemInterjectionPayload(BaseModel):
 
 
 class ToolCallErrorInfo(BaseModel):
-    """A `ToolResponseEnvelope`'s `is_error`/`is_retryable`/`error_category`/`error_message`
-    fields alone, for `Tool.update_args()` to decide how to compact a call's arguments
-    without needing the whole envelope."""
+    """`ToolResponseEnvelope`'s error reporting fields."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -110,8 +108,6 @@ class ToolResponseEnvelope(BaseModel):
         return wire
 
     def error_info(self) -> ToolCallErrorInfo:
-        """This envelope's `is_error`/`is_retryable`/`error_category`/`error_message` fields,
-        for `Tool.update_args()`."""
         return ToolCallErrorInfo(
             is_error=self.is_error, is_retryable=self.is_retryable,
             error_category=self.error_category, error_message=self.error_message)

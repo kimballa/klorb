@@ -234,8 +234,8 @@ class Tool(ABC):
         self, tool_args: dict[str, Any], tool_response: Any, err_info: "ToolCallErrorInfo",
     ) -> dict[str, Any]:
         """Return the `tool_args` to keep in this call's history in place of what the model
-        sent; override to compact them once `tool_response`/`err_info` show they're no longer
-        needed."""
+        sent; override to compact them once `tool_response`/`err_info` have been generated for
+        the tool call."""
         return tool_args
 
     def format_response(self, apply_output: Any) -> str:

@@ -81,8 +81,7 @@ class ToolCallRequest(BaseModel):
 
     reflected_tool_args: str | None = None
     """`Tool.update_args()`'s raw JSON-encoded output for this call, sent to the model in
-    place of `arguments` on every later turn once set; `None` means `arguments` is sent
-    unchanged."""
+    place of `arguments`."""
 
 
 class Message(BaseModel):
