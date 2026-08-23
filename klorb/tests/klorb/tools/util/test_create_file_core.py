@@ -88,7 +88,10 @@ def test_format_create_result_renders_headers_before_the_diff_block(tmp_path: Pa
     rendered = format_create_result(result)
     header, diff_block = rendered.split("\n\n")
 
-    assert header.splitlines() == ["filename: new.txt", "created: true", "total_lines: 2"]
+    assert header.splitlines() == [
+        "filename: new.txt", "created: true", "total_lines: 2",
+        "note: No verification ReadFile needed.",
+    ]
     assert diff_block != ""
 
 
@@ -100,4 +103,13 @@ def test_format_create_result_omits_absent_optional_fields(tmp_path: Path) -> No
     rendered = format_create_result(result)
 
     assert "warning" not in rendered
-    assert "note" not in rendered
+
+
+def test_note_is_always_present_on_success(tmp_path: Path) -> None:
+    file_path = tmp_path / "new.txt"
+    result = CreateFileCore().apply(
+        file_path, {"content": "a\n"}, subject=str(file_path), edit_hint="EditFile")
+
+    rendered = format_create_result(result)
+
+    assert "note: No verification ReadFile needed." in rendered

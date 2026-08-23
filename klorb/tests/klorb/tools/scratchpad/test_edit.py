@@ -240,5 +240,6 @@ def test_format_response_renders_headers_then_content_then_diff(
 
     header, post_edit_content, diff_block = rendered.split("\n\n")
     assert header.splitlines()[0] == "edit_success: true"
+    assert "note: No verification ReadFile needed." in header
     assert post_edit_content == "2|B"
     assert diff_block != ""

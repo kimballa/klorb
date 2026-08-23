@@ -8,7 +8,7 @@ from typing import Any
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.setup_context import ToolSetupContext
-from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE, DiffPreview, Tool
+from klorb.tools.tool import DiffPreview, Tool
 from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
@@ -86,7 +86,6 @@ class CreateFileTool(Tool):
             path, args, subject=filename, edit_hint="EditFile",
             redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
-        result["note"] = NO_READFILE_VERIFICATION_NOTE
 
         logger.debug("CreateFile %s created (%d lines)", filename, result["total_lines"])
         return result

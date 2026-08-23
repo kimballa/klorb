@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
 from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
@@ -147,7 +148,7 @@ class EditFileCore:
     ) -> dict[str, Any]:
         """Apply one block substitution to `path` per `args`, returning `start_line`/`end_line`
         (the edited region, 1-indexed, renumbered to reflect `new_text`'s own line count),
-        `new_total_lines`, `post_edit_content`, `edit_success`, and `diff`.
+        `new_total_lines`, `post_edit_content`, `edit_success`, `diff`, and `note`.
 
         When `redactor` is given, `old_text`/`old_text_start`/`old_text_end`/`new_text` are each
         passed through `redactor.detokenize(session, ...)` before matching or writing.
@@ -245,6 +246,7 @@ class EditFileCore:
             "post_edit_content": snippet,
             "edit_success": True,
             "diff": [hunk.model_dump() for hunk in diff_hunks],
+            "note": NO_READFILE_VERIFICATION_NOTE,
         }
         if not file_existed:
             out["created"] = True

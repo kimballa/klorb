@@ -47,4 +47,11 @@ def test_optional_fields_absent_when_not_present(tmp_path: Path) -> None:
     assert "fuzzy_whitespace_match" not in rendered
     assert "whitespace:" not in rendered
     assert "warning" not in rendered
-    assert "note" not in rendered
+
+
+def test_note_is_always_present_on_success(tmp_path: Path) -> None:
+    result = _apply(tmp_path, "a\nb\nc\n", old_text="b", new_text="B")
+
+    rendered = format_edit_result(result)
+
+    assert "note: No verification ReadFile needed." in rendered

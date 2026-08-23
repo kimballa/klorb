@@ -6,6 +6,7 @@ delegates to it."""
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
 from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
@@ -52,10 +53,8 @@ class CreateFileCore:
         self, path: Path, args: dict[str, Any], *, subject: str, edit_hint: str,
         redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
-        """Create `path` with `args["content"]`, returning `total_lines`, `created`, and `diff` --
-        a jsonable rendering of `klorb.tools.util.diff_lines.build_diff_hunks()`'s all-insert
-        diff against an empty old subject, for a `Tool`'s `diff_preview()` to parse back into
-        `DiffHunk`s (the caller adds `filename` if it has one).
+        """Create `path` with `args["content"]`, returning `total_lines`, `created`, `note`, and
+        `diff` (the caller adds `filename` if it has one).
 
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
@@ -86,4 +85,5 @@ class CreateFileCore:
             "total_lines": len(new_lines),
             "created": True,
             "diff": [hunk.model_dump() for hunk in diff_hunks],
+            "note": NO_READFILE_VERIFICATION_NOTE,
         }

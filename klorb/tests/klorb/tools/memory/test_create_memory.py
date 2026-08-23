@@ -259,4 +259,5 @@ def test_format_response_renders_headers_then_diff(
 
     header, diff_block = rendered.split("\n\n")
     assert header.splitlines()[:2] == ["namespace: global", "filename: notes.md"]
+    assert "note: No verification ReadFile needed." in header
     assert diff_block != ""

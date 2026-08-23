@@ -257,9 +257,9 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `"+A/-R"` line-diff count computed from `replaced_lines` and `new_text`'s own line count —
   available only on success, since a failed match never resolves a location to count lines
   removed from; `detail_view()` caps `post_edit_content` to 8 lines via `truncate_lines()`, same
-  as `ReadFile`. `EditFileTool`/`CreateFileTool.format_response()` render the result as `key:
-  value` header lines followed by `post_edit_content` (edit only) and `diff` as plain-text
-  blocks, the same wire-text convention `ReadFile` uses (see
+  as `ReadFile`. Every edit/create tool's `format_response()` renders its result as `key: value`
+  header lines followed by `post_edit_content` (edit only) and `diff` as plain-text blocks, the
+  same wire-text convention `ReadFile` uses (see
   docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md).
 
   `EditFileCore.apply()` (`klorb/src/klorb/tools/util/edit_file_core.py` — the mechanic
