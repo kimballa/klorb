@@ -18,8 +18,6 @@ PYTHON ?= python3
 help:
 	@echo "Available commands:"
 	@echo "${COMMANDS}"
-	@echo ""
-	@echo "  make test-ci   # like 'test', but never stops early and reports every failure"
 
 # Perform setup steps needed to set up shop in an ephemeral cloud env for development.
 cloud_setup:
