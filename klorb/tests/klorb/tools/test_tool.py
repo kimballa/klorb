@@ -8,6 +8,7 @@ from fixtures.sample_tools.echo_tool import EchoTool
 
 from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import (
     Tool,
@@ -120,6 +121,15 @@ def test_default_format_response_is_a_json_dump() -> None:
 
     assert tool.format_response({"matches": ["a.py"], "count": 1}) == (
         json.dumps({"matches": ["a.py"], "count": 1}, ensure_ascii=False))
+
+
+def test_default_update_args_returns_tool_args_unchanged() -> None:
+    context = ToolSetupContext(process_config=ProcessConfig(), session_config=SessionConfig())
+    tool = EchoTool(context)
+    args = {"message": "hi"}
+    err_info = ToolCallErrorInfo(is_error=False, is_retryable=False)
+
+    assert tool.update_args(args, "hi", err_info) is args
 
 
 def test_truncate_lines_leaves_short_text_unchanged() -> None:

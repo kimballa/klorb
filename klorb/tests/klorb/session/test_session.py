@@ -406,6 +406,56 @@ def test_send_turn_sends_tool_response_as_wire_formatted_text_but_persists_json(
         "is_error": False, "is_retryable": False, "response_body": "hi"}
 
 
+def test_successful_tool_call_reflects_compacted_args_for_later_turns(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A `Tool.update_args()` override's output is stored on the call as `reflected_tool_args`
+    and sent to the model on the next round in place of the original `arguments`."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "compacting", '{"keep": "k", "big": "xxxxxxxxxx"}')]),
+        _reply("final answer"),
+    ]
+    config = make_session_config(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("call compacting")
+
+    tool_use_message = next(m for m in session.messages if m.role == "tool_use")
+    assert tool_use_message.tool_calls is not None
+    call = tool_use_message.tool_calls[0]
+    assert call.reflected_tool_args is not None
+    assert json.loads(call.reflected_tool_args) == {"keep": "k"}
+    assert call.arguments == '{"keep": "k", "big": "xxxxxxxxxx"}'
+
+    # `arguments` itself is left untouched here; the substitution happens only when a real
+    # provider builds its outgoing request.
+    second_round_messages = mock_provider.send_prompt.call_args_list[1].args[0]
+    sent_tool_use = next(m for m in second_round_messages if m.role == "tool_use")
+    assert sent_tool_use.tool_calls is not None
+    assert sent_tool_use.tool_calls[0] is call
+
+
+def test_failed_tool_call_leaves_reflected_tool_args_unset(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "compacting", '{"big": "x"}')]),  # missing required "keep"
+        _reply("final answer"),
+    ]
+    config = make_session_config(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("call compacting")
+
+    tool_use_message = next(m for m in session.messages if m.role == "tool_use")
+    assert tool_use_message.tool_calls is not None
+    assert tool_use_message.tool_calls[0].reflected_tool_args is None
+
+
 def test_total_output_tokens_used_sums_completion_tokens_across_rounds(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
@@ -1508,7 +1558,7 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set(
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert {d["function"]["name"] for d in kwargs["tools"]} == {
-        "echo", "add", "ask_permission", "ask_multi_permission"}
+        "echo", "add", "ask_permission", "ask_multi_permission", "compacting"}
 
 
 def test_tool_defs_message_inserted_before_first_turn(

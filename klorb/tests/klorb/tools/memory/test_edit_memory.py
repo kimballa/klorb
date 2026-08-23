@@ -11,6 +11,7 @@ from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import Namespace, memory_namespace_dir
 from klorb.tools.memory.edit_memory import EditMemoryTool
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -35,6 +36,19 @@ def _write(context: ToolSetupContext, namespace: Namespace, filename: str, conte
     path = namespace_dir / filename
     path.write_text(content)
     return path
+
+
+def test_update_args_drops_everything_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    _write(context, "global", "notes.md", "Topic\nb\nc\nd\n")
+    args = {"namespace": "global", "filename": "notes.md", "old_text": "b", "new_text": "B"}
+
+    updated = EditMemoryTool(context).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}
 
 
 def test_replaces_a_multiline_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

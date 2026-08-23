@@ -203,6 +203,10 @@ class SessionToolExecutionMixin(SessionBase):
                     error, category=category, response_body=response_body,
                     system_interjections=first_call_interjections)
             envelope = self._apply_tool_result_hook(call.name, envelope)
+            if tool is not None:
+                new_args = tool.update_args(args, result, envelope.error_info())
+                if new_args != args:
+                    call.reflected_tool_args = json.dumps(new_args, ensure_ascii=False)
             content = json.dumps(envelope.to_wire_dict(), ensure_ascii=False)
             if self._log_tool_calls:
                 log_tool_call(call.name, args, result, error)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result
 
 
@@ -113,3 +114,20 @@ def test_note_is_always_present_on_success(tmp_path: Path) -> None:
     rendered = format_create_result(result)
 
     assert "note: No verification ReadFile needed." in rendered
+
+
+def test_update_args_drops_content_on_success() -> None:
+    args = {"filename": "f.txt", "content": "a\nb\nc\n"}
+
+    updated = CreateFileCore().update_args(args, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {"filename": "f.txt"}
+
+
+def test_update_args_leaves_args_unchanged_on_error() -> None:
+    args = {"filename": "f.txt", "content": "a\nb\nc\n"}
+
+    updated = CreateFileCore().update_args(
+        args, ToolCallErrorInfo(is_error=True, is_retryable=False, error_category="validation"))
+
+    assert updated == args

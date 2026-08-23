@@ -8,6 +8,7 @@ from klorb.session import SessionConfig
 from klorb.tools.exceptions import NoSuchToolException, ToolCallError
 from klorb.tools.response_envelope import (
     SystemInterjectionPayload,
+    ToolCallErrorInfo,
     ToolResponseEnvelope,
     classify_exception,
     wrap_system_interjection,
@@ -109,6 +110,21 @@ def test_classify_exception_unclassified() -> None:
     assert message == "mystery"
     assert category is None
     assert response_body is None
+
+
+def test_error_info_carries_only_the_non_body_fields() -> None:
+    envelope = ToolResponseEnvelope.error(
+        "boom", category="validation", response_body={"detail": "x"})
+
+    assert envelope.error_info() == ToolCallErrorInfo(
+        is_error=True, is_retryable=True, error_category="validation", error_message="boom")
+
+
+def test_error_info_on_success() -> None:
+    envelope = ToolResponseEnvelope.success({"matches": []})
+
+    assert envelope.error_info() == ToolCallErrorInfo(
+        is_error=False, is_retryable=False, error_category=None, error_message=None)
 
 
 def test_wrap_system_interjection_shape() -> None:

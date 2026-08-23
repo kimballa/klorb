@@ -44,6 +44,19 @@ class SystemInterjectionPayload(BaseModel):
     body: str
 
 
+class ToolCallErrorInfo(BaseModel):
+    """A `ToolResponseEnvelope`'s `is_error`/`is_retryable`/`error_category`/`error_message`
+    fields alone, for `Tool.update_args()` to decide how to compact a call's arguments
+    without needing the whole envelope."""
+
+    model_config = ConfigDict(frozen=True)
+
+    is_error: bool
+    is_retryable: bool
+    error_category: ErrorCategory | None = None
+    error_message: str | None = None
+
+
 class ToolResponseEnvelope(BaseModel):
     """The JSON object every `tool_response` `Message.content` is serialized from (via
     `to_wire_dict()`). Construct via `success()`/`error()` so `is_retryable` always stays
@@ -95,6 +108,13 @@ class ToolResponseEnvelope(BaseModel):
         if not self.system_interjections:
             wire.pop("system_interjections", None)
         return wire
+
+    def error_info(self) -> ToolCallErrorInfo:
+        """This envelope's `is_error`/`is_retryable`/`error_category`/`error_message` fields,
+        for `Tool.update_args()`."""
+        return ToolCallErrorInfo(
+            is_error=self.is_error, is_retryable=self.is_retryable,
+            error_category=self.error_category, error_message=self.error_message)
 
     def to_wire_content(self, tool: "Tool | None") -> str:
         """Render this envelope as the free-text a model sees for one tool call: any

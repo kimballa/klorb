@@ -11,6 +11,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.create_file import CreateFileTool
 from klorb.tools.read_file import ReadFileTool
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import CreateFileCore
 from klorb.workspace import Workspace
@@ -303,3 +304,12 @@ def test_create_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "a\nb\nc\n"
     assert result["total_lines"] == 3
+
+
+def test_update_args_drops_content_on_success(tmp_path: Path) -> None:
+    args = {"filename": str(tmp_path / "new.txt"), "content": "a\nb\nc\n"}
+
+    updated = CreateFileTool(_context(tmp_path)).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {"filename": str(tmp_path / "new.txt")}

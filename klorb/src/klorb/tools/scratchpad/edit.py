@@ -6,6 +6,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
@@ -66,6 +67,11 @@ class EditScratchpadTool(Tool):
             result["replaced_lines"], result["start_line"], result["new_total_lines"],
         )
         return result
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: ToolCallErrorInfo,
+    ) -> dict[str, Any]:
+        return self.edit_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
         return format_edit_result(apply_output)

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
 from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
@@ -103,6 +104,11 @@ class EditFileCore:
     (grown outward until every candidate is uniquely distinguishable) and recapitulates that
     same extra context, unchanged, in its `new_text`.
     """
+
+    def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
+        """`{}` once the call succeeded, since `apply()`'s own `post_edit_content`/`diff`
+        already show the file's new state; unchanged on error."""
+        return tool_args if err_info.is_error else {}
 
     def parameter_properties(self) -> dict[str, Any]:
         """Return the JSON-schema properties for the edit tools' `parameters()`."""

@@ -13,6 +13,7 @@ from klorb.tools.memory.common import (
     require_workspace_namespace_accessible,
     validate_memory_filename,
 )
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
 from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result
@@ -130,6 +131,11 @@ class EditMemoryTool(Tool):
             result["new_total_lines"],
         )
         return result
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: ToolCallErrorInfo,
+    ) -> dict[str, Any]:
+        return self.edit_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
         return format_edit_result(apply_output)

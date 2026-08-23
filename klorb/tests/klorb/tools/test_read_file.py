@@ -11,6 +11,7 @@ from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import DEFAULT_READ_FILE_MAX_LINE_LENGTH, DEFAULT_READ_FILE_MAX_LINES, ProcessConfig
 from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.read_file import ReadFileTool
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -527,3 +528,12 @@ def test_read_file_total_lines_unaffected_by_redaction(tmp_path: Path) -> None:
 
     assert result["total_lines"] == 1
     assert result["truncated"] is False
+
+
+def test_update_args_drops_everything_on_success(tmp_path: Path) -> None:
+    args = {"filename": str(tmp_path / "sample.txt"), "start_line": 1}
+
+    updated = ReadFileTool(_context(tmp_path)).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}

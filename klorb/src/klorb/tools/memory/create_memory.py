@@ -14,6 +14,7 @@ from klorb.tools.memory.common import (
     validate_first_line_not_blank,
     validate_memory_filename,
 )
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool
 from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result, get_or_create_secret_redactor
@@ -117,6 +118,11 @@ class CreateMemoryTool(Tool):
 
         logger.debug("CreateMemory %s/%s created (%d lines)", namespace, filename, result["total_lines"])
         return result
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: ToolCallErrorInfo,
+    ) -> dict[str, Any]:
+        return self.create_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
         return format_create_result(apply_output)

@@ -5,6 +5,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import ReadPreview, Tool, truncate_lines
@@ -73,6 +74,11 @@ class ReadScratchpadTool(Tool):
             result["start_line"], result["end_line"], result["total_lines"], result["truncated"],
         )
         return result
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: ToolCallErrorInfo,
+    ) -> dict[str, Any]:
+        return self.read_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
         return format_read_result(apply_output)

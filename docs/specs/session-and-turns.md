@@ -262,6 +262,16 @@ config) has one place to live.
   `response_body` still carries the tool's own result, so a failed shell command's `stdout`/
   `stderr` aren't discarded. See
   [the structured tool-response envelope ADR](../adrs/wrap-tool-responses-in-a-structured-json-envelope.md).
+* Once a call's envelope is built (after the `onToolResult` hook), `_run_tool_calls()` calls
+  the resolved `Tool.update_args(args, result, envelope.error_info())` — see
+  [[tool-framework]] — and, when the returned dict differs from `args`, JSON-encodes it onto
+  that call's `ToolCallRequest.reflected_tool_args` (see [[message-model]]).
+  `OpenRouterApiProvider._build_api_messages()` sends `reflected_tool_args` in place of
+  `arguments` on every later turn once set, so a tool whose result already carries what its
+  arguments described (e.g. `EditFile`'s `post_edit_content`/`diff`) doesn't keep paying to
+  resend them — see [[openrouter-prompt-client]]. `update_args()` is skipped entirely for a
+  call that never resolved a `Tool` instance (an unknown tool name, or malformed `arguments`
+  JSON), leaving `reflected_tool_args` unset.
 * `system_interjections` carries the same kind of harness advisory as an XML
   `<SystemInterjection subject="...">` block prepended to a user-turn prompt (see
   `_wrap_system_interjection()` above), just delivered a second way: `_run_tool_calls()` polls
