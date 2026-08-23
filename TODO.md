@@ -12,6 +12,83 @@
 
 ### Feature backlog
 
+* Rework various tool calls to be less json-like.
+  * edit_file_core & related: move most content to k/v pair lines, then fmt `post_edit_content` and `diff`
+    as plain text blocks with line number prefixes.
+  * create_file_core, likewise, plaintext "diff" block.
+  * CreateFile and ReplaceAll: add "no verification ReadFile needed" language to response.
+    * ... and same for EditFile.
+  * Append to the FindFile description:
+    *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
+  * bash tool: print in format:
+
+    ```
+    command: (str)
+    success: bool
+    [failure_reason: str]
+    exit_status: 0
+    [stdout_file: <str>]
+    [stderr_file: <str>]
+    runtime: <num>
+    terminal_alive: bool
+    terminal_cwd: bool
+    [sandbox_rebuilt: bool if true]
+    [sandbox_notice: str]
+    [blocked_domains: list of str]
+
+    stdout
+    ========
+    <stdout text follows. empty just means print nothing here>
+
+    stderr
+    ========
+    <stderr text follows. empty just means print nothing here>
+    ```
+
+    key order there is chosen literally.
+    if stdout_file is given, omit the `stdout` plaintext block. same for stderr.
+  * GrepTool should likewise be a bunch of k/v stuff at the top then it should have
+    mostly plaintext blocks, per matched file:
+
+    ```
+    matching_file_1.py
+     2|bla
+    *3|the match
+     4|context again
+     12|foo
+    *13|match two
+     14|bar
+
+    matching_file_2.py
+    *1|the match in the 2nd file
+     2|and so on...
+    ```
+
+* We can then go on to rewriting history for tighter context.
+  * tool calls contain a `tool_args` field. This was produced by the agent. we apply it
+    directly to the tool. We also then recapitulate it into the messages array (in a role=agent
+    stop_reason=tool_calls msg) forever.
+  * Tool gets `#update_args(tool_args: dict, tool_response: Any, err_info: (those 4 err fields)) -> dict`
+    which by default just returns tool_args unchanged.
+    But we call this with all the tool output (the response from the tool itself, none if
+    that all got handled by exception) and a struct w/ the other error info we would otherwise
+    format into fields of the response, etc. And we return a new tool_args that may just be
+    exactly the original tool_args but may be more compact.
+    * For most error situations, we return the input tool_args as-is. But on success, sometimes
+      we don't need to keep it all.
+    * For e.g. CreateFile(), the output will have all the new file content. So, omit the
+      content block entirely from the tool_call as-shown back to the agent for the rest of
+      the conversation.
+    * Same for the various EditFileCore-based tools. We already get the new content and
+      a diff, out. So, drop the input from the re-send.
+    * Same for other CreateFileCore tools.
+    * All ReadFileCore tools have sufficient context in the output that, for successful read,
+      the actual ReadFoo tool call can just lose all its tool_args.
+    * Again, if there's an error, just leave the input verbatim.
+    * We actually do serialize this transmutation for session.json, etc. We save this
+      on a reflected_tool_args field; post-tool-use, how do we reflect the agent's tool
+      args back to it?
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
