@@ -16,23 +16,6 @@
   * ReplaceAll: add "no verification ReadFile needed" language to response.
   * Append to the FindFile description:
     *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
-  * GrepTool should likewise be a bunch of k/v stuff at the top then it should have
-    mostly plaintext blocks, per matched file:
-
-    ```text
-    matching_file_1.py
-     2|bla
-    *3|the match
-     4|context again
-     12|foo
-    *13|match two
-     14|bar
-
-    matching_file_2.py
-    *1|the match in the 2nd file
-     2|and so on...
-    ```
-
 * We can then go on to rewriting history for tighter context.
   * tool calls contain a `tool_args` field. This was produced by the agent. we apply it
     directly to the tool. We also then recapitulate it into the messages array (in a role=agent

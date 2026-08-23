@@ -25,6 +25,7 @@ from klorb.tools.util import (
     validate_queries,
     walk_readable_tree,
 )
+from klorb.tools.util.response_headers import format_header_lines
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,31 @@ def _truncate_line(line: str, max_length: int) -> str:
     if len(line) <= max_length:
         return line
     return line[:max_length] + _TRUNCATION_SUFFIX
+
+
+_GREP_RESULT_HEADER_ORDER = (
+    "root", "queries", "is_regex", "case_insensitive", "file_glob", "use_gitignore",
+    "context_lines", "match_count", "truncated", "cancelled", "gitignored_hidden",
+    "results_data_file", "note",
+)
+"""Key order `format_grep_result()` renders a `GrepTool.apply()`-shaped result dict's header
+lines in."""
+
+
+def format_grep_result(result: dict[str, Any]) -> str:
+    """Render a `GrepTool.apply()`-shaped result dict as `key: value` header lines in
+    `_GREP_RESULT_HEADER_ORDER`, followed by one plain-text block per matched file: the
+    filename on its own line, then its already-prefixed `*N|text`/` N|text` lines."""
+    header_lines = format_header_lines(
+        result, _GREP_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"files"}))
+    files = result.get("files")
+    if not files:
+        return "\n".join(header_lines)
+    if isinstance(files[0], str):
+        body = "\n".join(files)
+    else:
+        body = "\n\n".join("\n".join([file["filename"], *file["lines"]]) for file in files)
+    return "\n".join(header_lines) + "\n\n" + body
 
 
 class GrepTool(InterruptibleTool):
@@ -396,6 +422,9 @@ class GrepTool(InterruptibleTool):
         self._spill_dir.grant_read_access(session, tmp_dir)
         del result["files"]
         result["results_data_file"] = str(file_path)
+
+    def format_response(self, apply_output: Any) -> str:
+        return format_grep_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         queries = args.get("queries", "?")
