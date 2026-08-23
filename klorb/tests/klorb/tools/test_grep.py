@@ -13,7 +13,7 @@ from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.exceptions import ToolCallError
-from klorb.tools.grep import _GITIGNORE_HIDDEN_NOTE, GrepTool, format_grep_result
+from klorb.tools.grep import _GITIGNORE_HIDDEN_NOTE, GrepTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -719,7 +719,14 @@ def test_explicit_single_file_ignores_gitignore_filtering(tmp_path: Path) -> Non
     assert result["gitignored_hidden"] is False
 
 
-# --- format_grep_result ---
+# --- format_response ---
+
+
+@pytest.fixture
+def min_grep_context(tmp_path: Path) -> ToolSetupContext:
+    """A minimal `ToolSetupContext` for constructing a `GrepTool` in tests that only exercise
+    `format_response()` and never actually run a search."""
+    return _context(tmp_path)
 
 
 def _matches_result(**overrides: Any) -> dict[str, Any]:
@@ -734,61 +741,63 @@ def _matches_result(**overrides: Any) -> dict[str, Any]:
     return result
 
 
-def test_format_grep_result_renders_headers_then_one_block_per_file() -> None:
+def test_format_response_renders_headers_then_one_block_per_file(
+    min_grep_context: ToolSetupContext,
+) -> None:
     result = _matches_result(files=[
         {"filename": "a.py", "lines": [" 2|bla", "*3|the match"]},
         {"filename": "b.py", "lines": ["*1|the match in the 2nd file"]},
     ], match_count=2)
 
-    rendered = format_grep_result(result)
+    rendered = GrepTool(min_grep_context).format_response(result)
 
     header, _, body = rendered.partition("\n\n")
     assert header.splitlines()[0] == "root: /workspace"
     assert body == "a.py\n 2|bla\n*3|the match\n\nb.py\n*1|the match in the 2nd file"
 
 
-def test_format_grep_result_list_files_mode_renders_bare_filenames() -> None:
+def test_format_response_list_files_mode_renders_bare_filenames(
+    min_grep_context: ToolSetupContext,
+) -> None:
     result = _matches_result(files=["a.py", "b.py"])
     del result["context_lines"]
 
-    rendered = format_grep_result(result)
+    rendered = GrepTool(min_grep_context).format_response(result)
 
     _, _, body = rendered.partition("\n\n")
     assert body == "a.py\nb.py"
 
 
-def test_format_grep_result_omits_body_when_no_files_matched() -> None:
+def test_format_response_omits_body_when_no_files_matched(
+    min_grep_context: ToolSetupContext,
+) -> None:
     result = _matches_result(files=[], match_count=0)
 
-    rendered = format_grep_result(result)
+    rendered = GrepTool(min_grep_context).format_response(result)
 
     assert "\n\n" not in rendered
     assert "match_count: 0" in rendered
 
 
-def test_format_grep_result_omits_body_when_spilled_to_a_file() -> None:
+def test_format_response_omits_body_when_spilled_to_a_file(
+    min_grep_context: ToolSetupContext,
+) -> None:
     result = _matches_result(results_data_file="/tmp/grep-results-abc.json")
     del result["files"]
 
-    rendered = format_grep_result(result)
+    rendered = GrepTool(min_grep_context).format_response(result)
 
     assert "\n\n" not in rendered
     assert "results_data_file: /tmp/grep-results-abc.json" in rendered
 
 
-def test_format_grep_result_shows_note_when_gitignore_hid_files() -> None:
+def test_format_response_shows_note_when_gitignore_hid_files(
+    min_grep_context: ToolSetupContext,
+) -> None:
     result = _matches_result(gitignored_hidden=True, note=_GITIGNORE_HIDDEN_NOTE)
 
-    rendered = format_grep_result(result)
+    rendered = GrepTool(min_grep_context).format_response(result)
 
     header, _, _ = rendered.partition("\n\n")
     assert header.splitlines()[-1] == f"note: {_GITIGNORE_HIDDEN_NOTE}"
-
-
-def test_grep_tool_format_response_matches_format_grep_result(tmp_path: Path) -> None:
-    _make_tree(tmp_path)
-    tool = GrepTool(_context(tmp_path))
-    result = tool.apply({"path": "", "queries": ["hello"]})
-
-    assert tool.format_response(result) == format_grep_result(result)
 

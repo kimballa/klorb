@@ -521,7 +521,7 @@ the shell's cwd via the `pwd` round-trip described above, or `None` when `termin
 `False`), and `sandbox_rebuilt` (`bool`: whether this call transparently rebuilt a stale sandbox
 to pick up a mid-session grant before running — see "Session-scoped terminals" below).
 
-`BashTool.format_response()` (`format_bash_result()`) renders that dict as the model-facing wire
+`BashTool.format_response()` renders that dict as the model-facing wire
 text: `key: value` header lines in a fixed order, then labeled `stdout`/`stderr` plain-text
 blocks — the same convention `ReadFile`/`EditFile`/`CreateFile` use (see
 docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md). A stream's block is

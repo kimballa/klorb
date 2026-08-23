@@ -334,7 +334,7 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   needed. `summary()` names the queries,
   root, and match count; `detail_view()` caps `files` to its first 20 entries (adding a
   `files_omitted` count) when present, since a full result can span up to `grep_max_results`
-  matching lines across that many files. `format_response()` (`format_grep_result()`) renders the
+  matching lines across that many files. `format_response()` renders the
   result as `key: value` header lines followed by one plain-text block per matched file — the
   filename on its own line, then its `lines` entries verbatim — the same wire-text convention
   `ReadFile`/`EditFile`/`BashTool` use (see

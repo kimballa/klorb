@@ -674,27 +674,7 @@ _BASH_RESULT_HEADER_ORDER = (
     "runtime", "terminal_alive", "terminal_cwd", "sandbox_rebuilt", "sandbox_notice",
     "blocked_domains",
 )
-"""Key order `format_bash_result()` renders a `BashTool.apply()`-shaped result dict's header
-lines in."""
-
-
-def format_bash_result(result: dict[str, Any]) -> str:
-    """Render a `BashTool.apply()`-shaped result dict as `key: value` header lines in
-    `_BASH_RESULT_HEADER_ORDER` followed by labeled `stdout`/`stderr` blocks, each omitted when
-    its `..._file` spill counterpart is present instead."""
-    header_result = dict(result)
-    if not header_result.get("sandbox_rebuilt"):
-        header_result.pop("sandbox_rebuilt", None)
-    if not header_result.get("blocked_domains"):
-        header_result.pop("blocked_domains", None)
-    header_lines = format_header_lines(
-        header_result, _BASH_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"stdout", "stderr"}))
-    blocks = ["\n".join(header_lines)]
-    if result.get("stdout_file") is None:
-        blocks.append(f"stdout\n========\n{result.get('stdout') or ''}")
-    if result.get("stderr_file") is None:
-        blocks.append(f"stderr\n========\n{result.get('stderr') or ''}")
-    return "\n\n".join(blocks)
+"""Key order `BashTool.format_response()` renders a result dict's header lines in."""
 
 
 class BashTool(InterruptibleTool):
@@ -1431,7 +1411,22 @@ class BashTool(InterruptibleTool):
             write_dirs=access.write_dirs)
 
     def format_response(self, apply_output: Any) -> str:
-        return format_bash_result(apply_output)
+        """Render `apply_output` as `key: value` header lines in `_BASH_RESULT_HEADER_ORDER`
+        followed by labeled `stdout`/`stderr` blocks, each omitted when its `..._file` spill
+        counterpart is present instead."""
+        header_result = dict(apply_output)
+        if not header_result.get("sandbox_rebuilt"):
+            header_result.pop("sandbox_rebuilt", None)
+        if not header_result.get("blocked_domains"):
+            header_result.pop("blocked_domains", None)
+        header_lines = format_header_lines(
+            header_result, _BASH_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"stdout", "stderr"}))
+        blocks = ["\n".join(header_lines)]
+        if apply_output.get("stdout_file") is None:
+            blocks.append(f"stdout\n========\n{apply_output.get('stdout') or ''}")
+        if apply_output.get("stderr_file") is None:
+            blocks.append(f"stderr\n========\n{apply_output.get('stderr') or ''}")
+        return "\n\n".join(blocks)
 
     def is_success(self, args: dict[str, Any], result: Any, error: str | None) -> bool:
         """A shell command that ran but failed doesn't raise — `apply()` returns a result

@@ -41,7 +41,6 @@ from klorb.tools.bash import (
     _network_command_domains,
     _shell_single_quote,
     build_bash_env,
-    format_bash_result,
     session_env_file,
 )
 from klorb.tools.registry import ToolRegistry
@@ -120,6 +119,15 @@ def _context(
     return ToolSetupContext(
         process_config=process_config or ProcessConfig(), session_config=session_config,
         session=session, permission_override=permission_override)
+
+
+@pytest.fixture
+def min_bash_context(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> ToolSetupContext:
+    """A minimal, session-less `ToolSetupContext` for constructing a `BashTool` in tests that
+    only exercise `format_response()` and never actually run a command."""
+    return _context(tmp_path, make_session_config, with_session=False)
 
 
 def _apply(tool: BashTool, command: str, **extra: Any) -> Any:
@@ -1455,8 +1463,10 @@ def _one_shot_result(**overrides: Any) -> dict[str, Any]:
     return result
 
 
-def test_format_bash_result_renders_headers_then_stdout_and_stderr_blocks() -> None:
-    rendered = format_bash_result(_one_shot_result())
+def test_format_response_renders_headers_then_stdout_and_stderr_blocks(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result())
 
     assert rendered == (
         "command: echo hi\nsuccess: true\nexit_status: 0\nruntime: 0.01\n\n"
@@ -1464,8 +1474,10 @@ def test_format_bash_result_renders_headers_then_stdout_and_stderr_blocks() -> N
         "stderr\n========\n")
 
 
-def test_format_bash_result_omits_stream_block_when_its_file_is_present() -> None:
-    rendered = format_bash_result(_one_shot_result(
+def test_format_response_omits_stream_block_when_its_file_is_present(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result(
         stdout=None, stdout_file="/tmp/klorb-bash-x/stdout"))
 
     header, _, rest = rendered.partition("\n\n")
@@ -1474,16 +1486,20 @@ def test_format_bash_result_omits_stream_block_when_its_file_is_present() -> Non
     assert rest == "stderr\n========\n"
 
 
-def test_format_bash_result_omits_falsy_sandbox_rebuilt_and_blocked_domains() -> None:
-    rendered = format_bash_result(_one_shot_result(
+def test_format_response_omits_falsy_sandbox_rebuilt_and_blocked_domains(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result(
         sandbox_rebuilt=False, blocked_domains=[]))
 
     assert "sandbox_rebuilt" not in rendered
     assert "blocked_domains" not in rendered
 
 
-def test_format_bash_result_shows_sandbox_rebuilt_and_blocked_domains_when_truthy() -> None:
-    rendered = format_bash_result(_one_shot_result(
+def test_format_response_shows_sandbox_rebuilt_and_blocked_domains_when_truthy(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result(
         sandbox_rebuilt=True, blocked_domains=["evil.example.com"]))
 
     header, _, _ = rendered.partition("\n\n")
@@ -1491,8 +1507,10 @@ def test_format_bash_result_shows_sandbox_rebuilt_and_blocked_domains_when_truth
     assert "blocked_domains: ['evil.example.com']" in header
 
 
-def test_format_bash_result_includes_persistent_shell_fields_in_order() -> None:
-    rendered = format_bash_result(_one_shot_result(
+def test_format_response_includes_persistent_shell_fields_in_order(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result(
         terminal_alive=True, terminal_cwd="/workspace"))
 
     header, _, _ = rendered.partition("\n\n")
@@ -1502,28 +1520,22 @@ def test_format_bash_result_includes_persistent_shell_fields_in_order() -> None:
     ]
 
 
-def test_format_bash_result_omits_failure_reason_and_sandbox_notice_when_absent() -> None:
-    rendered = format_bash_result(_one_shot_result())
+def test_format_response_omits_failure_reason_and_sandbox_notice_when_absent(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result())
 
     assert "failure_reason" not in rendered
     assert "sandbox_notice" not in rendered
 
 
-def test_format_bash_result_shows_failure_reason_and_sandbox_notice_when_present() -> None:
-    rendered = format_bash_result(_one_shot_result(
+def test_format_response_shows_failure_reason_and_sandbox_notice_when_present(
+    min_bash_context: ToolSetupContext,
+) -> None:
+    rendered = BashTool(min_bash_context).format_response(_one_shot_result(
         success=False, exit_status=1, failure_reason="Process completed normally with non-zero status",
         sandbox_notice="Sandbox layer unavailable; running unsandboxed."))
 
     header, _, _ = rendered.partition("\n\n")
     assert "failure_reason: Process completed normally with non-zero status" in header
     assert "sandbox_notice: Sandbox layer unavailable; running unsandboxed." in header
-
-
-def test_bash_tool_format_response_matches_format_bash_result(
-    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
-) -> None:
-    context = _context(tmp_path, make_session_config, command_rules=CommandRules(allow=[["echo", "**"]]))
-    tool = BashTool(context)
-    result = _apply(tool, "echo hi")
-
-    assert tool.format_response(result) == format_bash_result(result)
