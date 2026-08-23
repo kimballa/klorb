@@ -64,11 +64,11 @@ jobs:
 
       - name: Lint, typecheck, and test (python)
         working-directory: klorb
-        run: make lint typecheck test
+        run: make lint typecheck test-ci
 
       - name: Lint, typecheck, and test (vscode-plugin)
         working-directory: vscode-plugin
-        run: make lint typecheck test
+        run: make lint typecheck test-ci
 
       - name: Lint docs
         run: make lint_docs

@@ -10,7 +10,7 @@
 # * `make dist` to build a minified, production .vsix for distribution (doesn't install it)
 
 COMMANDS=help lint lint_fix typecheck clean distclean sync_deps \
-	install_deps install_dev_deps test compile install dist all
+	install_deps install_dev_deps test test-ci compile install dist all
 
 NPM=npm
 # The VS Code CLI used to install the packaged .vsix into the local editor. Overridable
@@ -45,6 +45,10 @@ compile:
 
 test:
 	"$(NPM)" run test
+
+# Redirects to `test` for now: `npm run test` already runs the full suite and reports every
+# failure.
+test-ci: test
 
 # Resolves dependency versions from package.json and rewrites package-lock.json. Analogous to
 # klorb/Makefile's `uv pip compile` step for the Python side.
