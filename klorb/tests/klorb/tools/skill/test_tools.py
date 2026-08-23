@@ -13,6 +13,7 @@ from klorb.process_config import ProcessConfig
 from klorb.search_index.catalogs import skill_source_path, skills_catalog_for_namespace
 from klorb.search_index.chunk import Chunk
 from klorb.session import Session, SessionConfig
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill import common as skill_common
 from klorb.tools.skill.activate_skill import ActivateSkillTool
@@ -397,6 +398,20 @@ def test_read_skill_file_allow(tmp_path: Path, make_session_config: Callable[...
     assert result["namespace"] == "workspace"
     assert result["name"] == "s"
     assert result["path"] == "ref.md"
+
+
+def test_read_skill_file_update_args_drops_everything_on_success(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
+    skill_dir = _write_skill(_workspace_skills_dir(context), "s", "d")
+    (skill_dir / "ref.md").write_text("line1\n")
+    args = {"namespace": "workspace", "name": "s", "path": "ref.md"}
+
+    updated = ReadSkillFileTool(context).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}
 
 
 def test_read_skill_file_gated_by_verdict(

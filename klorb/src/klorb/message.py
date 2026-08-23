@@ -79,6 +79,10 @@ class ToolCallRequest(BaseModel):
     """Raw JSON-encoded arguments exactly as the model returned them; parsed by whoever
     dispatches the call."""
 
+    reflected_tool_args: str | None = None
+    """`Tool.update_args()`'s raw JSON-encoded output for this call, sent to the model in
+    place of `arguments`."""
+
 
 class Message(BaseModel):
     """

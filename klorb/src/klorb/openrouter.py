@@ -465,6 +465,9 @@ class OpenRouterApiProvider(ApiProvider):
         Every `"content"` value comes from `message.provider_content()` rather than
         `message.content` directly, so a message carrying `fragments` sends its
         structured content-part array to the API instead of the plain-text `content` field.
+
+        A `"tool_use"` call's `function.arguments` is `ToolCallRequest.reflected_tool_args`
+        when set, else `arguments` unchanged.
         """
         api_messages: list[ChatCompletionMessageParam] = []
         if system_prompt is not None:
@@ -486,7 +489,12 @@ class OpenRouterApiProvider(ApiProvider):
                         {
                             "id": call.id,
                             "type": "function",
-                            "function": {"name": call.name, "arguments": call.arguments},
+                            "function": {
+                                "name": call.name,
+                                "arguments": (
+                                    call.reflected_tool_args if call.reflected_tool_args is not None
+                                    else call.arguments),
+                            },
                         }
                         for call in message.tool_calls
                     ]

@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from klorb.message import Message, MessageFragment
+from klorb.message import Message, MessageFragment, ToolCallRequest
 
 
 def _message(**overrides: object) -> Message:
@@ -102,3 +102,8 @@ class TestForPersistence:
         # The original in-memory message is untouched -- still safe to send this turn.
         assert message.fragments is not None
         assert message.fragments[0].image_url == {"url": "data:image/webp;base64,xx"}
+
+
+def test_tool_call_request_reflected_tool_args_defaults_to_none() -> None:
+    call = ToolCallRequest(id="call_1", name="ReadFile", arguments='{"filename": "f"}')
+    assert call.reflected_tool_args is None

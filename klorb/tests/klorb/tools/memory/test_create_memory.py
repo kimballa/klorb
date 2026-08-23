@@ -12,6 +12,7 @@ from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.memory import common as memory_common_module
 from klorb.tools.memory.common import memory_namespace_dir
 from klorb.tools.memory.create_memory import CreateMemoryTool
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -46,6 +47,18 @@ def test_creates_a_new_memory_auto_creating_the_namespace_dir(
     assert result["filename"] == "notes.md"
     assert result["total_lines"] == 2
     assert result["created"] is True
+
+
+def test_update_args_drops_content_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path, monkeypatch)
+    args = {"namespace": "global", "filename": "notes.md", "content": "Topic\nbody\n"}
+
+    updated = CreateMemoryTool(context).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {"namespace": "global", "filename": "notes.md"}
 
 
 def test_creating_memory_md_under_the_warn_threshold_has_no_warning(

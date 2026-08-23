@@ -623,6 +623,23 @@ def test_build_api_messages_translates_tool_use_role_to_assistant_with_tool_call
     }
 
 
+def test_build_api_messages_prefers_reflected_tool_args_when_set() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _reply_chunks("hi there")
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+    tool_use_message = Message(
+        content="", role="tool_use", num_tokens=0, processing_state="complete",
+        timestamp=datetime.now(),
+        tool_calls=[openrouter.ToolCallRequest(
+            id="call_1", name="ReadFile", arguments='{"filename": "f", "start_line": 1}',
+            reflected_tool_args="{}")])
+
+    provider.send_prompt([_user_message(), tool_use_message], model="some/model")
+
+    _, kwargs = mock_client.chat.completions.create.call_args
+    assert kwargs["messages"][1]["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
 def test_build_api_messages_translates_tool_response_role_to_tool() -> None:
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _reply_chunks("hi there")

@@ -100,8 +100,9 @@ mechanism the rest of the harness will build on to talk to models.
     [[exclude-thinking-messages-from-outgoing-api-requests]]). `role="tool_use"` becomes an
     `{"role": "assistant", "content": ..., "tool_calls": [...]}` dict (each `ToolCallRequest`
     reshaped into the SDK's `{"id", "type": "function", "function": {"name", "arguments"}}`
-    shape); `role="tool_response"` becomes `{"role": "tool", "tool_call_id": ...,
-    "content": ...}`.
+    shape, `arguments` taken from `ToolCallRequest.reflected_tool_args` when set, else
+    `arguments` unchanged — see [[tool-framework]]'s `Tool.update_args()`); `role="tool_response"`
+    becomes `{"role": "tool", "tool_call_id": ..., "content": ...}`.
 * `klorb.cli` (`klorb/src/klorb/cli/`) is the CLI entry point, registered as the `klorb`
   console script in `pyproject.toml`. It loads `.env` via `python-dotenv`, parses a
   `-m`/`--message` flag holding the prompt and an optional `--model` flag, constructs an

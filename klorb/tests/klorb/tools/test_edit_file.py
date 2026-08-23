@@ -12,6 +12,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.edit_file import EditFileTool
 from klorb.tools.read_file import ReadFileTool
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.workspace import Workspace
 
@@ -836,3 +837,12 @@ def test_edit_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
     })
 
     assert file_path.read_text() == "a\nB\nc\n"
+
+
+def test_update_args_drops_everything_on_success(tmp_path: Path) -> None:
+    args = {"filename": str(tmp_path / "sample.txt"), "old_text": "b", "new_text": "B"}
+
+    updated = EditFileTool(_context(tmp_path)).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}

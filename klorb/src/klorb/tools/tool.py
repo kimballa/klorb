@@ -12,15 +12,19 @@ from pydantic import BaseModel
 from klorb.json_error_display import format_json_error_context
 
 if TYPE_CHECKING:
-    # Deferred to break a cycle: klorb.tools.setup_context -> klorb.process_config ->
-    # klorb.session -> klorb.tools.tool (for describe_tool_arg_json_error). ToolSetupContext is
-    # only ever used here as a type annotation, never instantiated, so this is safe.
+    # ToolCallErrorInfo is only ever used here as a type annotation, so there's no need for
+    # this leaf module to carry klorb.tools.response_envelope as a runtime dependency.
+    # ToolSetupContext is deferred to break a cycle: klorb.tools.setup_context ->
+    # klorb.process_config -> klorb.session -> klorb.tools.tool (for
+    # describe_tool_arg_json_error). It's only ever used here as a type annotation, never
+    # instantiated, so this is safe.
+    # DiffHunk/FullFileView are deferred for the same reason, one hop shorter: klorb.tools.util's
+    # __init__ imports dir_walk.py, which imports klorb.tools.setup_context -- so even importing a
+    # leaf submodule like diff_lines.py/read_file_core.py here (rather than that submodule's own
+    # contents) would trigger the same cycle. Both are only ever used here as type annotations
+    # (quoted below), never constructed, so this is safe.
+    from klorb.tools.response_envelope import ToolCallErrorInfo
     from klorb.tools.setup_context import ToolSetupContext
-    # Deferred for the same reason, one hop shorter: klorb.tools.util's __init__ imports
-    # dir_walk.py, which imports klorb.tools.setup_context -- so even importing a leaf submodule
-    # like diff_lines.py/read_file_core.py here (rather than that submodule's own contents)
-    # would trigger the same cycle. DiffHunk/FullFileView are only ever used here as type
-    # annotations (quoted below), never constructed, so this is safe.
     from klorb.tools.util.diff_lines import DiffHunk
     from klorb.tools.util.read_file_core import FullFileView
 
@@ -225,6 +229,14 @@ class Tool(ABC):
     @abstractmethod
     def apply(self, args: dict[str, Any]) -> Any:
         """Execute the tool with the given arguments and return its result."""
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: "ToolCallErrorInfo",
+    ) -> dict[str, Any]:
+        """Return the `tool_args` to keep in this call's history in place of what the model
+        sent; override to compact them once `tool_response`/`err_info` have been generated for
+        the tool call."""
+        return tool_args
 
     def format_response(self, apply_output: Any) -> str:
         """Render `apply_output` as the text a model sees for this call's `response_body`.

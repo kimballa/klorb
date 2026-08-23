@@ -37,8 +37,10 @@ this one shape.
     [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md).
   * `tool_calls: list[ToolCallRequest] | None` — populated on a `role="tool_use"` `Message`:
     the tool call(s) the model requested. `ToolCallRequest` (also in `klorb/src/klorb/message.py`)
-    has `id: str`, `name: str`, and `arguments: str` (the model's raw, not-yet-parsed
-    JSON-encoded arguments).
+    has `id: str`, `name: str`, `arguments: str` (the model's raw, not-yet-parsed
+    JSON-encoded arguments), and `reflected_tool_args: str | None` — [[tool-framework]]'s
+    `Tool.update_args()` output for this call, JSON-encoded, sent to the model in place of
+    `arguments` on every later turn once set (see [[openrouter-prompt-client]]).
   * `tool_call_id: str | None` — populated on a `role="tool_response"` `Message`: the
     `ToolCallRequest.id` (from the preceding `tool_use` message) this is the result of.
   * `num_tokens: int` — this message's own token count, from `klorb.token_estimate.

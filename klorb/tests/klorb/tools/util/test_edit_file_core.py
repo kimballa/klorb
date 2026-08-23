@@ -3,6 +3,7 @@
 
 from pathlib import Path
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.util import EditFileCore, format_edit_result
 
 
@@ -55,3 +56,20 @@ def test_note_is_always_present_on_success(tmp_path: Path) -> None:
     rendered = format_edit_result(result)
 
     assert "note: No verification ReadFile needed." in rendered
+
+
+def test_update_args_drops_everything_on_success() -> None:
+    args = {"filename": "f.txt", "old_text": "b", "new_text": "B"}
+
+    updated = EditFileCore().update_args(args, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}
+
+
+def test_update_args_leaves_args_unchanged_on_error() -> None:
+    args = {"filename": "f.txt", "old_text": "b", "new_text": "B"}
+
+    updated = EditFileCore().update_args(
+        args, ToolCallErrorInfo(is_error=True, is_retryable=False, error_category="validation"))
+
+    assert updated == args

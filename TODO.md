@@ -16,31 +16,6 @@
   * ReplaceAll: add "no verification ReadFile needed" language to response.
   * Append to the FindFile description:
     *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
-* We can then go on to rewriting history for tighter context.
-  * tool calls contain a `tool_args` field. This was produced by the agent. we apply it
-    directly to the tool. We also then recapitulate it into the messages array (in a role=agent
-    stop_reason=tool_calls msg) forever.
-  * Tool gets `#update_args(tool_args: dict, tool_response: Any, err_info: (those 4 err fields)) -> dict`
-    which by default just returns tool_args unchanged.
-    But we call this with all the tool output (the response from the tool itself, none if
-    that all got handled by exception) and a struct w/ the other error info we would otherwise
-    format into fields of the response, etc. And we return a new tool_args that may just be
-    exactly the original tool_args but may be more compact.
-    * For most error situations, we return the input tool_args as-is. But on success, sometimes
-      we don't need to keep it all.
-    * For e.g. CreateFile(), the output will have all the new file content. So, omit the
-      content block entirely from the tool_call as-shown back to the agent for the rest of
-      the conversation.
-    * Same for the various EditFileCore-based tools. We already get the new content and
-      a diff, out. So, drop the input from the re-send.
-    * Same for other CreateFileCore tools.
-    * All ReadFileCore tools have sufficient context in the output that, for successful read,
-      the actual ReadFoo tool call can just lose all its tool_args.
-    * Again, if there's an error, just leave the input verbatim.
-    * We actually do serialize this transmutation for session.json, etc. We save this
-      on a reflected_tool_args field; post-tool-use, how do we reflect the agent's tool
-      args back to it?
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want

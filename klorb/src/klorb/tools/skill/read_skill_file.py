@@ -5,6 +5,7 @@ skill's own directory and gated by the skill's `skillRules` verdict."""
 import logging
 from typing import Any
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.skill.catalog import resolve_and_gate_skill, resolve_session_skill_catalog_registry
 from klorb.tools.skill.common import NAMESPACE_SCHEMA_PROPERTY, resolve_skill_file
@@ -114,6 +115,11 @@ class ReadSkillFileTool(Tool):
             result["total_lines"], result["truncated"],
         )
         return result
+
+    def update_args(
+        self, tool_args: dict[str, Any], tool_response: Any, err_info: ToolCallErrorInfo,
+    ) -> dict[str, Any]:
+        return self.read_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
         return format_read_result(apply_output)

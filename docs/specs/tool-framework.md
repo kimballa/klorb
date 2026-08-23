@@ -65,6 +65,20 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     regex/case/multiline schema is disproportionately large for how rarely it's needed. See
     [the ADR](../adrs/00201-visible-but-undescribed-tools-summarized-via-searchtools.md).
 
+  * `update_args(tool_args, tool_response, err_info) -> dict[str, Any]` — the `tool_args` to
+    keep in this call's history in place of what the model sent, given `tool_response`
+    (`apply()`'s own return value, `None` for a call that never ran to completion) and
+    `err_info` (a `klorb.tools.response_envelope.ToolCallErrorInfo`: the built envelope's
+    `is_error`/`is_retryable`/`error_category`/`error_message`). Defaults to `tool_args`
+    unchanged. `CreateFileCore`/`EditFileCore`/`ReadFileCore` (`klorb/src/klorb/tools/util/`)
+    each implement their own `update_args(tool_args, err_info)`, and every tool built on one
+    delegates to it: `CreateFile`/`CreateMemory` drop `content` on success (the call's own
+    `diff` already reflects it); `EditFile`/`EditMemory`/`EditScratchpad` and
+    `ReadFile`/`ReadMemory`/`ReadScratchpad`/`ReadSkillFile` drop every argument on success
+    (their own `post_edit_content`/`diff` or `content` already show the result). Any override
+    leaves `tool_args` unchanged when `err_info.is_error` is `True`. See [[session-and-turns]]
+    for where `Session._run_tool_calls()` calls this and stores its output.
+
   Two further methods are concrete, not abstract, so every `Tool` has a usable default and a
   subclass only overrides them for a nicer rendering:
   * `summary(args, result=None, error=None) -> str` — a one-line, human-friendly description

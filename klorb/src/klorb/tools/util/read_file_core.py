@@ -6,6 +6,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
@@ -101,6 +102,11 @@ class ReadFileCore:
     def max_line_length(self) -> int:
         """Return the per-line character cap this core was constructed with."""
         return self._max_line_length
+
+    def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
+        """`{}` once the call succeeded, since `apply()`'s own `content` already shows what was
+        read; unchanged on error."""
+        return tool_args if err_info.is_error else {}
 
     def parameter_properties(self) -> dict[str, Any]:
         """Return the `start_line`/`end_line` JSON-schema properties for the read tools' `parameters()`."""

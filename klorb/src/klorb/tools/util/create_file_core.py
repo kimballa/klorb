@@ -6,6 +6,7 @@ delegates to it."""
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
 from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
@@ -37,6 +38,15 @@ class CreateFileCore:
     it already exists — the shared mechanic behind `CreateFileTool` and `CreateMemoryTool`.
     Missing parent directories are created automatically.
     """
+
+    def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
+        """`tool_args` with `content` dropped once the call succeeded, since `apply()`'s own
+        `diff` already reflects it; unchanged on error."""
+        if err_info.is_error:
+            return tool_args
+        new_args = dict(tool_args)
+        new_args.pop("content", None)
+        return new_args
 
     def parameter_properties(self) -> dict[str, Any]:
         """Return the `content` JSON-schema property shared by `CreateFileTool` and

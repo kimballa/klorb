@@ -9,6 +9,7 @@ import pytest
 
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
+from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.scratchpad.edit import EditScratchpadTool
 from klorb.tools.setup_context import ToolSetupContext
 
@@ -38,6 +39,18 @@ def test_replaces_a_multiline_block(
     assert scratchpad.read_text() == "a\nB\nC\nd\n"
     assert result["new_total_lines"] == 4
     assert result["post_edit_content"] == "2|B\n3|C"
+
+
+def test_update_args_drops_everything_on_success(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    scratchpad = _write(tmp_path, "a\nb\nc\nd\n")
+    args = {"old_text": "b\nc", "new_text": "B\nC"}
+
+    updated = EditScratchpadTool(_context(str(scratchpad), make_session_config)).update_args(
+        args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
+
+    assert updated == {}
 
 
 def test_insert_by_folding_original_line_into_new_text(
