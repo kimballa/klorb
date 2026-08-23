@@ -1,5 +1,10 @@
 # Threading audit: klorb's Python harness
 
+**Status: all findings below are fixed.** This document is kept as a historical record of the
+races found and how each was fixed, not as an open task list. The `multithreaded-python` skill
+(`.claude/skills/multithreaded-python/SKILL.md`) distills the general lessons and patterns from
+these findings for future work.
+
 An audit of every thread the klorb harness runs, where those threads touch shared mutable state,
 and which of those interactions are actually synchronized versus relying on the GIL to paper over
 a logical (not memory-level) race.
@@ -87,7 +92,7 @@ These are already fixed on this branch; listed so a reader knows they are not op
   other. `cascade_close_subagents`'s `handle.delivered = True` write, previously unlocked, now
   goes through a new `SubagentTracker.mark_delivered`.
 
-## Open findings
+## Findings (all fixed)
 
 *For each of these the situation is described, and then Claude proposes a sketch of how to*
 *address the issue in "Claude's Fix direction." The user sometimes approves in whole or in part*

@@ -459,7 +459,7 @@ def test_evaluate_write_denies_klorb_state_dir_even_with_writedirs_allow(tmp_pat
         evaluate_write(context, path)
 
 
-# --- workspace/read_dirs/write_dirs atomicity (THREADING-AUDIT.md finding 6) ---
+# --- workspace/read_dirs/write_dirs atomicity (docs/specs/threading-audit.md finding 6) ---
 
 
 def test_workspace_access_snapshot_blocks_until_a_concurrent_apply_completes(tmp_path: Path) -> None:
