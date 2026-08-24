@@ -268,3 +268,66 @@ def test_summary_format() -> None:
     tool = WebFetchTool(_context())
     assert "WebFetch:" in tool.summary({"url": "https://example.com/"})
     assert "failed" in tool.summary({"url": "https://example.com/"}, error="boom")
+
+
+# --- format_response ---
+
+
+def test_format_response_inline_content_has_header_then_blank_line_then_content() -> None:
+    tool = WebFetchTool(_context())
+    result = {
+        "url": "https://example.com/",
+        "method": "GET",
+        "response_code": 200,
+        "response": "OK",
+        "mime_type": "text/plain",
+        "size": 5,
+        "untrusted_content": "<UNTRUSTED_CONTENT><![CDATA[hello]]></UNTRUSTED_CONTENT>",
+        "untrusted_content_file": None,
+        "security_warning": "be careful",
+    }
+    rendered = tool.format_response(result)
+    header, _, body = rendered.partition("\n\n")
+    assert header.split("\n") == [
+        "url: https://example.com/",
+        "method: GET",
+        "response_code: 200",
+        "response: OK",
+        "mime_type: text/plain",
+        "size: 5",
+        "security_warning: be careful",
+    ]
+    assert body == result["untrusted_content"]
+
+
+def test_format_response_spilled_content_omits_untrusted_content_block() -> None:
+    tool = WebFetchTool(_context())
+    result = {
+        "url": "https://example.com/",
+        "response_code": 200,
+        "response": "OK",
+        "mime_type": "text/plain",
+        "size": 999999,
+        "untrusted_content": None,
+        "untrusted_content_file": "/tmp/spill/example.txt",
+        "security_warning": "be careful",
+    }
+    rendered = tool.format_response(result)
+    assert "UNTRUSTED_CONTENT" not in rendered
+    assert rendered.split("\n")[-1] == "untrusted_content_file: /tmp/spill/example.txt"
+    assert "\n\n" not in rendered
+
+
+def test_format_response_early_cancel_renders_only_available_fields() -> None:
+    tool = WebFetchTool(_context())
+    result = {
+        "incomplete": True,
+        "incomplete_reason": "user_cancel",
+        "message": "Request canceled before it started.",
+    }
+    rendered = tool.format_response(result)
+    assert rendered == (
+        "incomplete: true\n"
+        "incomplete_reason: user_cancel\n"
+        "message: Request canceled before it started."
+    )
