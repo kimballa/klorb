@@ -12,6 +12,8 @@
 
 ### Feature backlog
 
+* Add a group chatroom. Everyone has PostChat and ReadChat tools. It tracks high watermark unread for all agents. New agents have their hwm start at "now" when spawned, not the beginning. All chat reading is async. @mentioning an agent that's alive gives it a sys injection nudge to read chat. An idle agent is awoken with the chat content. The user can read the chatroom in the TUI and also write to it. It looks like IRC. (Or slack, for the newfangled thing these days.) Agents can @mention the user by referring to `@user`. You get a notification if you're on an agent history screen rather than in the chat.
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -144,6 +146,11 @@
   done by Textual's draw-over algorithm? This may not be fixable.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
+
+### Feature backlog
+
+* chat room with your agents
+* a "files" side panel that lists all files read and written by the agents this session. Indicator column on the left for r vs w. Clicking a filename pops a modal to read the whole file, and see diffs highlighted.
 
 ## VSCode plugin
 
