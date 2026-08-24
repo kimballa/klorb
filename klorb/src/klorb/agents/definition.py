@@ -43,6 +43,9 @@ class AgentCapabilities(BaseModel):
     see_group_tasks: bool = False
     """Whether a session running as this role may `TodoList` with `scope="group"` to see every
     issue in the group, not just its own."""
+    send_messages: bool = False
+    """Whether a session running as this role may `SendMessage` another agent in the group.
+    Any role may receive a message and use `GetMessages` regardless of this flag."""
 
 
 class AgentDefinition(BaseModel):

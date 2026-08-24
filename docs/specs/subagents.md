@@ -2,12 +2,14 @@
 
 ## Summary
 
-A subagent is a bounded-task specialist session that an agent (the "creator") can launch,
-converse with asynchronously, and receive a report back from — `CreateSubagent`,
-`WaitForSubagent`, and `MessageSubagent` are the three tools that do this
+A subagent is a bounded-task specialist session that an agent (the "creator") can launch and
+receive a report back from — `CreateSubagent` and `WaitForSubagent` are the tools that do this
 (`klorb/src/klorb/tools/subagents/`). A subagent runs as its own `Session`, with its own role,
 system prompt, and (usually narrower) tool/skill access, but it is not a standing team member:
 it answers one request and sits dormant until asked a follow-up or the whole session tree closes.
+Any agent that has one may also converse directly with *any* other agent in the same session
+tree — creator, subagent, or sibling alike — via `SendMessage`/`GetMessages`; see "Agent-to-agent
+messaging" below.
 
 Today four roles exist as something a subagent can be launched as -- `explorer`
 (`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), `reviewer`
@@ -18,7 +20,8 @@ top-level, user-facing session) is permitted to launch any of them — see
 
 ## Configuration
 
-Three `ProcessConfig` fields, all under the `tools.subagents.*` `klorb-config.json` namespace:
+Three `ProcessConfig` fields under the `tools.subagents.*` `klorb-config.json` namespace, plus
+one under `tools.messaging.*`:
 
 * `subagents_max_depth` (`tools.subagents.maxDepth`, default `2`) — how many subagent hops
   below the top-level session (`Session.depth == 0`) a tree may nest.
@@ -28,6 +31,9 @@ Three `ProcessConfig` fields, all under the `tools.subagents.*` `klorb-config.js
 * `subagents_max_active_total` (`tools.subagents.maxActiveTotal`, default `16`) — the most
   subagents that may be running simultaneously across an entire session tree, regardless of
   which session in the tree created each one.
+* `messaging_max_queue_size` (`tools.messaging.maxQueueSize`, default `100`) — the most
+  undelivered `SendMessage` entries the whole session tree's `AgentMessageQueue` may hold at
+  once; see "Agent-to-agent messaging" below.
 
 `klorb/resources/agents.json` (schema envelope `klorb-agents`) defines each subagent role's
 capability policy, parsed once at process start into an immutable `AgentRegistry`
@@ -70,15 +76,17 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
   * `subagent_roles` — role names this subagent may itself pass to `CreateSubagent`.
   * `enforce_readonly_tools` — clamp the tool set (after `tools`/`tool_categories`) to only
     tools reporting `Tool.is_read_only() == True`.
-* `agent_capabilities` (an `AgentCapabilities`, `klorb.agents.definition`) — task-tracking
-  capabilities for this role, all defaulting `False`: `accepts_tasks` (may hold a chainlink issue
-  as its own current task), `assigns_tasks` (may `TodoCreate` an issue assigned to a *different*
-  agent), `see_group_tasks` (may `TodoList` with `scope="group"`). Read via `klorb.agents.
-  registry.get_agent_capabilities()`. Distinct from `restrict_to`, which narrows tool/skill/
-  subagent-role *inheritance* rather than task-tracking behavior — a role can hold `TASKS` tools
-  in its effective tool set yet still be refused a task, e.g. a future role that creates and
-  assigns work to other agents but never does any itself. See docs/specs/chainlink-task-
-  tracking.md's "Task assignment" section.
+* `agent_capabilities` (an `AgentCapabilities`, `klorb.agents.definition`) — capabilities for
+  this role, all defaulting `False`: `accepts_tasks` (may hold a chainlink issue as its own
+  current task), `assigns_tasks` (may `TodoCreate` an issue assigned to a *different* agent),
+  `see_group_tasks` (may `TodoList` with `scope="group"`), `send_messages` (may `SendMessage`
+  another agent — see "Agent-to-agent messaging" below; any role may *receive* a message and use
+  `GetMessages` regardless of this flag). Read via `klorb.agents.registry.
+  get_agent_capabilities()`. Distinct from `restrict_to`, which narrows tool/skill/subagent-role
+  *inheritance* rather than this kind of behavior — a role can hold a tool in its effective tool
+  set yet still be refused the capability it gates, e.g. a role with `SendMessage` in its tool set
+  but `send_messages: false`. See docs/specs/chainlink-task-tracking.md's "Task assignment"
+  section.
 
 ## Addressing
 
@@ -97,7 +105,7 @@ A standing `<SystemInterjection subject="AgentGroup">` (registered via
 emits a markdown table of every agent in the session tree whenever group composition or subagent
 activity changes — see docs/specs/chainlink-task-tracking.md's "AgentGroup interjection" section
 for the full mechanism. This is how a subagent learns the session ids it needs for `TodoCreate`'s
-`assign_to` or a `MessageSubagent` target, without a dedicated lookup tool.
+`assign_to` or a `SendMessage` target, without a dedicated lookup tool.
 
 ## Security model
 
@@ -121,9 +129,12 @@ name at each hop could recover privileges an ancestor deliberately stripped.
 
 * **Tools**: `plan_subagent_creation` builds `{tool_name: ToolMetadata(category, is_read_only)}`
   from the creator's own `tool_registry.tools()`, intersects it via `compute_child_tool_set`,
-  then strips `CreateSubagent`/`WaitForSubagent`/`MessageSubagent`
+  then strips `CreateSubagent`/`WaitForSubagent`
   (`klorb.agents.runtime.SUBAGENT_MGMT_TOOL_NAMES`) unless the *child's own role* has
-  `allow_subagents: true`. The child's `ToolRegistry` is then built directly
+  `allow_subagents: true`. `SendMessage`/`GetMessages` are not part of that stripped set — a
+  child's ability to send is gated purely by its own role's `send_messages` capability (checked
+  at call time), and any role may receive and read messages. The child's `ToolRegistry` is then
+  built directly
   (`ToolRegistry(process_config, child_config, tool_classes)`) from that filtered class map —
   never a fresh package discovery.
 * **Skills**: the creator's currently-discoverable skills
@@ -139,17 +150,19 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   (intersected against every role `agents.json` defines — see "Root session grants" below). A
   later `CreateSubagent` call always reads this already-computed field directly, never a fresh
   lookup of the calling session's own role's nominal `subagent_roles`.
-* `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` all report `is_read_only() == True` — they
-  don't mutate file or environment state directly; a subagent's actual capabilities are bounded
-  by the intersection above, not by whether these three tools are offered under
+* `CreateSubagent`/`WaitForSubagent`/`SendMessage`/`GetMessages` all report `is_read_only() ==
+  True` — they don't mutate file or environment state directly; a subagent's actual capabilities
+  are bounded by the intersection above, not by whether these tools are offered under
   `enforce_readonly_tools`. `EditScratchpad` also reports `is_read_only() == True` for a related
   reason: the scratchpad is harness-managed shared workspace state, not the user's own files or
   environment, so a read-only-enforced role (like Explorer) can still use it to collaborate.
 * **`@mention` skip-fallback**: `Session.send_turn()` takes a `resolve_mentions: bool = True`
-  parameter; `CreateSubagent`'s `initial_message` and `MessageSubagent`'s `message` are sent with
-  `resolve_mentions=False`, leaving any `@filename` text in the message literal rather than
-  resolving it into a file-content fragment. This avoids handing a subagent file content the
-  creator's own `readDirs` rules might not actually allow it to read directly.
+  parameter; `klorb.agents.policy._run_subagent_turn()` always calls it with
+  `resolve_mentions=False`, for every subagent turn regardless of how it was started —
+  `CreateSubagent`'s `initial_message`, a `SendMessage` delivery, or a chained hook continuation
+  alike — leaving any `@filename` text in the message literal rather than resolving it into a
+  file-content fragment. This avoids handing a subagent file content the creator's own
+  `readDirs` rules might not actually allow it to read directly.
 * **Permission asks**: a subagent's background turn runs with `TurnEventHandlers` built by
   `klorb.agents.policy.build_subagent_turn_handlers` — no streaming/progress callbacks (nothing
   renders a subagent's turn directly today), but every ask-style callback
@@ -231,21 +244,27 @@ shared): the child `Session`, its background `threading.Thread`, its own dedicat
 
 * `state`: `"running"` while its background turn is actively processing, `"finished"` once that
   turn ends. A subagent session is **never destroyed** once finished — it sits dormant,
-  `MessageSubagent` (or a human, see "Direct user messaging" below) can resume it later (flipping
+  `SendMessage` (or a human, see "Direct user messaging" below) can resume it later (flipping
   it back to `"running"`), and there is no tool to explicitly close one. Only ending the
   *creating* session tears a subagent down (see "Persistence" below).
 * `delivered`: whether the subagent's completed output has already been handed to the creating
   session — via `WaitForSubagent` or (at shutdown) `cascade_close_subagents`'s direct-append
   fallback. A `"finished"` subagent is not `delivered` until one of those actually consumes it,
   and stays dormant either way.
-* `parent_interested`: whether the session that dispatched the turn this handle currently
-  represents was the creating session itself (`CreateSubagent`, `MessageSubagent` — the only
-  producers of `True`) versus a human addressing this subagent directly, bypassing the parent
-  (`klorb.agents.policy.dispatch_direct_message`'s fresh-turn branch — the only producer of
-  `False`). Fixed at construction: a human's mid-turn interjection into an already-running,
-  parent-dispatched turn does not change it (see "Direct user messaging"). Only a
-  `parent_interested` completion is ever queued for delivery to the parent — see "Communicating
-  back to the parent".
+* `parent_interested`: whether the creating session is the one currently expecting this
+  subagent's eventual output. Set at construction time by whichever call dispatched the turn this
+  handle represents: `CreateSubagent` and `try_wake_next_queued_agent()` (the `SendMessage`
+  scheduler — see "Agent-to-agent messaging" below) both set it to whether the *sender* of the
+  message that triggered the dispatch is this subagent's own `parent`, so a sibling or
+  grandparent messaging a dormant subagent does not silently redirect its output to the actual
+  parent; `klorb.agents.policy.dispatch_direct_message`'s fresh-turn branch (a human resuming a
+  dormant subagent) always sets it `False`. Once a handle exists, `SubagentTracker.
+  mark_parent_interested()` can flip it back to `True` in place — without dispatching a new turn
+  — whenever a message from this subagent's own `parent` actually reaches it while the handle is
+  still `"running"`, whether via `GetMessages` or the end-of-turn drain (see "Agent-to-agent
+  messaging"). A human's mid-turn interjection into an already-running, parent-dispatched turn
+  does not change it (see "Direct user messaging"). Only a `parent_interested` completion is ever
+  queued for delivery to the parent — see "Communicating back to the parent".
 
 **"Concurrent" and "active" both mean `state == "running"`, not "undelivered."** A
 finished-but-undelivered subagent consumes no compute and is not "in flight" — it must not
@@ -253,10 +272,12 @@ itself block a new one from being created just because nobody has collected its 
 `SubagentTracker.running_count()` (bounds `maxConcurrentPerParent`) and
 `klorb.agents.runtime.total_active_subagents()` (walks the whole tree, bounds `maxActiveTotal`)
 both count only `"running"` handles accordingly. `klorb.agents.policy.check_concurrency_limits()`
-is the single check both `CreateSubagent` (starting a new subagent) and `MessageSubagent`
-(resuming a dormant one back into `"running"`) run before starting a background turn; it raises
+is the check `CreateSubagent` runs before starting a background turn, raising
 `ToolCallError(category="transient")` — not `"validation"` — since the fix is to wait for an
 existing subagent to finish (`WaitForSubagent`) and retry, not to change the call's arguments.
+Its boolean sibling `concurrency_limits_exceeded()` is what `try_wake_next_queued_agent()` (the
+`SendMessage` scheduler) checks instead, since exceeding the limit there means "leave this
+message queued," not "raise" — see "Agent-to-agent messaging" below.
 
 `CreateSubagent` also rejects, before constructing any `Session`: exceeding
 `subagents_max_depth`, the calling role lacking `allow_subagents: true`, and a requested role
@@ -278,7 +299,7 @@ subagent's own tool set includes a `TASKS` tool (see docs/specs/chainlink-task-t
 `SubagentHandle` and starts a daemon `threading.Thread` running the subagent's first turn, then
 returns immediately with the subagent's id and a note explaining how its output will be
 delivered. The caller is expected to keep working; it must not expose the returned id to the
-user, since it has no meaning to them — only to a later `WaitForSubagent`/`MessageSubagent` call.
+user, since it has no meaning to them — only to a later `WaitForSubagent`/`SendMessage` call.
 
 `starting_task_id`, if given, pre-claims a chainlink task for the new subagent and incorporates
 the task's summary (title and description) into the subagent's first user prompt, so the
@@ -301,18 +322,29 @@ subagents that finished before the caller got around to waiting are all delivere
 Fails immediately, without suspending, if the caller currently has no subagents running or
 awaiting delivery (`SubagentTracker.has_undelivered()`).
 
-### MessageSubagent
+### SendMessage
 
-Args: `id`, `message`. Requires the named subagent to be `"finished"` — an error (with a
-`WaitForSubagent`-first hint) otherwise — then runs `check_concurrency_limits()` (resuming a
-dormant subagent costs a concurrency slot exactly like `CreateSubagent` starting a new one) and
-`dispatch_subagent_turn()` again on the same child `Session`, exactly like `CreateSubagent` ran
-its first turn — always with `parent_interested=True` (the default), since `MessageSubagent` is
-only ever called by the parent agent itself, even when resuming a subagent a human most recently
-addressed directly (see "Direct user messaging"). The state check, `check_concurrency_limits()`,
-and dispatch all run under `context.session.subagent_tracker.dispatch_guard()`, re-resolving the
-handle via `SubagentTracker.current_handle()` rather than trusting one looked up earlier — the
-same guard `dispatch_direct_message` uses, since the two can race for the same dormant subagent.
+Args: `id` (any agent's session id, from the `AgentGroup` table — not necessarily the caller's
+own subagent), `message`. Requires the caller's own role to have the `send_messages` capability
+(`ToolCallError`, category `"validation"`, otherwise). See "Agent-to-agent messaging" below for
+the full delivery mechanism; in short, it always enqueues onto the tree-wide `AgentMessageQueue`
+first, then runs the same scheduler (`try_wake_next_queued_agent()`) that also runs whenever a
+concurrency slot frees up elsewhere, and reports back one of three outcomes: `"delivered"` (the
+target was dormant and its next turn is now running), `"busy"` (the target is running, or is a
+root session with no active-wake path — the message is queued for `GetMessages`/the standing
+interjection), or `"capacity"` (the target was dormant but starting it would have exceeded
+`maxConcurrentPerParent`/`maxActiveTotal` — also queued, woken opportunistically once the tree
+next frees a slot).
+
+### GetMessages
+
+No arguments. Available to every role regardless of `send_messages` — any agent may receive and
+read messages. Pops every entry in the `AgentMessageQueue` addressed to the caller's own session
+id (`AgentMessageQueue.pop_all_for()`) and formats them as `"No new messages waiting."` or a
+numbered list, each entry tagged `"(parent)"` if its sender is the caller's own `Session.parent`.
+For any popped message whose sender *is* the caller's own parent, calls `SubagentTracker.
+mark_parent_interested()` on that parent's tracker — the parent is now expecting this session's
+eventual output again, even though no new turn was dispatched to produce that effect.
 
 ## Direct user messaging
 
@@ -329,10 +361,11 @@ input already has:
   on the handle is left untouched — that turn was dispatched by whoever started it (ordinarily the
   parent), and a human steering it mid-turn doesn't change who's expecting the outcome.
 * **Finished (dormant)**: a fresh turn is dispatched (`dispatch_subagent_turn(...,
-  parent_interested=False)`), after the same `check_concurrency_limits()` check
-  `MessageSubagent`/`CreateSubagent` run — a human resuming a subagent from a UI consumes a
-  `"running"` slot exactly like a tool-driven resume does, and is bound by the same
-  `maxConcurrentPerParent`/`maxActiveTotal` limits.
+  parent_interested=False)`), after the same `check_concurrency_limits()` check `CreateSubagent`
+  runs — a human resuming a subagent from a UI consumes a `"running"` slot exactly like a
+  tool-driven resume does, and is bound by the same `maxConcurrentPerParent`/`maxActiveTotal`
+  limits. Unlike `SendMessage`, this raises rather than queuing on failure — there is no UI-level
+  retry-later path for a human's own direct message today.
 
 The subagent itself never distinguishes a message that arrived this way from one its parent sent:
 both simply become the next user turn (or mid-turn interjection) in the child `Session`'s own
@@ -351,6 +384,62 @@ for a child id rather than merging into it) and never joined, cancelled, or deli
 the guard rather than guessed beforehand from a `handle.state` read a concurrent call could make
 stale.
 
+## Agent-to-agent messaging
+
+`SendMessage`/`GetMessages` let any two agents in the same session tree converse directly,
+independent of the creator/subagent relationship `CreateSubagent`/`WaitForSubagent` model —
+`klorb.agents.runtime.find_session_in_group()` resolves the target by id anywhere in the
+sender's own tree, and `klorb.agents.messaging.AgentMessageQueue` (one instance per tree, shared
+by every `Session` in it via `Session.agent_message_queue`, mirroring how `workspace_indexer` is
+shared) is where a message sits until it's actually delivered.
+
+* **Delivery is unified through one scheduler.** `SendMessage` never dispatches a turn directly;
+  it always calls `AgentMessageQueue.enqueue()` first, then `klorb.agents.policy.
+  try_wake_next_queued_agent(process_config, session)`. That same function also runs every time
+  `dispatch_subagent_turn`'s worker marks a subagent finished (a concurrency slot just freed) —
+  the only two events that can change whether a queued message's target is now dispatchable.
+* **The queue is one flat, tree-wide FIFO, not one per recipient**, so that when more dormant,
+  message-bearing agents exist than `maxConcurrentPerParent`/`maxActiveTotal` allow to run at
+  once, whichever was messaged first is woken first as slots free up — `QueuedAgentMessage
+  (sender_id, sender_role, recipient_id, body)`. Capped at `messaging_max_queue_size`
+  (`tools.messaging.maxQueueSize`); `enqueue()` raises `ToolCallError(category="transient")`
+  outright once full, rather than dropping silently.
+* **`try_wake_next_queued_agent()` only actively wakes a *dormant subagent*.** It scans the FIFO
+  for the first entry whose recipient has a `parent` and a `SubagentHandle` in `"finished"` state,
+  skipping past (without stopping the scan) any entry whose recipient is currently `"running"` or
+  is a root session — neither is competing for a concurrency slot, so neither blocks a later
+  dormant candidate from being found. The first dormant candidate found is authoritative for
+  fairness: if starting it would exceed `concurrency_limits_exceeded()`, the scan **stops there**
+  rather than skipping ahead to a later dormant recipient that might currently fit — that's what
+  makes waking starvation-free. Otherwise every one of that recipient's queued messages is popped
+  and bundled into one `klorb.agents.messaging.format_new_turn_message()` prompt (explaining
+  they're from other agents, not the user, and tagging any sender that is the recipient's own
+  `parent`), and `dispatch_subagent_turn()` starts its turn with `parent_interested` set to
+  whether any popped sender is that parent.
+  * **Locking**: to avoid the same stale-read race `dispatch_direct_message` already guards
+    against, `AgentMessageQueue`'s own lock is only ever held *alone* for a lock-light peek that
+    names a candidate; the actual re-check-and-act (current handle state, `concurrency_limits_
+    exceeded()`, popping, dispatching) happens afterward under that one candidate's own
+    `SubagentTracker.dispatch_guard()`, discarding the candidate with no side effects if it's no
+    longer eligible by then (someone else already delivered to it, or capacity was consumed
+    elsewhere) — its messages stay queued for the next trigger. This is the same "`dispatch_guard`
+    is always acquired before any queue access, never the other way around" ordering the
+    end-of-turn drain below follows, so the two can never deadlock or double-dispatch the same
+    recipient.
+* **A message to a *running* target, or to a root session** (which has no active-wake path at
+  all — see "Out of scope" below), is left in the queue for the recipient to discover itself: a
+  standing `<SystemInterjection subject="AgentMessage">` (registered on every session in
+  `_reset_state`, the same mechanism as the `AgentGroup` interjection) fires whenever
+  `AgentMessageQueue.has_pending(self.id)` is true, reminding the session to call `GetMessages`.
+  This is polled at the same two points every other standing interjection is: the start of a new
+  turn, and between each round of tool calls within one.
+* **`WaitForSubagent` is interrupted by an incoming agent message**, exactly like a queued human
+  message already interrupts it: `SendMessage` calls the target session's `Session.
+  notify_new_message()` (which sets the same `_user_msg_event` `enqueue_queued_message()` sets)
+  after enqueueing, and `WaitForSubagentTool`'s pre-loop check now also tests `AgentMessageQueue.
+  has_pending(session.id)` (alongside the existing `pending_queued_message_texts` check) to catch
+  a message that arrived — and already cleared the event — before the wait even started.
+
 ## Communicating back to the parent
 
 `klorb.agents.policy._run_subagent_turn()` is the background thread's top-level call: it runs
@@ -368,18 +457,24 @@ aborted mid-stream (`ResponseAborted`, from `cancel_event` firing) appends
 thread's own top-level call, and an unhandled exception there would silently strand the subagent
 as `"running"` forever.
 
-The background thread's own drain-and-finish decision — drain the child's queue, and finish only
-if nothing was queued — runs under `parent.subagent_tracker.dispatch_guard()`, the same lock every
-enqueue-vs-dispatch decision for that child takes. A message enqueued concurrently is therefore
-either drained into one more turn or lands after the handle is already `"finished"` and resumes the
-subagent through the ordinary dormant path; it can never strand on a finished subagent that nothing
-will drain again.
+The background thread's own drain-and-finish decision — drain the child's own local queue, then
+its entries in the tree-wide `AgentMessageQueue`, and finish only if both are empty — runs under
+`parent.subagent_tracker.dispatch_guard()`, the same lock every enqueue-vs-dispatch decision for
+that child takes (see "Agent-to-agent messaging" above). A message enqueued concurrently, from
+either source, is therefore either drained into one more turn or lands after the handle is
+already `"finished"` and resumes the subagent through the ordinary dormant path; it can never
+strand on a finished subagent that nothing will drain again. Draining a non-empty
+`AgentMessageQueue` batch also calls `SubagentTracker.mark_parent_interested()` if any of it came
+from `parent`, for the same reason `GetMessages` does (see "Agent-to-agent messaging"). Once
+either drain empties out for good, `try_wake_next_queued_agent()` runs once more (outside the
+guard) before the thread actually exits, so a slot this subagent just freed is immediately
+offered to whichever other dormant, message-bearing agent has been waiting longest.
 
 Once a turn ends, `SubagentTracker.mark_finished()` sets `state`/`output` on the handle, then —
 only if the handle is `parent_interested` — queues it for delivery via `WaitForSubagent`,
 described above. An uninterested completion (a human addressed this subagent directly, see
 "Direct user messaging") still gets `state`/`output` set, so it stays visible to the subagents
-panel and a later `MessageSubagent`, but is never queued: nothing pops it, and it is never handed
+panel and a later `SendMessage`, but is never queued: nothing pops it, and it is never handed
 to the parent.
 
 `klorb.agents.runtime.build_subagent_interjection_provider()` builds an equivalent
@@ -387,7 +482,10 @@ zero-arg provider closure, in the same shape `Session.register_standing_interjec
 (the mechanism `BashTool`'s persistent-shell notice uses) — wrapping a popped completion's body in
 `<SystemInterjection subject="subagent">id: ...\nrole: ...\ntitle: ...\n\n<output></SystemInterjection>`.
 No production tool call site registers it today; `WaitForSubagent` is the only channel that
-currently delivers a subagent's output to its creator.
+currently delivers a subagent's output to its creator. This `subject="subagent"` interjection is
+distinct from the `subject="AgentMessage"` one "Agent-to-agent messaging" describes above — the
+former is a *creator* collecting its own subagent's completed output, the latter is any agent
+being reminded to `GetMessages` from any other agent.
 
 ## Persistence
 
@@ -583,12 +681,14 @@ problem, and a reload/restore of the same session renders correctly either way.)
 
 ## Out of scope
 
-* **Waking an idle creator.** If the creating session has no turn of its own in flight when a
-  subagent finishes, nothing proactively starts a new turn to deliver the output — delivery
-  happens opportunistically, the next time the creating session's own turn polls for it (or via
-  an explicit `WaitForSubagent` call). `Session.append_system_note()` (used by
-  `cascade_close_subagents`) is the primitive a future "wake an idle session" mechanism would
-  reuse for the message shape, but nothing calls it for that purpose today.
+* **Waking an idle root session.** `SendMessage` actively wakes a *dormant subagent* (see
+  "Agent-to-agent messaging"), but a root (top-level, user-facing) session has no equivalent
+  active-wake path — nothing proactively starts a fresh turn for it, whether to deliver a
+  finished subagent's output or an incoming `SendMessage`. Delivery to an idle root happens
+  opportunistically, the next time its own turn runs and polls the standing interjections (or
+  via an explicit `WaitForSubagent` call for subagent output). `Session.append_system_note()`
+  (used by `cascade_close_subagents`) is the primitive a future "wake an idle root" mechanism
+  would reuse for the message shape, but nothing calls it for that purpose today. See `TODO.md`.
 * **`VisionAssistant` role** and any other specialist role beyond Explorer and Reviewer.
 * **`@mention` filtering by the creator's `readDirs`.** Today a `@mention` in a message sent to
   a subagent is left entirely unresolved (see "Security model"); actually resolving it while

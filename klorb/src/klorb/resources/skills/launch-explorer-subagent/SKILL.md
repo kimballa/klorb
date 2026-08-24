@@ -44,7 +44,7 @@ The Explorer will work asynchronously. You can:
 * Continue working and let the result arrive as a `SystemInterjection` when it's done.
 * Call `WaitForSubagent` if you need the answer before continuing. This tool will pause your session
   so use it only if you do not have anything else to do in the meantime.
-* Call `MessageSubagent` to send a follow-up question after the Explorer finishes.
+* Call `SendMessage` to send a follow-up question after the Explorer finishes.
 
 ## Composing the initial message
 

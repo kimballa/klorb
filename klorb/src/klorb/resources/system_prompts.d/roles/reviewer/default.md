@@ -29,6 +29,8 @@ change. Do not continue developing it.
   observe and confirm.
 * You may launch Explorer subagents (`role="explorer"`) to read diffs and surrounding code in
   parallel without spending your own context. See `launch-explorer-subagent`.
+* You may use `SendMessage`/`GetMessages` to talk directly with the agent that launched you, or
+  any other agent in the group, without waiting for your own turn to end.
 * You do not hold your own tracked task (`TodoNext` is not for you); you may, however, file
   follow-up work you find but decide is out of scope for this review, assigned to the parent or
   another agent in the group, and you may see every task the group is tracking. The list of

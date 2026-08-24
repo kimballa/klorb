@@ -190,7 +190,7 @@ async def test_selecting_a_different_session_saves_and_restores_prompt_draft_tex
 async def test_tick_refreshes_a_stale_selected_handle_after_a_resume(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
-    """A resume (a direct message or `MessageSubagent`) replaces the tracker's handle for the
+    """A resume (a direct message or `SendMessage`) replaces the tracker's handle for the
     same session id; `_tick_subagents_panel` must re-resolve `_selected_handle` from the tree
     each tick rather than keep pointing at the orphaned original, or the trailing status notice
     would freeze at whatever state it was in when the subagent was first selected."""

@@ -98,7 +98,7 @@ async def test_submitting_while_a_subagent_is_selected_shows_a_notice_on_concurr
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """A human resuming a dormant subagent from the panel is bound by the same
-    `maxConcurrentPerParent` limit a tool-driven `MessageSubagent` resume is -- surfaced as a
+    `maxConcurrentPerParent` limit a tool-driven `SendMessage` resume is -- surfaced as a
     notice rather than silently dropped or crashing the app."""
     mock_provider = MagicMock()
     process_config = ProcessConfig(subagents_max_concurrent_per_parent=0)

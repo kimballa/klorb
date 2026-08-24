@@ -296,7 +296,7 @@ class SubagentsPanelMixin(ReplAppBase):
         if self._selected_handle is not None:
             # Re-resolve the handle from the tree before using it: `register()` replaces the
             # tracker's entry for this session on every resume (a direct message or
-            # MessageSubagent), so a `_selected_handle` cached from selection time can point at
+            # SendMessage), so a `_selected_handle` cached from selection time can point at
             # an orphaned, permanently-"running" object whose `state` never again matches the
             # live turn.
             node = self._find_tree_node(self._selected_session.id)

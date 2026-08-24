@@ -334,7 +334,7 @@ below) on the first call (establishing the baseline) and again whenever the grou
 or subagent activity changes; `None` (no interjection) is returned when the group is unchanged.
 
 This is how a subagent learns the session ids it would need to pass as `TodoCreate`'s
-`assign_to`, or a target for `MessageSubagent`, without a separate tool call. The `State`
+`assign_to`, or a target for `SendMessage`, without a separate tool call. The `State`
 column (`running`/`finished`) lets every agent in the tree see which peers are actively
 processing and which are dormant.
 

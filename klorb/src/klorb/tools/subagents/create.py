@@ -77,7 +77,7 @@ class CreateSubagentTool(Tool):
             "when the subagent completes.\n"
 
             "Do not expose the returned id to the user; it's only useful for your own "
-            "MessageSubagent calls. "
+            "SendMessage calls. "
         )
 
     def parameters(self) -> type[BaseModel]:
@@ -126,7 +126,8 @@ class CreateSubagentTool(Tool):
             initial_message = self._claim_and_annotate_starting_task(
                 context, child, starting_task_id, initial_message)
         dispatch_subagent_turn(
-            context.session, child, args["role"], args["session_title"], initial_message)
+            context.process_config, context.session, child, args["role"], args["session_title"],
+            initial_message)
         return {
             "subagent_id": child.id,
             "note": (
@@ -134,7 +135,7 @@ class CreateSubagentTool(Tool):
                 The subagent is now running. If it finishes before you do, its output will be
                 delivered to you automatically, the next time you're available to receive it. If you
                 have no more work to do before you need its answer, call WaitForSubagent to wait for
-                it. Once it has finished, use MessageSubagent to send it a follow-up if needed. Do
+                it. Once it has finished, use SendMessage to send it a follow-up if needed. Do
                 not expose this id to the user -- it has no meaning to them.
                 """
             ),

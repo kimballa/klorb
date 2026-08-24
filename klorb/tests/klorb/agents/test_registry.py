@@ -61,7 +61,8 @@ def test_get_agent_capabilities_reads_the_packaged_operator_and_explorer_roles()
     operator = get_agent_capabilities("operator")
     explorer = get_agent_capabilities("explorer")
 
-    assert operator == AgentCapabilities(accepts_tasks=True, assigns_tasks=True, see_group_tasks=True)
+    assert operator == AgentCapabilities(
+        accepts_tasks=True, assigns_tasks=True, see_group_tasks=True, send_messages=True)
     assert explorer == AgentCapabilities()
 
 

@@ -282,6 +282,11 @@ simultaneously active (running or finished-but-undelivered) across an entire ses
 regardless of which agent created them; `CreateSubagent` rejects a call that would exceed it.
 See docs/specs/subagents.md."""
 
+DEFAULT_MESSAGING_MAX_QUEUE_SIZE = 100
+"""Default for `ProcessConfig.messaging_max_queue_size`: the most undelivered `SendMessage`
+entries the whole session tree's agent-message queue may hold at once; `SendMessage` rejects a
+call that would exceed it. See docs/specs/subagents.md."""
+
 DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Last-resort model `klorb.session_naming._default_naming_model` falls back to when
 `ProcessConfig.session_classifier_model` is unset (the normal case) and no registered model
@@ -374,6 +379,7 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.subagents.maxDepth": "subagents_max_depth",
     "tools.subagents.maxConcurrentPerParent": "subagents_max_concurrent_per_parent",
     "tools.subagents.maxActiveTotal": "subagents_max_active_total",
+    "tools.messaging.maxQueueSize": "messaging_max_queue_size",
     "models.default.fast": "default_model_fast",
     "models.default.normal": "default_model_normal",
     "models.default.heavy": "default_model_heavy",
@@ -544,6 +550,8 @@ class ProcessConfig(BaseModel):
     """See `DEFAULT_SUBAGENTS_MAX_CONCURRENT_PER_PARENT` and `tools.subagents.maxConcurrentPerParent`."""
     subagents_max_active_total: int = DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL
     """See `DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL` and `tools.subagents.maxActiveTotal`."""
+    messaging_max_queue_size: int = DEFAULT_MESSAGING_MAX_QUEUE_SIZE
+    """See `DEFAULT_MESSAGING_MAX_QUEUE_SIZE` and `tools.messaging.maxQueueSize`."""
     default_model_fast: str = DEFAULT_PLACEHOLDER_MODEL_FAST
     """Concrete model id the `"klorb-default/fast"` placeholder resolves to."""
     default_model_normal: str = DEFAULT_PLACEHOLDER_MODEL_NORMAL

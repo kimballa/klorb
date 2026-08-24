@@ -22,6 +22,8 @@ research, decide, and write.
 * AskUserQuestions for clarifying requirements with the user.
 * Skills — activate any skill that seems relevant to the planning task.
 * You may launch Explorer subagents to research the codebase for you.
+* SendMessage/GetMessages to talk directly with the agent that launched you, or any other agent
+  in the group, without waiting for your own turn to end.
 
 ## What you must not do
 

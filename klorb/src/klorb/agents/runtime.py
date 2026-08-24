@@ -1,7 +1,7 @@
 # © Copyright 2026 Aaron Kimball
 """Runtime bookkeeping for the subagents one `Session` has directly created: live handles, a
 FIFO of completions awaiting delivery to that session, and the concurrency accounting
-`CreateSubagent`/`MessageSubagent`'s `maxConcurrentPerParent`/`maxActiveTotal` checks need.
+`CreateSubagent`/`SendMessage`'s `maxConcurrentPerParent`/`maxActiveTotal` checks need.
 See docs/specs/subagents.md."""
 
 import logging
@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 SUBAGENT_INTERJECTION_SUBJECT = "subagent"
 """`SystemInterjection subject=` value the subagent-output relay uses."""
 
-SUBAGENT_MGMT_TOOL_NAMES = frozenset({"CreateSubagent", "WaitForSubagent", "MessageSubagent"})
-"""The three subagent-management tools."""
+SUBAGENT_MGMT_TOOL_NAMES = frozenset({"CreateSubagent", "WaitForSubagent"})
+"""The two subagent-lifecycle tools gated behind a child role's own `allow_subagents`.
+`SendMessage`/`GetMessages` (`klorb.tools.subagents.send_message`/`get_messages`) are not gated
+this way -- see docs/specs/subagents.md's "Agent-to-agent messaging" section."""
 
 SUBAGENT_ABORTED_MARKER = "(Subagent turn aborted by user)"
 """Appended to a subagent's relayed output when its turn is cancelled mid-stream."""
@@ -105,7 +107,7 @@ class SubagentTracker:
     """Owns one `Session`'s bookkeeping for the subagents it has directly created: a
     `SubagentHandle` per child (keyed by the child's own `id`), a FIFO of parent-interested
     handles that have finished and are awaiting delivery, and the concurrency count
-    `CreateSubagent`/`MessageSubagent` check against `tools.subagents.maxConcurrentPerParent`.
+    `CreateSubagent`/`SendMessage` check against `tools.subagents.maxConcurrentPerParent`.
 
     Constructed once per `Session` and never shared.
     """
@@ -159,6 +161,16 @@ class SubagentTracker:
         through the completion queue."""
         with self._lock:
             handle.delivered = True
+
+    def mark_parent_interested(self, child_id: str) -> None:
+        """Set `child_id`'s current handle's `parent_interested` to `True` under this tracker's
+        lock -- called whenever an agent message from this session's own `parent` actually
+        reaches `child_id`, so that child's eventual completion is delivered back here even
+        though nothing re-dispatched its turn to produce that effect."""
+        with self._lock:
+            handle = self._handles.get(child_id)
+            if handle is not None:
+                handle.parent_interested = True
 
     def running_count(self) -> int:
         """Subagents this session directly created whose turn is actively processing right now.

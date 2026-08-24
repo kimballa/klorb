@@ -19,7 +19,8 @@
       "agent_capabilities": {
         "accepts_tasks": true,
         "assigns_tasks": true,
-        "see_group_tasks": true
+        "see_group_tasks": true,
+        "send_messages": true
       }
     },
     {
@@ -60,7 +61,8 @@
           "SearchScratchpad",
           "CreateSubagent",
           "WaitForSubagent",
-          "MessageSubagent",
+          "SendMessage",
+          "GetMessages",
           "WebFetch",
           "AskUserQuestions",
           "TodoCreate",
@@ -84,7 +86,8 @@
       "agent_capabilities": {
         "accepts_tasks": false,
         "assigns_tasks": true,
-        "see_group_tasks": true
+        "see_group_tasks": true,
+        "send_messages": true
       }
     },
     {
@@ -99,7 +102,8 @@
       "agent_capabilities": {
         "accepts_tasks": false,
         "assigns_tasks": true,
-        "see_group_tasks": true
+        "see_group_tasks": true,
+        "send_messages": true
       }
     },
     {
@@ -116,7 +120,8 @@
           "ReadMemory",
           "EditScratchpad",
           "ReadScratchpad",
-          "WebFetch"
+          "WebFetch",
+          "GetMessages"
         ],
         "skills": [
           "internal:launch-explorer-subagent"

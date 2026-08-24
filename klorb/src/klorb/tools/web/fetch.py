@@ -305,7 +305,7 @@ class WebFetchTool(InterruptibleTool):
         }
 
         if body_text:
-            result["untrusted_content"] = f"<UNTRUSTED_CONTENT>{cdata(body_text)}</UNTRUSTED_CONTENT>",
+            result["untrusted_content"] = f"<UNTRUSTED_CONTENT>{cdata(body_text)}</UNTRUSTED_CONTENT>"
 
         if truncated:
             result["incomplete"] = True

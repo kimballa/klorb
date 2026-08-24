@@ -1,3 +1,3 @@
 # © Copyright 2026 Aaron Kimball
-"""CreateSubagent, WaitForSubagent, and MessageSubagent tools for launching and
-conversing with specialist subagent sessions."""
+"""CreateSubagent and WaitForSubagent for launching and awaiting specialist subagent sessions,
+and SendMessage/GetMessages for agent-to-agent messaging across the whole session tree."""

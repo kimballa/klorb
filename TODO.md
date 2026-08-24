@@ -12,8 +12,6 @@
 
 ### Feature backlog
 
-* Rework various tool calls to be less json-like.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -84,7 +82,9 @@
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
-  * Improve ability to use MessageSubagent for peer to peer 1:1 messaging while agent loops are ongoing?
+  * Wake an idle root session automatically when SendMessage targets it while it isn't mid-turn.
+    Today the message just queues and surfaces via the AgentMessage interjection at the root's
+    next turn -- see docs/specs/subagents.md's "Out of scope" section.
   * SearchTools currently only does case-insensitive literal match over tool
     name/description/parameter schema docs. Add semantic index search too (requires a
     json- or tool-specific chunker).

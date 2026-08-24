@@ -467,8 +467,8 @@ class SessionTurnsMixin(SessionBase):
                     "concurrency limits.", self.id)
                 return
             dispatch_subagent_turn(
-                self.parent, cast("Session", self), current.role, current.title, text,
-                parent_interested=False)
+                self._process_config, self.parent, cast("Session", self), current.role,
+                current.title, text, parent_interested=False)
 
     def _spill_image_fragment_to_disk(self, image_fragment: MessageFragment) -> MessageFragment:
         """Write `image_fragment`'s in-memory bytes to `sessions/<subdir>/images/` and return the

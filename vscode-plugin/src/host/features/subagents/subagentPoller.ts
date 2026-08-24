@@ -8,11 +8,11 @@ import {
 } from 'shared/webviewMessages';
 
 /** How often to re-fetch the subagent tree (`_klorb/subagentTree`) while the panel is visible --
- * a session tree changes only on `CreateSubagent`/`WaitForSubagent`/`MessageSubagent` calls or a
+ * a session tree changes only on `CreateSubagent`/`WaitForSubagent`/`SendMessage` calls or a
  * subagent's turn finishing in the background, none of which push a notification of their own
- * (see docs/specs/subagents.md's "Out of scope" section on waking an idle creator), so polling is
- * this feature's only option -- mirrors the TUI's own `_tick_subagents_panel` refresh, just over
- * the wire instead of in-process. */
+ * (see docs/specs/subagents.md's "Out of scope" section on waking an idle root session), so
+ * polling is this feature's only option -- mirrors the TUI's own `_tick_subagents_panel` refresh,
+ * just over the wire instead of in-process. */
 const TREE_POLL_INTERVAL_MS = 2000;
 
 /** How often to re-fetch the selected subagent's transcript (`_klorb/subagentTranscript`) while

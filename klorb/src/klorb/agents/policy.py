@@ -1,6 +1,6 @@
 # © Copyright 2026 Aaron Kimball
 """Subagent-creation policy: the depth/`allow_subagents`/concurrency rejection checks
-`CreateSubagent`/`MessageSubagent` run before starting a subagent's turn, the tools/skills/
+`CreateSubagent`/`SendMessage` run before starting a subagent's turn, the tools/skills/
 subagent-roles intersection that produces a child's `SessionConfig` and tool registry, and the
 background-thread plumbing that runs a subagent's turn asynchronously with respect to its
 creator. See docs/specs/subagents.md."""
@@ -17,12 +17,14 @@ from klorb.agents.intersection import (
     compute_child_subagent_roles,
     compute_child_tool_set,
 )
+from klorb.agents.messaging import format_new_turn_message, get_agent_message_queue
 from klorb.agents.registry import get_agent_registry
 from klorb.agents.runtime import (
     SUBAGENT_ABORTED_MARKER,
     SUBAGENT_MGMT_TOOL_NAMES,
     SubagentHandle,
     SubagentTurnOutcome,
+    find_session_in_group,
     total_active_subagents,
 )
 from klorb.api_provider import ResponseAborted
@@ -375,8 +377,8 @@ def _run_subagent_turn(
 
 
 def dispatch_subagent_turn(
-    parent: Session, child: Session, role: str, title: str, message: str,
-    *, parent_interested: bool = True,
+    process_config: ProcessConfig, parent: Session, child: Session, role: str, title: str,
+    message: str, *, parent_interested: bool = True,
 ) -> SubagentHandle:
     """Register `child` with `parent.subagent_tracker` and start a daemon thread running one
     turn of its conversation, returning the `SubagentHandle` immediately."""
@@ -387,16 +389,30 @@ def dispatch_subagent_turn(
         while True:
             if not outcome.completed:
                 parent.subagent_tracker.mark_finished(child.id, outcome)
+                try_wake_next_queued_agent(process_config, child)
                 return
-            # The queue-empty check and `mark_finished` happen under the same dispatch guard
+            # The queue-empty checks and `mark_finished` happen under the same dispatch guard
             # every enqueue-vs-dispatch decision for this child takes, so a message enqueued
-            # concurrently is either drained here into one more turn or arrives after `state`
-            # is already `"finished"` and resumes the subagent instead of stranding.
+            # concurrently -- into either the local queue or the global agent-message queue --
+            # is either drained here into one more turn or arrives after `state` is already
+            # `"finished"` and resumes the subagent instead of stranding.
+            just_finished = False
             with parent.subagent_tracker.dispatch_guard():
                 pending = child.drain_next_turn_text(handlers)
                 if pending is None:
-                    parent.subagent_tracker.mark_finished(child.id, outcome)
-                    return
+                    agent_queue = get_agent_message_queue(child)
+                    queued = agent_queue.pop_all_for(child.id)
+                    if queued:
+                        if any(m.sender_id == parent.id for m in queued):
+                            parent.subagent_tracker.mark_parent_interested(child.id)
+                        pending = format_new_turn_message(queued, parent.id)
+                    else:
+                        parent.subagent_tracker.mark_finished(child.id, outcome)
+                        just_finished = True
+            if just_finished:
+                try_wake_next_queued_agent(process_config, child)
+                return
+            assert pending is not None
             outcome = _run_subagent_turn(child, pending, handlers)
 
     thread = threading.Thread(target=worker, name=f"subagent-{child.id}", daemon=True)
@@ -407,6 +423,54 @@ def dispatch_subagent_turn(
     parent.subagent_tracker.register(handle)
     thread.start()
     return handle
+
+
+def try_wake_next_queued_agent(process_config: ProcessConfig, session: Session) -> None:
+    """Try to deliver the oldest still-queued agent message whose recipient is a dormant
+    subagent with room to run, anywhere in `session`'s tree -- called by `SendMessage` after
+    enqueueing, and by `dispatch_subagent_turn`'s own worker every time a subagent finishes (the
+    only two events that can free a concurrency slot or add a new candidate). A no-op if nothing
+    in the queue is currently both dormant and within `tools.subagents.maxConcurrentPerParent`/
+    `maxActiveTotal`.
+
+    First does a lock-light peek to name a *candidate* recipient (the oldest dormant one, so
+    several agents waiting for a slot are woken in send order), then re-validates that candidate
+    under its own `SubagentTracker.dispatch_guard()` before popping its messages and dispatching
+    -- the peek alone can go stale between naming the candidate and acting on it, so nothing here
+    trusts it without a second, guarded check. Silently does nothing if the candidate is no
+    longer eligible by then; its messages stay queued for the next call to pick up."""
+    root = session
+    while root.parent is not None:
+        root = root.parent
+    queue = get_agent_message_queue(session)
+
+    def is_dormant(recipient_id: str) -> bool:
+        recipient = find_session_in_group(root, recipient_id)
+        if recipient is None or recipient.parent is None:
+            return False
+        handle = recipient.parent.subagent_tracker.current_handle(recipient_id)
+        return handle is not None and handle.state == "finished"
+
+    candidate_id = queue.peek_next_dormant_candidate(is_dormant)
+    if candidate_id is None:
+        return
+    recipient = find_session_in_group(root, candidate_id)
+    if recipient is None or recipient.parent is None:
+        return
+    tracker = recipient.parent.subagent_tracker
+    with tracker.dispatch_guard():
+        handle = tracker.current_handle(candidate_id)
+        if handle is None or handle.state != "finished":
+            return
+        if concurrency_limits_exceeded(process_config, recipient.parent):
+            return
+        messages = queue.pop_all_for(candidate_id)
+        if not messages:
+            return
+        dispatch_subagent_turn(
+            process_config, recipient.parent, recipient, handle.role, handle.title,
+            format_new_turn_message(messages, recipient.parent.id),
+            parent_interested=any(m.sender_id == recipient.parent.id for m in messages))
 
 
 def dispatch_direct_message(
@@ -433,5 +497,6 @@ def dispatch_direct_message(
             return "queued"
         check_concurrency_limits(process_config, child.parent)
         dispatch_subagent_turn(
-            child.parent, child, current.role, current.title, message, parent_interested=False)
+            process_config, child.parent, child, current.role, current.title, message,
+            parent_interested=False)
         return "started"

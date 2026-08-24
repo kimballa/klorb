@@ -442,7 +442,7 @@ def test_subagent_finish_and_a_concurrent_enqueue_cannot_strand_the_message(
     child = Session(make_session_config(role_name="explorer"), provider=provider, parent=parent)
 
     with parent.subagent_tracker.dispatch_guard():
-        handle = dispatch_subagent_turn(parent, child, "explorer", "task", "go")
+        handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "task", "go")
         deadline = time.monotonic() + 5.0
         while not provider.calls and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -545,7 +545,7 @@ def test_deliver_event_message_skips_a_dormant_subagent_when_concurrency_limits_
 def _subagent_session_pair(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig], provider: _FakeProvider,
     hooks: dict[str, list[HookConfig]],
-) -> tuple[Session, Session]:
+) -> tuple[ProcessConfig, Session, Session]:
     """`onSubagentStart`/`onSubagentTurnEnd` fire from the *parent*'s own `config.hooks`, so
     `hooks` goes on `parent`'s `SessionConfig`, not a shared `ProcessConfig`."""
     process_config = ProcessConfig()
@@ -556,18 +556,18 @@ def _subagent_session_pair(
     child = Session(
         make_session_config(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
         provider=provider, process_config=process_config, parent=parent)
-    return parent, child
+    return process_config, parent, child
 
 
 def test_dispatch_subagent_turn_fires_onsubagentstart_and_rewrites_the_message(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"message": "rewritten task"}\'')],
     })
 
-    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "original task")
     handle.thread.join(timeout=5.0)
 
     assert provider.calls
@@ -592,7 +592,7 @@ def test_onsubagentstart_hook_on_the_child_alone_does_not_fire(
                 HookConfig(type="bash", shell='echo \'{"message": "rewritten task"}\'')]}),
         provider=provider, process_config=process_config, parent=parent)
 
-    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "original task")
     handle.thread.join(timeout=5.0)
 
     assert provider.calls
@@ -604,11 +604,11 @@ def test_onsubagentstart_veto_blocks_the_turn_without_calling_the_model(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     provider = _FakeProvider()
-    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentStart": [HookConfig(type="bash", shell='echo \'{"success": false}\'')],
     })
 
-    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "original task")
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "original task")
     handle.thread.join(timeout=5.0)
 
     assert provider.calls == []
@@ -620,11 +620,11 @@ def test_dispatch_subagent_turn_fires_onsubagentturnend_after_the_turn_ends(
 ) -> None:
     marker = tmp_path / "marker"
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentTurnEnd": [HookConfig(type="bash", shell=f'touch "{marker}"; echo \'{{}}\'')],
     })
 
-    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "task")
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
     handle.thread.join(timeout=5.0)
 
     assert marker.exists()
@@ -636,11 +636,11 @@ def test_dispatch_subagent_turn_chains_via_onsubagentturnend_until_the_cap_trips
     """A `chat` handler's `onSubagentTurnEnd` continuation is delivered via
     `Session._deliver_chained_hook_message`."""
     provider = _FakeProvider(reply_text="subagent reply")
-    parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {
         "onSubagentTurnEnd": [HookConfig(type="chat", prompt="keep going")],
     })
 
-    handle = dispatch_subagent_turn(parent, child, "explorer", "title", "task")
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
     handle.thread.join(timeout=5.0)
 
     # 1 original turn + child.config.max_chained_hook_turns (default 5) chained ones.

@@ -310,6 +310,7 @@
   "tools.subagents.maxDepth": 2,
   "tools.subagents.maxConcurrentPerParent": 4,
   "tools.subagents.maxActiveTotal": 16,
+  "tools.messaging.maxQueueSize": 100,
   "models.default.fast": "xiaomi/mimo-v2.5",
   "models.default.normal": "xiaomi/mimo-v2.5-pro",
   "models.default.heavy": "z-ai/glm-5.2",

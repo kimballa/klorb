@@ -27,6 +27,9 @@ with their own context windows, so they don't consume yours.
 * You can run multiple subagents at the same time.
 * Don't use `WaitForSubagents` if you still have work to do; only use this tool if you
   genuinely cannot proceed yourself until your subagent finishes its task.
+* Use `SendMessage` to talk to any agent in the group -- not just your own subagents -- without
+  waiting for it to finish its current turn. Check `GetMessages` (or watch for the AgentMessage
+  reminder) for replies.
 
 ## Own the whole task
 

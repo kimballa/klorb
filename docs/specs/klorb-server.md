@@ -173,12 +173,12 @@ ACP's own extensibility rules. Later increments grow this section as they land.
   params`). Result: `{mode: "queued" | "started"}` — `"queued"` if the subagent's turn was
   already running (folded into it at its next tool-call round boundary, exactly like
   `_klorb/enqueueMessage`), `"started"` if it was dormant (a fresh turn dispatched immediately,
-  exactly like `MessageSubagent`). Unlike `session/prompt`/`_klorb/enqueueMessage`'s split, a
+  exactly like `SendMessage`). Unlike `session/prompt`/`_klorb/enqueueMessage`'s split, a
   single call always succeeds regardless of the subagent's busy state. A `"started"` call is
   still bound by `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal` — a JSON-RPC error
   (code `-32000`) if resuming would exceed either. The output is never delivered to the parent
   via `WaitForSubagent` or the standing interjection relay unless the parent separately calls
-  `MessageSubagent` on it later.
+  `SendMessage` on it later.
 
 One *client*-advertised extension method exists, called server → client:
 
@@ -450,7 +450,7 @@ directly rather than a live `Session`, so they're callable from a test with just
     | `fetch` | `WebFetch` |
     | `think` | `TodoList`, `TodoNext`, `TodoCreate`, `TodoUpdate`, `ActivateSkill` |
     | `delete` | `ForgetMemory` |
-    | `other` | `AskUserQuestions`, `EscalatePrivileges`, `CreateSubagent`, `WaitForSubagent`, `MessageSubagent` |
+    | `other` | `AskUserQuestions`, `EscalatePrivileges`, `CreateSubagent`, `WaitForSubagent`, `SendMessage`, `GetMessages` |
 
     A name this table doesn't cover (a future tool added without an entry) falls back to
     `"other"` at lookup time — `tests/klorb/server/test_update_mapping.py` parametrizes over

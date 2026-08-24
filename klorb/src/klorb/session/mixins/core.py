@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     # `klorb.agents.runtime` imports `klorb.session.mixins.turns`, which itself is part of
     # assembling `Session`.
     from klorb.agents.runtime import SubagentTracker
+    from klorb.agents.messaging import AgentMessageQueue
     # `klorb.tools.tasks.common` reaches back into `klorb.session`, so importing it for real
     # here would be circular; needed only to type `ensure_chainlink_client`'s return value.
     from klorb.tools.tasks.common import ChainlinkClient
@@ -289,6 +290,13 @@ class SessionCoreMixin(SessionBase):
         there's nothing to rebuild."""
         if self._workspace_indexer is not None and parent is None:
             self.register_teardown(_WORKSPACE_INDEXER_TEARDOWN_SUBJECT, self._workspace_indexer.close)
+        self._agent_message_queue = (
+            parent.agent_message_queue if parent is not None
+            else self._create_agent_message_queue(process_config)
+        )
+        """The whole session tree's undelivered `SendMessage` queue -- one instance built once by
+        the root session and shared by reference with every subagent, like `_workspace_indexer`.
+        Not touched by `reset_session()`/`_reset_state()`, for the same reason."""
 
     def _reset_state(self, *, scratchpad_path: str | None = None) -> None:
         """Reset every conversation-scoped field to a freshly constructed `Session`'s own value.
@@ -335,6 +343,7 @@ class SessionCoreMixin(SessionBase):
         self._chain_continuation_pending = False
         self.subagent_tracker = self._create_subagent_tracker()
         self._register_agent_group_standing_interjection()
+        self._register_agent_message_standing_interjection()
         self.statistics = SessionStatistics()
         for subject, teardown in list(self._teardown_callbacks.items()):
             if subject in _INFRASTRUCTURE_TEARDOWN_SUBJECTS:
@@ -399,6 +408,17 @@ class SessionCoreMixin(SessionBase):
         circular."""
         from klorb.agents.runtime import SubagentTracker
         return SubagentTracker()
+
+    @staticmethod
+    def _create_agent_message_queue(process_config: "ProcessConfig | None") -> "AgentMessageQueue":
+        """Construct an `AgentMessageQueue` sized from `process_config.messaging_max_queue_size`
+        (or `klorb.agents.messaging.DEFAULT_MAX_QUEUE_SIZE` if built without one), deferring the
+        import for the same circularity reason as `_create_subagent_tracker`."""
+        from klorb.agents.messaging import DEFAULT_MAX_QUEUE_SIZE, AgentMessageQueue
+        max_size = (
+            process_config.messaging_max_queue_size if process_config is not None
+            else DEFAULT_MAX_QUEUE_SIZE)
+        return AgentMessageQueue(max_size)
 
     @staticmethod
     def _create_image_pipeline_config(
@@ -488,6 +508,11 @@ class SessionCoreMixin(SessionBase):
     def workspace_indexer(self) -> "WorkspaceIndexer | None":
         """Return this session's `WorkspaceIndexer` or None."""
         return self._workspace_indexer
+
+    @property
+    def agent_message_queue(self) -> "AgentMessageQueue":
+        """Return the `AgentMessageQueue` shared by this session's entire tree."""
+        return self._agent_message_queue
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:
@@ -662,6 +687,24 @@ class SessionCoreMixin(SessionBase):
         provider = build_agent_group_interjection_provider(cast("Session", self))
         self.register_standing_interjection(AGENT_GROUP_INTERJECTION_SUBJECT, provider)
 
+    def _register_agent_message_standing_interjection(self) -> None:
+        """Register the `AgentMessage` standing interjection provider, which reminds this session
+        to call `GetMessages` whenever another agent has sent it a message it hasn't read yet.
+        Deferred import for the same circularity reason as `_register_agent_group_standing_
+        interjection`."""
+        from klorb.agents.messaging import AGENT_MESSAGE_INTERJECTION_SUBJECT
+
+        session = cast("Session", self)
+
+        def provider() -> str | None:
+            if not session.agent_message_queue.has_pending(session.id):
+                return None
+            return (
+                "You have one or more unread messages waiting from another agent. Call "
+                "GetMessages to read them."
+            )
+        self.register_standing_interjection(AGENT_MESSAGE_INTERJECTION_SUBJECT, provider)
+
     def _allocate_child_index(self) -> int:
         """Return the next `_child_index` for a subagent about to be constructed with
         `parent=self`. Called once per subagent, from that subagent's own `__init__`."""
@@ -698,6 +741,13 @@ class SessionCoreMixin(SessionBase):
         if (self._current_turn_handlers is not None
                 and self._current_turn_handlers.on_enqueue_message is not None):
             self._current_turn_handlers.on_enqueue_message(queued_msg)
+
+    def notify_new_message(self) -> None:
+        """Signal the same wake-up event `enqueue_queued_message` sets, without actually queuing
+        anything -- used by `SendMessage` to interrupt a `WaitForSubagent` call blocked on this
+        session the moment a new agent message arrives for it, exactly like a queued user message
+        already does."""
+        self._user_msg_event.set()
 
     @property
     def pending_queued_message_texts(self) -> list[str]:
@@ -877,7 +927,7 @@ class SessionCoreMixin(SessionBase):
         `None` if none is. A tool's `apply()` runs synchronously on the same thread as
         `_dispatch_turn` (see `klorb.tools.interruptible_tool.InterruptibleTool.
         _active_cancel_event`'s docstring), so this is always set when `CreateSubagent`/
-        `MessageSubagent` read it -- they use it to route a subagent's own permission asks
+        `SendMessage` read it -- they use it to route a subagent's own permission asks
         through the same interactive callback this session's own turn is already using, tagged
         with the subagent's address/role -- see docs/specs/subagents.md's
         "Permissions" section."""

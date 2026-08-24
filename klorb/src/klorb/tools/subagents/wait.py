@@ -5,6 +5,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from klorb.agents.messaging import get_agent_message_queue
 from klorb.agents.runtime import SubagentHandle
 from klorb.tools.exceptions import ToolCallError, ToolInterruptError
 from klorb.tools.interruptible_tool import UserInterruptibleTool
@@ -72,9 +73,11 @@ class WaitForSubagentTool(UserInterruptibleTool):
         user_msg_event = self._user_msg_event()
         if user_msg_event is not None:
             user_msg_event.clear()
-            # A message queued before this call started must interrupt the wait just like one
-            # queued during it; the clear above already consumed its event signal.
-            if context.session.pending_queued_message_texts:
+            # A message queued before this call started -- a human's, or another agent's via
+            # SendMessage -- must interrupt the wait just like one queued during it; the clear
+            # above already consumed its event signal.
+            if (context.session.pending_queued_message_texts
+                    or get_agent_message_queue(context.session).has_pending(context.session.id)):
                 raise ToolInterruptError(reason="new_message")
         elapsed = 0.0
         while True:
