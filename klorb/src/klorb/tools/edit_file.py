@@ -10,7 +10,7 @@ from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, display_filename_arg, resolve_filename_arg, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result, get_or_create_secret_redactor
+from klorb.tools.util import DiffHunk, EditFileCore, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class EditFileTool(Tool):
         return self.edit_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
-        return format_edit_result(apply_output)
+        return self.edit_file_core.format_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit file: foo.py (+A/-R)"`, where the added/removed line counts come from

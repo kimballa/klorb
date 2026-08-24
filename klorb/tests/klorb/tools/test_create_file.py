@@ -235,18 +235,14 @@ def test_summary_on_failure_includes_the_error() -> None:
         "Create file: existing.txt failed: already exists")
 
 
-def test_diff_preview_is_an_all_add_hunk(tmp_path: Path) -> None:
+def test_diff_preview_is_none_on_success(tmp_path: Path) -> None:
     file_path = tmp_path / "new.txt"
     tool = CreateFileTool(_context(tmp_path))
     args = {"filename": str(file_path), "content": "a\nb\n"}
 
     result = tool.apply(args)
-    preview = tool.diff_preview(args, result)
 
-    assert preview is not None
-    assert preview.label == tool.summary(args, result)
-    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
-    assert kinds == ["add", "add"]
+    assert tool.diff_preview(args, result) is None
 
 
 def test_diff_preview_is_none_on_failure(tmp_path: Path) -> None:
@@ -267,7 +263,7 @@ def test_apply_result_carries_a_no_readfile_verification_note(tmp_path: Path) ->
     assert result["note"] == "No verification ReadFile needed."
 
 
-def test_format_response_renders_headers_then_diff(tmp_path: Path) -> None:
+def test_format_response_renders_headers_then_line_numbered_content(tmp_path: Path) -> None:
     file_path = tmp_path / "new.txt"
     tool = CreateFileTool(_context(tmp_path))
     args = {"filename": str(file_path), "content": "a\nb\n"}
@@ -275,10 +271,10 @@ def test_format_response_renders_headers_then_diff(tmp_path: Path) -> None:
     result = tool.apply(args)
     rendered = tool.format_response(result)
 
-    header, diff_block = rendered.split("\n\n")
+    header, content_block = rendered.split("\n\n")
     assert header.splitlines()[0] == f"filename: {file_path}"
     assert "note: No verification ReadFile needed." in header
-    assert diff_block != ""
+    assert content_block == "Created content:\n========\n1|a\n2|b"
 
 
 # --- Secret redaction (see docs/specs/secret-redaction.md) ---
@@ -317,7 +313,7 @@ def test_create_file_token_round_trip_preserves_the_real_secret(
 
         assert dest.read_text() == f"AWS_ACCESS_KEY_ID={_AWS_KEY}\nbar\n"
         # The tool result must not echo the plaintext secret.
-        assert _AWS_KEY not in str(result["diff"])
+        assert _AWS_KEY not in result["content"]
     finally:
         session.close()
 
@@ -333,10 +329,14 @@ def test_create_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
     assert result["total_lines"] == 3
 
 
-def test_update_args_drops_content_on_success(tmp_path: Path) -> None:
-    args = {"filename": str(tmp_path / "new.txt"), "content": "a\nb\nc\n"}
+def test_update_args_truncates_content_on_success(tmp_path: Path) -> None:
+    filename = str(tmp_path / "new.txt")
+    args = {"filename": filename, "content": "a\nb\nc\n"}
 
     updated = CreateFileTool(_context(tmp_path)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {"filename": str(tmp_path / "new.txt")}
+    assert updated == {
+        "filename": filename,
+        "content": "(Applied correctly; arguments truncated. See response)",
+    }

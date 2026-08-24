@@ -47,7 +47,7 @@ def test_reads_the_whole_file_by_default(tmp_path: Path, monkeypatch: pytest.Mon
     assert result["filename"] == "notes.md"
 
 
-def test_update_args_drops_everything_on_success(
+def test_update_args_leaves_args_unchanged_on_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
@@ -57,7 +57,7 @@ def test_update_args_drops_everything_on_success(
     updated = ReadMemoryTool(context).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    assert updated == args
 
 
 def test_reads_a_workspace_memory_when_trusted(

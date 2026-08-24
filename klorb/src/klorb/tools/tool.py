@@ -339,13 +339,10 @@ class Tool(ABC):
     def diff_preview(
         self, args: dict[str, Any], result: Any = None, error: str | None = None,
     ) -> DiffPreview | None:
-        """Return a `DiffPreview` for a finished call whose `result` carries a `diff` field
-        (see `klorb.tools.util.diff_lines.build_diff_hunks()`), so a UI can render a colored,
-        line-numbered diff in place of `summary()`/`detail_view()`'s plain text. `None` by
-        default -- every tool except the `EditFile`/`CreateFile` family and their memory/
-        scratchpad counterparts has nothing to preview this way, and keeps rendering exactly as
-        `summary()`/`detail_view()` describe. Same `error`-is-the-success-discriminant contract
-        as `summary()`: an override should return `None` whenever `error is not None`.
+        """Return a `DiffPreview` for a finished call whose `result` carries a `diff` field, so
+        a UI can render a colored, line-numbered diff in place of `summary()`/`detail_view()`'s
+        plain text. `None` by default; only the `EditFile` family and its memory/scratchpad
+        counterparts override this.
         """
         return None
 

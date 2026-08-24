@@ -49,7 +49,7 @@ def test_creates_a_new_memory_auto_creating_the_namespace_dir(
     assert result["created"] is True
 
 
-def test_update_args_drops_content_on_success(
+def test_update_args_truncates_content_on_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
@@ -58,7 +58,10 @@ def test_update_args_drops_content_on_success(
     updated = CreateMemoryTool(context).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {"namespace": "global", "filename": "notes.md"}
+    assert updated == {
+        "namespace": "global", "filename": "notes.md",
+        "content": "(Applied correctly; arguments truncated. See response)",
+    }
 
 
 def test_creating_memory_md_under_the_warn_threshold_has_no_interjection(
@@ -253,20 +256,16 @@ def test_summary_on_failure_includes_the_error(
         "Create memory: global/notes.md failed: already exists")
 
 
-def test_diff_preview_is_an_all_add_hunk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_diff_preview_is_none_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tool = CreateMemoryTool(_context(tmp_path, monkeypatch))
     args = {"namespace": "global", "filename": "notes.md", "content": "Topic\nbody\n"}
 
     result = tool.apply(args)
-    preview = tool.diff_preview(args, result)
 
-    assert preview is not None
-    assert preview.label == tool.summary(args, result)
-    kinds = [line.kind for hunk in preview.hunks for line in hunk.lines]
-    assert kinds == ["add", "add"]
+    assert tool.diff_preview(args, result) is None
 
 
-def test_format_response_renders_headers_then_diff(
+def test_format_response_renders_headers_then_line_numbered_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tool = CreateMemoryTool(_context(tmp_path, monkeypatch))
@@ -275,7 +274,7 @@ def test_format_response_renders_headers_then_diff(
     result = tool.apply(args)
     rendered = tool.format_response(result)
 
-    header, diff_block = rendered.split("\n\n")
+    header, content_block = rendered.split("\n\n")
     assert header.splitlines()[:2] == ["namespace: global", "filename: notes.md"]
     assert "note: No verification ReadFile needed." in header
-    assert diff_block != ""
+    assert content_block == "Created content:\n========\n1|Topic\n2|body"

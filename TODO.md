@@ -5,8 +5,6 @@
 
 ### Bugs
 
-* format_edit_result should push into EditFileCore and format_create_result should push into CreateFileCore.
-
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.

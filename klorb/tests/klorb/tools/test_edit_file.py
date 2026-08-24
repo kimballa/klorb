@@ -852,7 +852,7 @@ def test_format_response_renders_headers_then_content_then_diff(tmp_path: Path) 
     header, post_edit_content, diff_block = rendered.split("\n\n")
     assert header.splitlines()[0] == f"filename: {file_path}"
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "2|B"
+    assert post_edit_content == "Post-edit content:\n========\n2|B"
     assert diff_block != ""
 
 
@@ -867,10 +867,12 @@ def test_edit_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
     assert file_path.read_text() == "a\nB\nc\n"
 
 
-def test_update_args_drops_everything_on_success(tmp_path: Path) -> None:
-    args = {"filename": str(tmp_path / "sample.txt"), "old_text": "b", "new_text": "B"}
+def test_update_args_truncates_old_and_new_text_on_success(tmp_path: Path) -> None:
+    filename = str(tmp_path / "sample.txt")
+    args = {"filename": filename, "old_text": "b", "new_text": "B"}
 
     updated = EditFileTool(_context(tmp_path)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    placeholder = "(Applied correctly; arguments truncated. See response)"
+    assert updated == {"filename": filename, "old_text": placeholder, "new_text": placeholder}

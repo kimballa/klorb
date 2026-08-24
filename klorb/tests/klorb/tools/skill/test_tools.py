@@ -400,7 +400,7 @@ def test_read_skill_file_allow(tmp_path: Path, make_session_config: Callable[...
     assert result["path"] == "ref.md"
 
 
-def test_read_skill_file_update_args_drops_everything_on_success(
+def test_read_skill_file_update_args_leaves_args_unchanged_on_success(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     context = _context(tmp_path, make_session_config, skill_rules=SkillRules(allow=[("workspace", "s")]))
@@ -411,7 +411,7 @@ def test_read_skill_file_update_args_drops_everything_on_success(
     updated = ReadSkillFileTool(context).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    assert updated == args
 
 
 def test_read_skill_file_gated_by_verdict(

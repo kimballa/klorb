@@ -38,7 +38,7 @@ def _write(context: ToolSetupContext, namespace: Namespace, filename: str, conte
     return path
 
 
-def test_update_args_drops_everything_on_success(
+def test_update_args_truncates_old_and_new_text_on_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
@@ -48,7 +48,11 @@ def test_update_args_drops_everything_on_success(
     updated = EditMemoryTool(context).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    placeholder = "(Applied correctly; arguments truncated. See response)"
+    assert updated == {
+        "namespace": "global", "filename": "notes.md",
+        "old_text": placeholder, "new_text": placeholder,
+    }
 
 
 def test_replaces_a_multiline_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,5 +351,5 @@ def test_format_response_renders_headers_then_content_then_diff(
     header, post_edit_content, diff_block = rendered.split("\n\n")
     assert header.splitlines()[:2] == ["namespace: global", "filename: notes.md"]
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "2|B"
+    assert post_edit_content == "Post-edit content:\n========\n2|B"
     assert diff_block != ""

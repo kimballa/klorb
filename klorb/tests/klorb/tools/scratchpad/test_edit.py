@@ -41,7 +41,7 @@ def test_replaces_a_multiline_block(
     assert result["post_edit_content"] == "2|B\n3|C"
 
 
-def test_update_args_drops_everything_on_success(
+def test_update_args_truncates_old_and_new_text_on_success(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     scratchpad = _write(tmp_path, "a\nb\nc\nd\n")
@@ -50,7 +50,8 @@ def test_update_args_drops_everything_on_success(
     updated = EditScratchpadTool(_context(str(scratchpad), make_session_config)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    placeholder = "(Applied correctly; arguments truncated. See response)"
+    assert updated == {"old_text": placeholder, "new_text": placeholder}
 
 
 def test_insert_by_folding_original_line_into_new_text(
@@ -254,5 +255,5 @@ def test_format_response_renders_headers_then_content_then_diff(
     header, post_edit_content, diff_block = rendered.split("\n\n")
     assert header.splitlines()[0] == "edit_success: true"
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "2|B"
+    assert post_edit_content == "Post-edit content:\n========\n2|B"
     assert diff_block != ""

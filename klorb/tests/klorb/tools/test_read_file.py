@@ -530,10 +530,10 @@ def test_read_file_total_lines_unaffected_by_redaction(tmp_path: Path) -> None:
     assert result["truncated"] is False
 
 
-def test_update_args_drops_everything_on_success(tmp_path: Path) -> None:
+def test_update_args_leaves_args_unchanged_on_success(tmp_path: Path) -> None:
     args = {"filename": str(tmp_path / "sample.txt"), "start_line": 1}
 
     updated = ReadFileTool(_context(tmp_path)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    assert updated == args

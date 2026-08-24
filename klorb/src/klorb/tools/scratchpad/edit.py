@@ -10,7 +10,7 @@ from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.scratchpad.common import scratchpad_path
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result
+from klorb.tools.util import DiffHunk, EditFileCore
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class EditScratchpadTool(Tool):
         return self.edit_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
-        return format_edit_result(apply_output)
+        return self.edit_file_core.format_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """`"Edit scratchpad (+A/-R)"`, where the added/removed line counts come from `result`'s

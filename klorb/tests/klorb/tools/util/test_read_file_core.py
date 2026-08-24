@@ -66,13 +66,13 @@ def test_empty_content_still_yields_trailing_blank_line() -> None:
     assert rendered == "start_line: 1\nend_line: 0\ntotal_lines: 0\ntruncated: false\n\n"
 
 
-def test_update_args_drops_everything_on_success() -> None:
+def test_update_args_leaves_args_unchanged_on_success() -> None:
     args = {"filename": "f.txt", "start_line": 1, "end_line": 10}
 
     updated = ReadFileCore(200, 2000).update_args(
         args, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    assert updated == args
 
 
 def test_update_args_leaves_args_unchanged_on_error() -> None:

@@ -45,7 +45,7 @@ def test_reads_whole_short_scratchpad_by_default(
     assert result["content"] == "1|line 1\n2|line 2\n3|line 3"
 
 
-def test_update_args_drops_everything_on_success(
+def test_update_args_leaves_args_unchanged_on_success(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     scratchpad = _write_lines(tmp_path, 3)
@@ -53,7 +53,7 @@ def test_update_args_drops_everything_on_success(
     updated = ReadScratchpadTool(_context(str(scratchpad), make_session_config)).update_args(
         {"start_line": 1}, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    assert updated == {}
+    assert updated == {"start_line": 1}
 
 
 def test_start_line_zero_means_start_at_beginning(

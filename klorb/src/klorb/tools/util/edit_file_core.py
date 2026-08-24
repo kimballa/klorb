@@ -24,21 +24,8 @@ _EDIT_RESULT_HEADER_ORDER = (
     "start_line", "end_line", "replaced_lines", "new_total_lines",
     "fuzzy_whitespace_match", "whitespace", "warning", "note",
 )
-"""Key order `format_edit_result()` renders an `EditFileCore.apply()`-shaped result dict's
-header lines in."""
-
-
-def format_edit_result(result: dict[str, Any]) -> str:
-    """Render an `EditFileCore.apply()`-shaped result dict as `key: value` header lines in
-    `_EDIT_RESULT_HEADER_ORDER`, followed by `post_edit_content` and `diff` as separate
-    plain-text blocks, each set off by a blank line."""
-    header_lines = format_header_lines(
-        result, _EDIT_RESULT_HEADER_ORDER,
-        known_elsewhere=frozenset({"post_edit_content", "diff"}))
-    post_edit_content: str = "Post-edit content:\n========\n" + result.get("post_edit_content", "")
-    diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
-    diff_block = "Applied diff:\n========\n" + format_diff_hunks(diff_hunks)
-    return "\n\n".join(["\n".join(header_lines), post_edit_content, diff_block])
+"""Key order `EditFileCore.format_result()` renders an `apply()`-shaped result dict's header
+lines in."""
 
 
 _FUZZY_TRANSLATION = str.maketrans({
@@ -106,8 +93,8 @@ class EditFileCore:
     """
 
     def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
-        """Removes old_text / new_text once the call succeeded, since `apply()`'s own `post_edit_content`/`diff`
-        already show the file's new state; unchanged on error."""
+        """Removes old_text / new_text once the call succeeded, since `apply()`'s own
+        `post_edit_content`/`diff` already show the file's new state; unchanged on error."""
         if err_info.is_error:
             return tool_args # No change.
 
@@ -274,6 +261,18 @@ class EditFileCore:
             out["whitespace"] = edit.whitespace_message
 
         return out
+
+    def format_result(self, result: dict[str, Any]) -> str:
+        """Render an `apply()`-shaped result dict as `key: value` header lines in
+        `_EDIT_RESULT_HEADER_ORDER`, followed by `post_edit_content` and `diff` as separate
+        plain-text blocks, each set off by a blank line."""
+        header_lines = format_header_lines(
+            result, _EDIT_RESULT_HEADER_ORDER,
+            known_elsewhere=frozenset({"post_edit_content", "diff"}))
+        post_edit_content: str = "Post-edit content:\n========\n" + result.get("post_edit_content", "")
+        diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
+        diff_block = "Applied diff:\n========\n" + format_diff_hunks(diff_hunks)
+        return "\n\n".join(["\n".join(header_lines), post_edit_content, diff_block])
 
     @staticmethod
     def _detokenize_normalized_args(

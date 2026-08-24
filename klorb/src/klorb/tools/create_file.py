@@ -10,7 +10,7 @@ from klorb.permissions.workspace import resolve_and_evaluate_write
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, display_filename_arg, resolve_filename_arg
-from klorb.tools.util import CreateFileCore, DiffHunk, format_create_result, get_or_create_secret_redactor
+from klorb.tools.util import CreateFileCore, DiffHunk, get_or_create_secret_redactor
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class CreateFileTool(Tool):
         return self.create_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
-        return format_create_result(apply_output)
+        return self.create_file_core.format_result(apply_output)
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         filename = display_filename_arg(args)

@@ -18,16 +18,8 @@ _CREATE_RESULT_HEADER_ORDER = (
     "namespace", "filename",
     "created", "total_lines", "warning", "note",
 )
-"""Key order `format_create_result()` renders a `CreateFileCore.apply()`-shaped result dict's
-header lines in."""
-
-
-def format_create_result(result: dict[str, Any]) -> str:
-    """Render a `CreateFileCore.apply()`-shaped result dict as `key: value` header lines in
-    `_CREATE_RESULT_HEADER_ORDER`, followed by `content` as a plain-text block."""
-    header_lines = format_header_lines(
-        result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"content"}))
-    return "\n".join(header_lines) + "\n\nCreated content:\n========\n" + result["content"]
+"""Key order `CreateFileCore.format_result()` renders an `apply()`-shaped result dict's header
+lines in."""
 
 
 class CreateFileCore:
@@ -63,7 +55,8 @@ class CreateFileCore:
         redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
         """Create `path` with `args["content"]`, returning `total_lines`, `created`, `note`, and
-        `content` (the caller adds `filename` if it has one).
+        a line-numbered `content` (each line prefixed `"N|..."` for its 1-indexed line number;
+        the caller adds `filename` if it has one).
 
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
@@ -87,9 +80,19 @@ class CreateFileCore:
         path.write_text(content, encoding="utf-8")
 
         new_lines = content.splitlines()
+        numbered_content = "\n".join(
+            f"{i}|{line}" for i, line in enumerate(redacted_content.splitlines(), start=1))
         return {
             "total_lines": len(new_lines),
             "created": True,
-            "content": redacted_content,
+            "content": numbered_content,
             "note": NO_READFILE_VERIFICATION_NOTE,
         }
+
+    def format_result(self, result: dict[str, Any]) -> str:
+        """Render an `apply()`-shaped result dict as `key: value` header lines in
+        `_CREATE_RESULT_HEADER_ORDER`, followed by `content` as a plain-text block."""
+        header_lines = format_header_lines(
+            result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"content"}))
+        content: str = result["content"]
+        return "\n".join(header_lines) + "\n\nCreated content:\n========\n" + content

@@ -16,7 +16,7 @@ from klorb.tools.memory.common import (
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import DiffPreview, Tool, truncate_lines
-from klorb.tools.util import DiffHunk, EditFileCore, format_edit_result
+from klorb.tools.util import DiffHunk, EditFileCore
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class EditMemoryTool(Tool):
         return self.edit_file_core.update_args(tool_args, err_info)
 
     def format_response(self, apply_output: Any) -> str:
-        return format_edit_result(apply_output)
+        return self.edit_file_core.format_result(apply_output)
 
     def call_interjection(self, result: Any) -> str | None:
         return memory_toc_overflow_warning(
