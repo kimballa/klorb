@@ -96,6 +96,20 @@ def get_agent_message_queue(session: "Session") -> AgentMessageQueue:
     return session.agent_message_queue
 
 
+def format_agent_messages_closing_note(
+    has_parent_message: bool, has_other_message: bool, parent_id: str | None,
+) -> str:
+    """The trailing guidance appended after a batch of delivered agent messages: a parent-sent
+    message is answered automatically by this turn's own output, while any other sender needs an
+    explicit `SendMessage` reply."""
+    lines: list[str] = []
+    if has_parent_message:
+        lines.append(f"The output of your turn will be sent back to your parent, {parent_id}.")
+    if has_other_message:
+        lines.append("If you want to respond to any of these non-parent agents, use SendMessage.")
+    return "\n".join(lines)
+
+
 def format_new_turn_message(
     messages: list[QueuedAgentMessage], recipient_parent_id: str | None,
 ) -> str:
@@ -110,10 +124,14 @@ def format_new_turn_message(
         ""
     ]
 
+    has_parent_message = False
+    has_other_message = False
     for i, message in enumerate(messages, start=1):
-        tag = " (your parent)" if message.sender_id == recipient_parent_id else ""
+        is_parent = message.sender_id == recipient_parent_id
+        has_parent_message = has_parent_message or is_parent
+        has_other_message = has_other_message or not is_parent
+        tag = " (your parent)" if is_parent else ""
         parts.append(f"Message {i}. From {message.sender_id}{tag}:\n{message.body}")
     parts.append(
-        "Respond to your own work as appropriate. If you want to reply to a sender that isn't "
-        "your parent, use SendMessage.")
+        format_agent_messages_closing_note(has_parent_message, has_other_message, recipient_parent_id))
     return "\n\n".join(parts)

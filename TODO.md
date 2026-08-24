@@ -12,14 +12,6 @@
 
 ### Feature backlog
 
-* Something to verify: We recently built a more general-purpose SendMessage() tool for any-to-any
-  agent messaging. We built it by extending a previous Subagent-only message sending. The new tool
-  adds prefix / preamble to messages it delivers, saying "this is just agent messages, not the user."
-  ... Do we use different wording for a message from your parent session/agent? It's true that it's
-  not actually The User (who can also type on the subagent's prompt) but from a subagent's POV, as
-  the child of some other parent session/agent, that parent is *kind of* the user for that subagent,
-  so maybe the preamble wording should be different for that particular agent's messages.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want

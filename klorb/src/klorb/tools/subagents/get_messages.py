@@ -3,7 +3,7 @@
 
 from typing import Any, cast
 
-from klorb.agents.messaging import get_agent_message_queue
+from klorb.agents.messaging import format_agent_messages_closing_note, get_agent_message_queue
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import MESSAGING_TOOL_CATEGORY
 from klorb.tools.tool import Tool
@@ -64,12 +64,7 @@ class GetMessagesTool(Tool):
             lines.append(f"{i}. From {message['sender_id']}{tag}:\n{message['body']}")
             lines.append("")
 
-        if has_parent_message:
-            lines.append(
-                f"The output of your turn will be sent back to your parent, {parent_id}.")
-        if has_other_message:
-            lines.append(
-                "If you want to respond to any of these non-parent agents, use SendMessage.")
+        lines.append(format_agent_messages_closing_note(has_parent_message, has_other_message, parent_id))
         return "\n".join(lines).rstrip()
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
