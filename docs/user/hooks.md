@@ -126,12 +126,23 @@ interact with Handlers through the same input and output JSON interface.
 An event handler is attached to a particular session, not to whichever session your terminal
 happens to have focused — it's delivered to the subscribing session's own handler regardless.
 Every event you declare in config is a subscription of the root session only, and is not
-inherited by a subagent unless you mark it `isHeritable: true` (see "Heritability" above); by
-default, a subagent starts with no event subscriptions at all, and only gains one by directly
-activating a skill that grants it (see `docs/specs/skills.md`'s `metadata.klorb.events`). The
-subagent must still be alive at the moment the event fires for its handler to run — a dormant
-subagent (between turns) is woken with a fresh turn, unless doing so would exceed your
-subagent-concurrency limits, in which case it's silently skipped rather than delivered.
+inherited by a subagent unless you mark it `isHeritable: true` (see "Heritability" above). By
+default, a subagent starts with no event subscriptions of its own beyond what its role grants (see
+"Subagent roles can grant hooks/events" below): it gains one either by directly activating a skill
+that grants it (see `docs/specs/skills.md`'s `metadata.klorb.events`), or automatically at
+creation time if its own role does. The subagent must still be alive at the moment the event fires
+for its handler to run — a dormant subagent (between turns) is woken with a fresh turn, unless
+doing so would exceed your subagent-concurrency limits, in which case it's silently skipped rather
+than delivered.
+
+### Subagent roles can grant hooks/events
+
+An internal `agents.json` role definition (one of the specialist subagent roles klorb launches via
+`CreateSubagent` — see `docs/user/subagents.md`) may itself carry `hooks`/`events` fields, in the
+same shape shown at the top of this document. Every subagent created as that role picks them up
+automatically, on top of whatever hooks/events it inherits from its creator — no skill activation
+or config file needed. This is how, for example, the Pair Programmer role keeps a live
+`FileSystemModified` watch on the workspace from its very first turn.
 
 ## Handler types
 

@@ -116,6 +116,10 @@ class CreateSubagentTool(Tool):
             effective_subagent_roles=plan.effective_subagent_roles,
             max_output_tokens=args.get("max_output_tokens"),
         )
+        if plan.role_events:
+            # A subagent never fires its own onSessionStart, so the role's own event grant
+            # needs its watcher/scheduler started explicitly here.
+            child._start_event_watchers_for(plan.role_events)
         logger.debug(
             "Created subagent %s (role=%s, model=%s) under %s",
             child.id, args["role"], model, context.session.id)

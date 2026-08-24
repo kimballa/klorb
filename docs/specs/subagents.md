@@ -56,6 +56,12 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
     "accepts_tasks": false,
     "assigns_tasks": false,
     "see_group_tasks": false
+  },
+  "hooks": {},
+  "events": {
+    "FileSystemModified": [
+      { "watch": ".", "action": { "type": "chat", "prompt": "..." } }
+    ]
   }
 }
 ```
@@ -86,6 +92,9 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
   set yet still be refused the capability it gates, e.g. a role with `SendMessage` in its tool set
   but `send_messages: false`. See docs/specs/chainlink-task-tracking.md's "Task assignment"
   section.
+* `hooks`/`events` — the same `{name: [handler, ...]}` shape a skill's `metadata.klorb.hooks`/
+  `.events` frontmatter grant carries (docs/specs/skills.md), granted onto every subagent created
+  as this role. See "Role-granted hooks/events" under "Pair Programmer role" below.
 
 ## Addressing
 
@@ -611,14 +620,34 @@ never launch another Pair Programmer or an Operator). Its `agent_capabilities` a
 false` (it never holds a tracked task of its own), `assigns_tasks: true` and `see_group_tasks:
 true` (it may review and add to the Operator's todo list), and `send_messages: true`.
 
-Its actual working instructions live in `internal:pair-programming-child`, a
-`disable-model-invocation` skill (see docs/specs/skills.md's "Model-invocation-disabled skills")
-that `internal:pair-programming` activates by giving the new subagent's `initial_message` a
-leading `/pair-programming-child` mention, so it's live from the subagent's very first turn.
-That skill's `metadata.klorb.events.FileSystemModified` entry (see docs/specs/skills.md's
-`metadata.klorb.events` section) is what lets it react to the Operator's edits as they land, using
-docs/specs/hooks-and-events.md's `FileSystemModified` section's `applyGitignore` option to stay
-quiet through `.chainlink`/build-artifact churn.
+Its actual working instructions live in `resources/system_prompts.d/roles/pair_programmer/
+default.md`, active from its very first turn like any other role's system prompt. Its live file
+watch is likewise a property of the role itself: `pair_programmer`'s own `agents.json` entry
+carries an `events.FileSystemModified` grant (see "Role-granted hooks/events" below), so
+`klorb.agents.policy.plan_subagent_creation` folds it onto every subagent it creates as this role
+and starts its watcher right after construction -- no skill activation needed to arm it. `watch:
+"."` with `applyGitignore: true` (docs/specs/hooks-and-events.md's `FileSystemModified` section)
+keeps it quiet through `.chainlink`/build-artifact churn.
+
+### Role-granted hooks/events
+
+An `agents.json` role entry may carry its own `hooks`/`events` fields, the same
+`{name: [handler, ...]}` shape a skill's `metadata.klorb.hooks`/`.events` frontmatter grant
+carries (docs/specs/skills.md's `metadata.klorb.hooks`/`.events` section) -- `klorb.agents.
+definition.agent_hook_configs`/`agent_event_configs` parse them via the same
+`klorb.hooks.merge.parse_session_scoped_hook_dict`/`parse_event_dict` helpers a skill grant uses,
+rejecting a process-scoped hook name and defaulting `isHeritable` to `false` the same way. Unlike
+a skill grant, a role's own hooks/events apply unconditionally to every subagent
+`plan_subagent_creation` builds for that role -- folded onto whatever the child already inherits
+from its creator's own heritable `hooks`/`events`, via the same named-list-concatenate merge
+(docs/specs/hooks-and-events.md's "Merge behavior" section) every other layer uses. Because a
+subagent never fires its own `onSessionStart` (the moment that would otherwise start a
+`FileSystemWatcher`/`TimerScheduler` for `config.events`), `CreateSubagentTool.apply()` starts one
+explicitly for just the role's newly-granted event entries (`SubagentPlan.role_events`), right
+after constructing the child `Session`. This mechanism is scoped to subagent creation only -- a
+root session running directly as a role with its own `hooks`/`events` grant does not pick them up,
+since root sessions are constructed through a separate path (`compute_root_session_grants`) that
+doesn't thread this through.
 
 ## Subagents panel (TUI)
 

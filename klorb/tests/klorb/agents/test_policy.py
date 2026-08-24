@@ -21,7 +21,7 @@ from klorb.agents.policy import (
 )
 from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ProviderResponse
-from klorb.hooks.config import HookConfig, TimerEventConfig
+from klorb.hooks.config import FileSystemModifiedEventConfig, HookConfig, TimerEventConfig
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig, TurnEventHandlers
 from klorb.session.events import QueuedMessage
@@ -262,6 +262,23 @@ def test_plan_subagent_creation_filters_out_non_heritable_hooks_and_events(
     # The parent's own dicts are untouched.
     assert len(context.session.config.hooks["onToolUse"]) == 2
     assert "Timer" in context.session.config.events
+
+
+def test_plan_subagent_creation_folds_the_roles_own_agents_json_events_onto_the_child(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`pair_programmer`'s own `agents.json` entry grants a `FileSystemModified` watch, which
+    must land on the child's `config.events` and also come back as `SubagentPlan.role_events` so
+    `CreateSubagentTool` can start its watcher."""
+    context = _operator_context(tmp_path, make_session_config)
+
+    plan = plan_subagent_creation(context, "pair_programmer", None, None)
+
+    assert "FileSystemModified" in plan.role_events
+    fs_event = plan.session_config.events["FileSystemModified"][0]
+    assert isinstance(fs_event, FileSystemModifiedEventConfig)
+    assert fs_event.watch == "."
+    assert plan.role_events["FileSystemModified"] == plan.session_config.events["FileSystemModified"]
 
 
 def test_allowed_tools_override_replaces_the_roles_own_list(

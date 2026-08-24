@@ -3,7 +3,12 @@
 parse_versioned_json` has stripped the file's `schema` envelope. See
 docs/specs/subagents.md."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+from klorb.hooks.config import EventConfig, HookConfig
+from klorb.hooks.merge import parse_event_dict, parse_session_scoped_hook_dict
 
 AGENT_SCHEMA_NAME = "klorb-agents"
 AGENT_SCHEMA_VERSION = "1.0.0"
@@ -60,3 +65,24 @@ class AgentDefinition(BaseModel):
     allow_subagents: bool = False
     """Whether a subagent running as this role may itself call `CreateSubagent`."""
     agent_capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)
+    hooks: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    """Raw `{hookName: [handler, ...]}` entries this role grants to every subagent created as
+    it, the same shape a skill's `metadata.klorb.hooks` frontmatter carries."""
+    events: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    """Raw `{eventName: [entry, ...]}` entries this role grants, the same shape a skill's
+    `metadata.klorb.events` frontmatter carries."""
+
+
+def agent_hook_configs(definition: AgentDefinition) -> dict[str, list[HookConfig]]:
+    """`definition`'s own `hooks` entries, parsed into `HookConfig` lists. An entry that doesn't
+    set `isHeritable` explicitly defaults to `is_heritable=False`."""
+    return parse_session_scoped_hook_dict(
+        definition.hooks, source_label=f"agents.json role {definition.name!r} hooks")
+
+
+def agent_event_configs(definition: AgentDefinition) -> dict[str, list[EventConfig]]:
+    """`definition`'s own `events` entries, parsed into the right `EventConfig` subclass per
+    `klorb.hooks.config.EVENT_CONFIG_MODELS`. An entry that doesn't set `isHeritable` explicitly
+    defaults to `is_heritable=False`."""
+    return parse_event_dict(
+        definition.events, source_label=f"agents.json role {definition.name!r} events")

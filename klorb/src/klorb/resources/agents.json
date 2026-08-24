@@ -153,6 +153,18 @@
         "assigns_tasks": true,
         "see_group_tasks": true,
         "send_messages": true
+      },
+      "events": {
+        "FileSystemModified": [
+          {
+            "watch": ".",
+            "applyGitignore": true,
+            "action": {
+              "type": "chat",
+              "prompt": "Files in the workspace changed. Run `git status --short` and `git diff` to see what the Operator actually touched, then read the changed file(s) and any nearby code you need to judge them well. If the change is routine and matches the design you agreed on, don't say anything -- just note it and go back to waiting. If you spot a bug, a departure from the agreed design, a missing test, or anything else worth flagging, send the Operator a SendMessage naming the specific file and line. Don't edit anything yourself."
+            }
+          }
+        ]
       }
     }
   ]

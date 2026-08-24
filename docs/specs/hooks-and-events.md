@@ -46,10 +46,13 @@ An untrusted workspace's `.klorb/klorb-config.json` layer is skipped entirely by
 so `hooks`/`events` need no dedicated enforcement beyond the ordinary layering every other key
 goes through.
 
-Beyond config-file authoring, a session-scoped name's handler list can also grow at runtime: a
-skill's `metadata.klorb.hooks`/`.events` frontmatter grants its own handlers into the activating
-session's `config.hooks`/`.events` on activation — see "`metadata.klorb.hooks`/`metadata.klorb.
-events`" in docs/specs/skills.md.
+Beyond config-file authoring, a session-scoped name's handler list can also grow at runtime, from
+two sources: a skill's `metadata.klorb.hooks`/`.events` frontmatter grants its own handlers into
+the activating session's `config.hooks`/`.events` on activation — see "`metadata.klorb.hooks`/
+`metadata.klorb.events`" in docs/specs/skills.md — and an `agents.json` role's own `hooks`/
+`events` fields are folded onto every subagent `klorb.agents.policy.plan_subagent_creation`
+constructs for that role, unconditionally, at creation time — see docs/specs/subagents.md's
+"Role-granted hooks/events".
 
 ### Merge behavior: named-list concatenate
 
