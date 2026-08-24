@@ -224,6 +224,46 @@ def test_apply_ensures_the_creators_chainlink_client_when_child_has_a_task_tool(
     context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
 
 
+def test_apply_starts_watchers_for_the_roles_own_agents_json_events(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`pair_programmer`'s own `agents.json` `events` grant must have its watcher started right
+    after the child `Session` is constructed, since a subagent never fires its own
+    `onSessionStart`."""
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+    started: list[dict] = []
+    monkeypatch.setattr(
+        Session, "_start_event_watchers_for", lambda self, events: started.append(events))
+
+    tool.apply({"role": "pair_programmer", "session_title": "pair", "initial_message": "go"})
+
+    assert len(started) == 1
+    assert "FileSystemModified" in started[0]
+    context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
+
+
+def test_apply_does_not_start_watchers_when_the_role_grants_no_events(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _FakeProvider()
+    context = _operator_context(tmp_path, provider, make_session_config)
+    assert context.session is not None
+    tool = CreateSubagentTool(context)
+    started: list[dict] = []
+    monkeypatch.setattr(
+        Session, "_start_event_watchers_for", lambda self, events: started.append(events))
+
+    tool.apply({"role": "explorer", "session_title": "task", "initial_message": "go"})
+
+    assert started == []
+    context.session.subagent_tracker.handles()[0].thread.join(timeout=5.0)
+
+
 def test_apply_raises_without_constructing_a_session_when_validation_fails(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

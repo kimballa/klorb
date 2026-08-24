@@ -18,16 +18,15 @@ just adds noise on both sides.
 
 ## Starting a pairing session
 
-Call `CreateSubagent` with `role="pair_programmer"` and an `initial_message` that starts with the
-literal text `/pair-programming-child` -- this is what arms the pairer's live file watch on its
-very first turn -- followed by your proposed plan or architecture:
+Call `CreateSubagent` with `role="pair_programmer"` and an `initial_message` carrying your
+proposed plan or architecture -- the pairer's live file watch is already armed by its own role
+definition, live from its very first turn:
 
 ```python
 CreateSubagent(
     role="pair_programmer",
     session_title="Pairing: <short task description>",
     initial_message=(
-        "/pair-programming-child\n\n"
         "I'm about to <what you're building>. My plan: <the architecture/approach>. "
         "<Any open questions or tradeoffs you're unsure about.>"
     ),

@@ -7,20 +7,12 @@ import logging
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 import yaml
 
-from klorb.hooks.config import (
-    EVENT_CONFIG_MODELS,
-    HOOK_NAMES,
-    PROCESS_SCOPED_HOOK_NAMES,
-    EventConfig,
-    HookConfig,
-    TimerEventConfig,
-)
-from klorb.hooks.merge import parse_handler_list
-from klorb.hooks.timer_events import clamp_timer_intervals
+from klorb.hooks.config import EventConfig, HookConfig
+from klorb.hooks.merge import parse_event_dict, parse_session_scoped_hook_dict
 from klorb.paths import get_klorb_data_dir
 from klorb.permissions.directory_access import (
     CLAUDE_PROJECT_DIR_NAME,
@@ -198,70 +190,26 @@ def skill_bash_command_patterns(raw: dict[str, Any]) -> list[list[str]]:
 
 def skill_hook_configs(raw: dict[str, Any]) -> dict[str, list[HookConfig]]:
     """Every hook entry under `raw`'s `metadata.klorb.hooks` frontmatter key, keyed by hook
-    name. A name outside `klorb.hooks.config.HOOK_NAMES`, or a `PROCESS_SCOPED_HOOK_NAMES`
-    entry, is dropped, logged as a `logger.warning()`. Every parsed `HookConfig` whose raw dict
-    didn't set `isHeritable` gets `is_heritable=False` forced onto it."""
+    name."""
     klorb_metadata = _skill_klorb_metadata(raw)
     if klorb_metadata is None:
         return {}
     raw_hooks = klorb_metadata.get("hooks")
     if raw_hooks is None:
         return {}
-    if not isinstance(raw_hooks, dict):
-        logger.warning("Skill metadata.klorb.hooks must be an object; got %r", raw_hooks)
-        return {}
-    result: dict[str, list[HookConfig]] = {}
-    for name, raw_handlers in raw_hooks.items():
-        if name not in HOOK_NAMES:
-            logger.warning("Skill metadata.klorb.hooks names unrecognized hook %r; ignoring.", name)
-            continue
-        if name in PROCESS_SCOPED_HOOK_NAMES:
-            logger.warning(
-                "Skill metadata.klorb.hooks names process-scoped hook %r, which may only be "
-                "configured via klorb-config.json's top-level hooks key; ignoring.", name)
-            continue
-        parsed, warnings = parse_handler_list(
-            raw_handlers, model=HookConfig, source_label=f"skill metadata.klorb.hooks ({name})")
-        for warning in warnings:
-            logger.warning(warning)
-        if parsed:
-            result[name] = [
-                handler if "is_heritable" in handler.model_fields_set
-                else handler.model_copy(update={"is_heritable": False})
-                for handler in parsed
-            ]
-    return result
+    return parse_session_scoped_hook_dict(raw_hooks, source_label="Skill metadata.klorb.hooks")
 
 
 def skill_event_configs(raw: dict[str, Any]) -> dict[str, list[EventConfig]]:
     """Every event entry under `raw`'s `metadata.klorb.events` frontmatter key, keyed by event
-    name. No event name is ever process-scoped, so nothing is rejected on those grounds."""
+    name."""
     klorb_metadata = _skill_klorb_metadata(raw)
     if klorb_metadata is None:
         return {}
     raw_events = klorb_metadata.get("events")
     if raw_events is None:
         return {}
-    if not isinstance(raw_events, dict):
-        logger.warning("Skill metadata.klorb.events must be an object; got %r", raw_events)
-        return {}
-    result: dict[str, list[EventConfig]] = {}
-    for name, raw_handlers in raw_events.items():
-        model = EVENT_CONFIG_MODELS.get(name)
-        if model is None:
-            logger.warning("Skill metadata.klorb.events names unrecognized event %r; ignoring.", name)
-            continue
-        parsed, warnings = parse_handler_list(
-            raw_handlers, model=model, source_label=f"skill metadata.klorb.events ({name})")
-        for warning in warnings:
-            logger.warning(warning)
-        if name == "Timer":
-            clamp_timer_intervals(
-                cast("list[TimerEventConfig]", parsed),
-                source_label=f"skill metadata.klorb.events ({name})", warnings=[])
-        if parsed:
-            result[name] = parsed
-    return result
+    return parse_event_dict(raw_events, source_label="Skill metadata.klorb.events")
 
 
 def _namespace_source_dirs(

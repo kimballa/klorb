@@ -39,11 +39,6 @@
     autonomously continuously pulling new tasks out from a queue (e.g. a directory filled with new
     feature spec documents or bug report documents) and executing them one after the next.
 
-* `agents.json` role entries should be able to declare `hooks`/`events` directly, the same
-  `metadata.klorb.events` shape a `SKILL.md` can carry. The `pair_programmer` role's live file
-  watch is currently wired up via the `pair-programming-child` skill as a workaround, when the
-  event subscription is really a property of the role itself.
-
 * System prompt and interstitial prompt ("hook") improvements:
   * Regarding the user-entered task: start with a plain request, then rewrite it
     into role, task, context, constraints, and output format. (maybe ask a

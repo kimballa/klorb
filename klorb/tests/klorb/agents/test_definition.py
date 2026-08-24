@@ -1,7 +1,14 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.agents.definition: `AgentDefinition`/`AgentRestrictions` validation."""
 
-from klorb.agents.definition import AgentCapabilities, AgentDefinition, AgentRestrictions
+from klorb.agents.definition import (
+    AgentCapabilities,
+    AgentDefinition,
+    AgentRestrictions,
+    agent_event_configs,
+    agent_hook_configs,
+)
+from klorb.hooks.config import FileSystemModifiedEventConfig
 
 
 def test_agent_restrictions_defaults_to_unspecified_everywhere() -> None:
@@ -27,6 +34,8 @@ def test_agent_definition_restrict_to_defaults_to_unrestricted() -> None:
     assert definition.restrict_to == AgentRestrictions()
     assert definition.allow_subagents is False
     assert definition.agent_capabilities == AgentCapabilities()
+    assert definition.hooks == {}
+    assert definition.events == {}
 
 
 def test_agent_capabilities_default_to_false() -> None:
@@ -73,3 +82,35 @@ def test_agent_definition_round_trips_from_json_shaped_dict() -> None:
     assert definition.restrict_to.subagent_roles == ["explorer"]
     assert definition.restrict_to.enforce_readonly_tools is True
     assert definition.allow_subagents is True
+
+
+def test_agent_hook_configs_parses_the_definitions_own_hooks_field() -> None:
+    definition = AgentDefinition.model_validate({
+        "name": "reviewer",
+        "default_model": "some/model",
+        "hooks": {"onToolUse": [{"type": "chat", "prompt": "watch it"}]},
+    })
+
+    result = agent_hook_configs(definition)
+
+    assert result["onToolUse"][0].prompt == "watch it"
+    assert result["onToolUse"][0].is_heritable is False  # default_is_heritable=False
+
+
+def test_agent_event_configs_parses_the_definitions_own_events_field() -> None:
+    definition = AgentDefinition.model_validate({
+        "name": "pair_programmer",
+        "default_model": "some/model",
+        "events": {
+            "FileSystemModified": [
+                {"watch": ".", "applyGitignore": True, "action": {"type": "chat", "prompt": "x"}},
+            ],
+        },
+    })
+
+    result = agent_event_configs(definition)
+
+    fs_event = result["FileSystemModified"][0]
+    assert isinstance(fs_event, FileSystemModifiedEventConfig)
+    assert fs_event.watch == "."
+    assert fs_event.apply_gitignore is True

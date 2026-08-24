@@ -4,8 +4,9 @@
 
 from fixtures.sample_agents import SAMPLE_AGENTS_JSON
 
-from klorb.agents.definition import AgentCapabilities
+from klorb.agents.definition import AgentCapabilities, agent_event_configs
 from klorb.agents.registry import AgentRegistry, get_agent_capabilities, get_agent_registry
+from klorb.hooks.config import FileSystemModifiedEventConfig
 
 
 def test_get_returns_agent_definition_by_name() -> None:
@@ -81,6 +82,22 @@ def test_pair_programmer_role_may_launch_only_explorer_subagents() -> None:
     assert pair_programmer.restrict_to.subagent_roles == ["explorer"]
     assert get_agent_capabilities("pair_programmer") == AgentCapabilities(
         accepts_tasks=False, assigns_tasks=True, see_group_tasks=True, send_messages=True)
+
+
+def test_pair_programmer_role_grants_a_workspace_wide_gitignore_filtered_file_watch() -> None:
+    """A regression check on the hand-authored `pair_programmer` agents.json entry: its `events`
+    field must parse to a `FileSystemModified` entry watching the whole workspace with gitignore
+    filtering on, not just look right to a human reading the JSON."""
+    registry = get_agent_registry()
+
+    pair_programmer = registry.get("pair_programmer")
+
+    assert pair_programmer is not None
+    events = agent_event_configs(pair_programmer)
+    fs_event = events["FileSystemModified"][0]
+    assert isinstance(fs_event, FileSystemModifiedEventConfig)
+    assert fs_event.watch == "."
+    assert fs_event.apply_gitignore is True
 
 
 def test_operator_role_may_launch_pair_programmer() -> None:

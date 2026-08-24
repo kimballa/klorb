@@ -10,7 +10,12 @@ import threading
 from dataclasses import dataclass
 from typing import Literal
 
-from klorb.agents.definition import AgentDefinition, AgentRestrictions
+from klorb.agents.definition import (
+    AgentDefinition,
+    AgentRestrictions,
+    agent_event_configs,
+    agent_hook_configs,
+)
 from klorb.agents.intersection import (
     ToolMetadata,
     compute_child_skill_set,
@@ -28,7 +33,8 @@ from klorb.agents.runtime import (
     total_active_subagents,
 )
 from klorb.api_provider import ResponseAborted
-from klorb.hooks.config import filter_heritable_events, filter_heritable_hooks
+from klorb.hooks.config import EventConfig, filter_heritable_events, filter_heritable_hooks
+from klorb.hooks.merge import concatenate_named_handler_lists
 from klorb.message import Message
 from klorb.permissions.skill_access import SkillRules, format_fqsn, parse_fqsn
 from klorb.process_config import ProcessConfig
@@ -62,6 +68,10 @@ class SubagentPlan:
     session_config: SessionConfig
     tool_classes: "dict[str, type[Tool]]"
     effective_subagent_roles: frozenset[str]
+    role_events: "dict[str, list[EventConfig]]"
+    """`role_definition`'s own `events` grant, already folded into `session_config.events`. Kept
+    separately since a subagent never fires its own `onSessionStart`, so the caller must start
+    its watcher explicitly once the child `Session` exists."""
 
 
 def _resolve_role_definition(parent: Session, role: str) -> AgentDefinition:
@@ -211,9 +221,22 @@ def plan_subagent_creation(
     child_config.hooks = filter_heritable_hooks(child_config.hooks)
     child_config.events = filter_heritable_events(child_config.events)
 
+    # The role's own agents.json hooks/events grant lands on every subagent created as this
+    # role, on top of whatever it inherited above from its creator.
+    role_hooks = agent_hook_configs(role_definition)
+    merged_hooks = {name: list(handlers) for name, handlers in child_config.hooks.items()}
+    concatenate_named_handler_lists(merged_hooks, role_hooks)
+    child_config.hooks = merged_hooks
+
+    role_events = agent_event_configs(role_definition)
+    merged_events = {name: list(handlers) for name, handlers in child_config.events.items()}
+    concatenate_named_handler_lists(merged_events, role_events)
+    child_config.events = merged_events
+
     return SubagentPlan(
         role_definition=role_definition, session_config=child_config,
-        tool_classes=tool_classes, effective_subagent_roles=frozenset(subagent_roles))
+        tool_classes=tool_classes, effective_subagent_roles=frozenset(subagent_roles),
+        role_events=role_events)
 
 
 @dataclass
