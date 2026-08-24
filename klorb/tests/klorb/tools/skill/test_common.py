@@ -2,12 +2,14 @@
 """Tests for klorb.tools.skill.common: discovery, resolution, frontmatter parsing, name/path
 validation, the manifest, and the skillRules gate."""
 
+import importlib.resources
 import logging
 from pathlib import Path
 
 import pytest
 
 from klorb.hooks.config import FileSystemModifiedEventConfig, TimerEventConfig
+from klorb.permissions.directory_access import SKILLS_DIRNAME
 from klorb.permissions.resource import PermissionOverride
 from klorb.permissions.skill_access import SkillRules
 from klorb.permissions.table import PermissionAskRequired
@@ -330,6 +332,25 @@ def test_skill_event_configs_reads_nested_metadata_key() -> None:
 def test_skill_event_configs_absent_yields_empty_dict() -> None:
     assert skill_event_configs({}) == {}
     assert skill_event_configs({"metadata": {"klorb": {}}}) == {}
+
+
+def test_pair_programming_child_skill_frontmatter_parses_a_valid_fs_watch() -> None:
+    """A regression check on the hand-authored `pair-programming-child` frontmatter: it must
+    parse to a `FileSystemModified` entry watching the whole workspace with gitignore filtering
+    on, not just look right to a human reading the YAML. Reads the real packaged file directly
+    (not via `internal_skills_dir()`, which every test's `_reset_skill_catalog` autouse fixture
+    redirects to an empty temp dir) since this is deliberately about the shipped skill's own
+    content, not catalog discovery."""
+    text = importlib.resources.files("klorb.resources").joinpath(
+        SKILLS_DIRNAME, "pair-programming-child", "SKILL.md").read_text(encoding="utf-8")
+    raw = parse_frontmatter(text)
+    assert raw.get("disable-model-invocation") is True
+
+    events = skill_event_configs(raw)
+    fs_event = events["FileSystemModified"][0]
+    assert isinstance(fs_event, FileSystemModifiedEventConfig)
+    assert fs_event.watch == "."
+    assert fs_event.apply_gitignore is True
 
 
 def test_skill_event_configs_drops_unrecognized_event_names_with_a_warning(

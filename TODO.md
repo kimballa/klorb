@@ -12,6 +12,14 @@
 
 ### Feature backlog
 
+* Something to verify: We recently built a more general-purpose SendMessage() tool for any-to-any
+  agent messaging. We built it by extending a previous Subagent-only message sending. The new tool
+  adds prefix / preamble to messages it delivers, saying "this is just agent messages, not the user."
+  ... Do we use different wording for a message from your parent session/agent? It's true that it's
+  not actually The User (who can also type on the subagent's prompt) but from a subagent's POV, as
+  the child of some other parent session/agent, that parent is *kind of* the user for that subagent,
+  so maybe the preamble wording should be different for that particular agent's messages.
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -27,18 +35,6 @@
   (credential extraction attempt).
 
 * New Subagent roles:
-  * pair_programmer -- a subagent that works closely alongside the main Operator while doing a large task.
-    The two agents can pass messages/responses back and forth for a conversation about the design, and once
-    they both agree on the design, they can move forward with the work
-    * the pair programmer should use an inotify / FileChanged Event hook to get updates on all the files
-      being edited by the primary Operator. It should do reviews in real time as the edits are happening,
-      to provide feedback as it goes. The Pairer should feel at libery to explore other files near the
-      site of the change to give better feedback. It should be doing code reviews as it goes.
-    * We need the ability to enable the FileChanged event handler only for a specific subagent, perhaps
-      as part of a particular skill that it activates.
-    * If the main Operator isn't expecting further communication with the subagent, subagent message
-      output in response to FileChanged isn't going to make it back to the Operator. It needs a
-      `MessageAgent()` tool that will force the message into its context.
   * project_manager -- keep track of fine-grained tasks and ensure that they are all
     completed by other agents (or keep the Operator parent agent honest about progress). When given
     a medium-grain task, break it down into additional fine-grained tasks and ensure they're

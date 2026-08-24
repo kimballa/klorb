@@ -26,6 +26,7 @@ Klorb Code is an experimental coding agent system with:
 * Out of the box support for several open models, and easy ability to add any other openrouter.ai-supported inference model
 * Powerful features for users
   * [Hooks and events](docs/user/hooks.md)
+  * [Skills](docs/user/skills.md)
   * Composable configuration system
   * Customizable system prompts
 * Client / server architecture supporting multiple user interfaces:

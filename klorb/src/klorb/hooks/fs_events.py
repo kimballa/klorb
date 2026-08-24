@@ -15,6 +15,8 @@ from watchdog.observers.api import BaseObserver
 
 from klorb.hooks.config import MIN_EVENT_DEBOUNCE_SECONDS, FileSystemModifiedEventConfig
 from klorb.hooks.hook_api import EventInput, FileSystemUpdate
+from klorb.tools.util.dir_walk import GIT_DIR_NAME
+from klorb.tools.util.gitignore import GitignoreFilter
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +135,20 @@ class FileSystemWatcher:
             dirs.add(target if target.is_dir() else target.parent)
         return dirs
 
+    def _is_git_internal(self, abs_path: str) -> bool:
+        """Whether `abs_path` falls inside a `.git` directory under the workspace root -- always
+        excluded regardless of `apply_gitignore`, matching `klorb.tools.util.dir_walk`'s own
+        unconditional `.git` exclusion."""
+        path = Path(abs_path)
+        try:
+            relative = path.relative_to(self._workspace_root)
+        except ValueError:
+            relative = path
+        return GIT_DIR_NAME in relative.parts
+
     def _record(self, event_type: _FsUpdateKind, abs_path: str) -> None:
+        if self._is_git_internal(abs_path):
+            return
         with self._lock:
             self._pending.append(FileSystemUpdate(event=event_type, path=abs_path))
             if self._timer is not None:
@@ -153,10 +168,17 @@ class FileSystemWatcher:
         pending = _dedupe(raw_pending)
         matched_entries: list[FileSystemModifiedEventConfig] = []
         matched_paths: set[str] = set()
+        gitignore: GitignoreFilter | None = None
         for entry in self._entries:
             watch_target = (self._workspace_root / entry.watch).resolve()
             entry_updates = [
                 update for update in pending if _path_matches(Path(update.path), watch_target)]
+            if entry.apply_gitignore and entry_updates:
+                if gitignore is None:
+                    gitignore = GitignoreFilter.for_root(self._workspace_root, self._workspace_root)
+                entry_updates = [
+                    update for update in entry_updates
+                    if not gitignore.is_ignored(Path(update.path), is_dir=False)]
             if entry_updates:
                 matched_entries.append(entry)
                 matched_paths.update(update.path for update in entry_updates)

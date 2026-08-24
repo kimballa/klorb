@@ -109,6 +109,9 @@ interact with Handlers through the same input and output JSON interface.
 
 * **`FileSystemModified`** — watches a workspace-relative file or directory (`watch`; a directory
   is watched recursively) and runs `action` after changes settle, batched over a debounce window.
+  A change under any `.git` directory is always ignored. Set `"applyGitignore": true` to also
+  skip anything your workspace's own `.gitignore` rules would exclude — handy for watching a
+  whole repo root without tripping on build artifacts or other generated files.
 * **`Timer`** — runs `action` on a schedule: either `"interval_minutes"` or a `"cron"` string.
   **This is best-effort, not a real scheduler.** klorb has no persistent daemon mode — a `Timer`
   only fires while some klorb process for the workspace is already running for other reasons. A

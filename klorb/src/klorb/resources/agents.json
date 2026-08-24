@@ -12,7 +12,8 @@
           "explorer",
           "reviewer",
           "planner",
-          "implementer"
+          "implementer",
+          "pair_programmer"
         ]
       },
       "allow_subagents": true,
@@ -136,6 +137,22 @@
         "accepts_tasks": false,
         "assigns_tasks": false,
         "see_group_tasks": false
+      }
+    },
+    {
+      "name": "pair_programmer",
+      "default_model": "klorb-default/normal",
+      "restrict_to": {
+        "subagent_roles": [
+          "explorer"
+        ]
+      },
+      "allow_subagents": true,
+      "agent_capabilities": {
+        "accepts_tasks": false,
+        "assigns_tasks": true,
+        "see_group_tasks": true,
+        "send_messages": true
       }
     }
   ]

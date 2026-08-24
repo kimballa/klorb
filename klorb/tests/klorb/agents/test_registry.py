@@ -68,3 +68,26 @@ def test_get_agent_capabilities_reads_the_packaged_operator_and_explorer_roles()
 
 def test_get_agent_capabilities_defaults_to_all_false_for_an_undefined_role() -> None:
     assert get_agent_capabilities("no_such_role") == AgentCapabilities()
+
+
+def test_pair_programmer_role_may_launch_only_explorer_subagents() -> None:
+    registry = get_agent_registry()
+
+    pair_programmer = registry.get("pair_programmer")
+
+    assert pair_programmer is not None
+    assert pair_programmer.default_model == "klorb-default/normal"
+    assert pair_programmer.allow_subagents is True
+    assert pair_programmer.restrict_to.subagent_roles == ["explorer"]
+    assert get_agent_capabilities("pair_programmer") == AgentCapabilities(
+        accepts_tasks=False, assigns_tasks=True, see_group_tasks=True, send_messages=True)
+
+
+def test_operator_role_may_launch_pair_programmer() -> None:
+    registry = get_agent_registry()
+
+    operator = registry.get("operator")
+
+    assert operator is not None
+    assert operator.restrict_to.subagent_roles is not None
+    assert "pair_programmer" in operator.restrict_to.subagent_roles

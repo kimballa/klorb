@@ -63,6 +63,20 @@ def test_file_system_modified_event_config_requires_watch_and_action() -> None:
         FileSystemModifiedEventConfig.model_validate({"action": {"type": "bash", "shell": "x"}})
 
 
+def test_file_system_modified_event_config_apply_gitignore_defaults_false() -> None:
+    config = FileSystemModifiedEventConfig.model_validate({
+        "watch": ".", "action": {"type": "chat", "prompt": "changed"},
+    })
+    assert config.apply_gitignore is False
+
+
+def test_file_system_modified_event_config_apply_gitignore_parses_via_alias() -> None:
+    config = FileSystemModifiedEventConfig.model_validate({
+        "watch": ".", "applyGitignore": True, "action": {"type": "chat", "prompt": "changed"},
+    })
+    assert config.apply_gitignore is True
+
+
 def test_timer_event_config_accepts_interval_or_cron() -> None:
     interval = TimerEventConfig.model_validate({
         "interval_minutes": 10, "action": {"type": "chat", "prompt": "tick"},

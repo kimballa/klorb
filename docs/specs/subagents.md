@@ -11,12 +11,11 @@ Any agent that has one may also converse directly with *any* other agent in the 
 tree — creator, subagent, or sibling alike — via `SendMessage`/`GetMessages`; see "Agent-to-agent
 messaging" below.
 
-Today four roles exist as something a subagent can be launched as -- `explorer`
-(`klorb/src/klorb/resources/system_prompts.d/roles/explorer/default.md`), `reviewer`
-(`.../roles/reviewer/default.md`), `planner` (`.../roles/planner/default.md`), and
-`implementer` (`.../roles/implementer/default.md`) -- and only the `operator` role (the
-top-level, user-facing session) is permitted to launch any of them — see
-`klorb/src/klorb/resources/agents.json`.
+Several roles exist today for a subagent to run as -- `klorb/src/klorb/resources/agents.json`
+defines each one's capability policy, and `operator`'s own `restrict_to.subagent_roles` entry
+there names which of them it may launch. Only the `operator` role (the top-level, user-facing
+session) is permitted to launch any of them at all. See "Explorer role", "Reviewer role",
+"Implementer role", and "Pair Programmer role" below for a few of them in more depth.
 
 ## Configuration
 
@@ -599,6 +598,27 @@ delegates onward. Its `agent_capabilities` are `accepts_tasks: true` (it may hol
 or one of its own, as its current tracked task), `assigns_tasks: false` (`TodoCreate` may only
 target itself; it cannot file work for another agent), and `see_group_tasks: true` (it may see
 everything the group is tracking, for context on how its slice of the plan fits the rest).
+
+## Pair Programmer role
+
+A Pair Programmer is not a bounded one-shot specialist like the roles above -- it's an ongoing
+collaborator an Operator spawns via the `internal:pair-programming` skill to work through a large
+or architecturally uncertain task together, staying in touch over `SendMessage` for the rest of
+the session. Its `agents.json` entry sets no `restrict_to.tools`/`.skills` at all (it inherits its
+creator's full tool set, the same as Reviewer/Implementer), `restrict_to.subagent_roles` names
+`["explorer"]`, and `allow_subagents: true` (it may delegate research to Explorer subagents, but
+never launch another Pair Programmer or an Operator). Its `agent_capabilities` are `accepts_tasks:
+false` (it never holds a tracked task of its own), `assigns_tasks: true` and `see_group_tasks:
+true` (it may review and add to the Operator's todo list), and `send_messages: true`.
+
+Its actual working instructions live in `internal:pair-programming-child`, a
+`disable-model-invocation` skill (see docs/specs/skills.md's "Model-invocation-disabled skills")
+that `internal:pair-programming` activates by giving the new subagent's `initial_message` a
+leading `/pair-programming-child` mention, so it's live from the subagent's very first turn.
+That skill's `metadata.klorb.events.FileSystemModified` entry (see docs/specs/skills.md's
+`metadata.klorb.events` section) is what lets it react to the Operator's edits as they land, using
+docs/specs/hooks-and-events.md's `FileSystemModified` section's `applyGitignore` option to stay
+quiet through `.chainlink`/build-artifact churn.
 
 ## Subagents panel (TUI)
 

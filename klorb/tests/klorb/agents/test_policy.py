@@ -111,15 +111,18 @@ def test_operator_cannot_launch_another_operator(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     """operator's own agents.json entry names
-    `restrict_to.subagent_roles: ["explorer", "reviewer", "planner", "implementer"]`.
-    `_operator_context` builds its root session via `compute_root_session_grants`,
-    so `effective_subagent_roles` is already `{"explorer", "implementer", "planner",
-    "reviewer"}` by the time `plan_subagent_creation` reads it."""
+    `restrict_to.subagent_roles: ["explorer", "reviewer", "planner", "implementer",
+    "pair_programmer"]`. `_operator_context` builds its root session via
+    `compute_root_session_grants`, so `effective_subagent_roles` is already `{"explorer",
+    "implementer", "pair_programmer", "planner", "reviewer"}` by the time
+    `plan_subagent_creation` reads it."""
     context = _operator_context(tmp_path, make_session_config)
 
     with pytest.raises(ToolCallError, match="not among the subagent roles") as exc_info:
         plan_subagent_creation(context, "operator", None, None)
-    assert "['explorer', 'implementer', 'planner', 'reviewer']" in str(exc_info.value)
+    assert (
+        "['explorer', 'implementer', 'pair_programmer', 'planner', 'reviewer']"
+        in str(exc_info.value))
 
 
 def test_informed_cannot_launch_subagents_when_empty_roles_list(

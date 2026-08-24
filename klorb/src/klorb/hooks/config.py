@@ -124,6 +124,9 @@ class FileSystemModifiedEventConfig(EventConfig):
     directory (a directory is watched recursively) whose changes trigger `action`."""
 
     watch: str
+    apply_gitignore: bool = Field(default=False, alias="applyGitignore")
+    """When `True`, a change matching the workspace's own `.gitignore` rules is filtered out
+    before `action` ever sees it. `.git/` itself is always excluded, regardless of this flag."""
 
 
 class TimerEventConfig(EventConfig):

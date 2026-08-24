@@ -23,8 +23,10 @@ def root(tmp_path: Path) -> Path:
     return workspace_root
 
 
-def _entry(watch: str) -> FileSystemModifiedEventConfig:
-    return FileSystemModifiedEventConfig(watch=watch, action=HookConfig(type="chat", prompt="noticed"))
+def _entry(watch: str, *, apply_gitignore: bool = False) -> FileSystemModifiedEventConfig:
+    return FileSystemModifiedEventConfig(
+        watch=watch, applyGitignore=apply_gitignore,
+        action=HookConfig(type="chat", prompt="noticed"))
 
 
 class _Recorder:
@@ -259,3 +261,60 @@ def test_watch_path_outside_workspace_is_skipped(
         assert any("outside workspace" in r.message for r in caplog.records)
     finally:
         watcher.close()
+
+
+async def test_git_directory_changes_are_never_delivered_even_when_watching_the_whole_tree(
+    root: Path, recorder: _Recorder,
+) -> None:
+    git_dir = root / ".git"
+    git_dir.mkdir()
+    watcher = FileSystemWatcher(
+        root, [_entry(".")], dispatch=recorder, debounce_seconds=_DEBOUNCE_SECONDS)
+    watcher.start()
+    try:
+        (git_dir / "index").write_text("x", encoding="utf-8")
+        await asyncio.sleep(_DEBOUNCE_SECONDS * 3)
+    finally:
+        watcher.close()
+
+    assert recorder.calls == []
+
+
+async def test_apply_gitignore_filters_a_gitignored_change(root: Path, recorder: _Recorder) -> None:
+    (root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    watcher = FileSystemWatcher(
+        root, [_entry(".", apply_gitignore=True)], dispatch=recorder,
+        debounce_seconds=_DEBOUNCE_SECONDS)
+    watcher.start()
+    try:
+        (root / "ignored.log").write_text("x", encoding="utf-8")
+        (root / "kept.txt").write_text("x", encoding="utf-8")
+        await recorder.wait()
+    finally:
+        watcher.close()
+
+    assert len(recorder.calls) == 1
+    _, event_input = recorder.calls[0]
+    assert event_input.fs_updates is not None
+    assert {update.path for update in event_input.fs_updates} == {str((root / "kept.txt").resolve())}
+
+
+async def test_apply_gitignore_false_still_delivers_a_gitignored_change(
+    root: Path, recorder: _Recorder,
+) -> None:
+    """`apply_gitignore` is opt-in -- the default (`False`) leaves existing configs unaffected."""
+    (root / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    watcher = FileSystemWatcher(
+        root, [_entry(".")], dispatch=recorder, debounce_seconds=_DEBOUNCE_SECONDS)
+    watcher.start()
+    try:
+        (root / "ignored.log").write_text("x", encoding="utf-8")
+        await recorder.wait()
+    finally:
+        watcher.close()
+
+    assert len(recorder.calls) == 1
+    _, event_input = recorder.calls[0]
+    assert event_input.fs_updates is not None
+    assert {update.path for update in event_input.fs_updates} == {
+        str((root / "ignored.log").resolve())}

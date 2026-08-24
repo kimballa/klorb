@@ -74,7 +74,7 @@ layer's handler.
   `filter` (optional `HookConfigFilter`), `isHeritable` (see "Heritability" below).
 * `HookConfigFilter`: `matches`/`pattern`/`contains`/`any`/`all`/`not` (aliased from `not_` for the
   reserved keyword) — see `klorb.hooks.filters.evaluate_filter`.
-* `EventConfig` and its subclasses `FileSystemModifiedEventConfig` (`watch`),
+* `EventConfig` and its subclasses `FileSystemModifiedEventConfig` (`watch`/`applyGitignore`),
   `TimerEventConfig` (`interval_minutes`/`cron`), `WorkspaceTrustChangedEventConfig` (no extra
   field) — each carries an `action: HookConfig` and its own `isHeritable` (see "Heritability"
   below). `klorb.hooks.config.EVENT_CONFIG_MODELS` maps each `EVENT_NAMES` entry to the subclass
@@ -515,6 +515,13 @@ meaningfully act on). After a debounce window settles, `_flush` matches the batc
 whichever entries matched and an `EventInput` batch of the matched updates — an update outside
 every configured `watch` is dropped rather than delivered. Started at root-session start (once the
 workspace is resolved), torn down at root-session end.
+
+A change under any `.git` directory is always excluded, unconditionally, before it's even added to
+the debounce batch (`FileSystemWatcher._record`) — matching `klorb.tools.util.dir_walk`'s own
+hard-coded `.git` exclusion. An entry's `apply_gitignore: bool` (`applyGitignore` on disk, default
+`False`) additionally filters that entry's matched updates through `klorb.tools.util.gitignore.
+GitignoreFilter` at flush time, so a change matching the workspace's own `.gitignore` rules never
+reaches `action` either.
 
 ### `Timer` (`klorb.hooks.timer_events.TimerScheduler`)
 
