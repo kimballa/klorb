@@ -280,7 +280,9 @@ config) has one place to live.
   message to the first envelope built in that round. This keeps a standing reminder (e.g.
   `TodoNextTool`'s current-task nudge) visible even deep inside a multi-round tool loop that
   never returns to a fresh user-turn prompt — the exact case where the XML-on-user-prompt
-  delivery alone would go stale.
+  delivery alone would go stale. Separately, a successful call's own `Tool.call_interjection()`
+  (e.g. `EditMemoryTool`'s `MEMORY.md`-overflow warning) is attached to that call's own envelope
+  regardless of its position in the round.
 * A user message queued during an active agent turn is delivered as a real `role="user"`
   message. When the user presses Enter while a turn is in flight, the TUI queues the message
   (via `Session.enqueue_queued_message`) and mounts a `<Queued message>` header plus the

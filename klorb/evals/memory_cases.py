@@ -14,7 +14,7 @@ from klorb.tools.memory.common import (
     MEMORY_TOC_WARN_LINES,
 )
 
-from .harness import EvalCase, EvalSuite, tool_call_args
+from .harness import EvalCase, EvalSuite
 
 
 def _read(path: Path) -> str:
@@ -64,7 +64,7 @@ MEMORY_TOC_INTERJECTION_ANSWERS_WITHOUT_REREAD = EvalCase(
 
 _LEGACY_ARCHIVE_CODE = "LEGACY-9F2K"
 _TRUNCATION_TOC_TOTAL_LINES = 60
-_TRUNCATION_MARKER_LINE = 55
+_TRUNCATION_MARKER_LINE = MEMORY_TOC_AUTO_READ_LINES + 5
 """Past `MEMORY_TOC_AUTO_READ_LINES`, so the marker isn't folded into the first-turn
 interjection."""
 
@@ -86,18 +86,6 @@ def _check_memory_toc_truncation_prompts_paging(workspace_root: Path, session: S
     content = _read(path).strip()
     if content != _LEGACY_ARCHIVE_CODE:
         return f"answer.txt should contain exactly {_LEGACY_ARCHIVE_CODE!r}, got {content!r}"
-
-    paged_past_truncation = any(
-        call.get("namespace") == "workspace" and call.get("filename") == MEMORY_TOC_FILENAME
-        and int(call.get("start_line") or 1) > MEMORY_TOC_AUTO_READ_LINES
-        for call in tool_call_args(session, "ReadMemory")
-    )
-    if not paged_past_truncation:
-        return (
-            "expected a ReadMemory(namespace='workspace', filename='MEMORY.md', "
-            f"start_line>{MEMORY_TOC_AUTO_READ_LINES}) call to page past the truncated "
-            "interjection and find the marker, but none was made"
-        )
     return None
 
 
@@ -110,18 +98,27 @@ MEMORY_TOC_TRUNCATION_PROMPTS_PAGING = EvalCase(
     setup_files={f".klorb/memories/{MEMORY_TOC_FILENAME}": _build_truncation_toc()},
     workspace_trusted=True,
     check=_check_memory_toc_truncation_prompts_paging,
-    expected_tool_calls=2,  # ReadMemory (paging past line 50) + CreateFile
+    # Clean shape: one lookup call (SearchMemories, or a single ReadMemory -- its default
+    # max_lines already covers the whole 60-line file) + CreateFile.
+    expected_tool_calls=2,
 )
 
 
-_OVERFLOW_TOC_SECTION_COUNT = 14
 _OVERFLOW_FACT_KEYWORD = "Reviewable"
 
 
 def _build_overflow_preseed_toc() -> str:
+    """A global `MEMORY.md` already past `MEMORY_TOC_AUTO_READ_LINES` before the model ever
+    edits it, so the resulting overflow warning and required compaction don't hinge on exactly
+    how many lines the model's own edit happens to add."""
     lines = ["Global memory table of contents", ""]
-    for i in range(1, _OVERFLOW_TOC_SECTION_COUNT + 1):
-        lines += [f"## Topic {i}", f"- fact about topic {i}", f"- see topic-{i:02d}.md for detail"]
+    topic = 0
+    while len(lines) <= MEMORY_TOC_AUTO_READ_LINES:
+        topic += 1
+        lines += [
+            f"## Topic {topic}", f"- fact about topic {topic}",
+            f"- see topic-{topic:02d}.md for detail",
+        ]
     return "\n".join(lines) + "\n"
 
 

@@ -406,6 +406,29 @@ def test_send_turn_sends_tool_response_as_wire_formatted_text_but_persists_json(
         "is_error": False, "is_retryable": False, "response_body": "hi"}
 
 
+def test_wire_message_snapshot_renders_tool_response_wire_text(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')], num_tokens=3),
+        _reply("final answer", num_tokens=4),
+    ]
+    config = make_session_config(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("please echo")
+
+    snapshot_tool_response = next(
+        m for m in session.wire_message_snapshot() if m.role == "tool_response")
+    assert snapshot_tool_response.content == '"hi"'
+
+    persisted_tool_response = next(m for m in session.messages if m.role == "tool_response")
+    assert json.loads(persisted_tool_response.content) == {
+        "is_error": False, "is_retryable": False, "response_body": "hi"}
+
+
 def test_successful_tool_call_reflects_compacted_args_for_later_turns(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
@@ -454,6 +477,34 @@ def test_failed_tool_call_leaves_reflected_tool_args_unset(
     tool_use_message = next(m for m in session.messages if m.role == "tool_use")
     assert tool_use_message.tool_calls is not None
     assert tool_use_message.tool_calls[0].reflected_tool_args is None
+
+
+def test_call_interjection_attaches_to_its_own_call_not_just_the_first(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`Tool.call_interjection()` (e.g. `EditMemoryTool`'s `MEMORY.md`-overflow warning) attaches
+    to its own call's envelope even when that call isn't the round's first, unlike a standing
+    interjection provider."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([
+            ("call_1", "echo", '{"message": "hi"}'),
+            ("call_2", "interjecting", '{"message": "hi"}'),
+        ]),
+        _reply("final answer"),
+    ]
+    config = make_session_config(model="some/model")
+    tool_registry = _sample_tool_registry(config)
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("call echo then interjecting")
+
+    tool_response_messages = [m for m in session.messages if m.role == "tool_response"]
+    first_envelope = json.loads(tool_response_messages[0].content)
+    second_envelope = json.loads(tool_response_messages[1].content)
+    assert "system_interjections" not in first_envelope
+    assert second_envelope["system_interjections"] == [
+        {"subject": "interjecting", "body": "heads up: hi"}]
 
 
 def test_total_output_tokens_used_sums_completion_tokens_across_rounds(
@@ -1558,7 +1609,7 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set(
 
     _, kwargs = mock_provider.send_prompt.call_args
     assert {d["function"]["name"] for d in kwargs["tools"]} == {
-        "echo", "add", "ask_permission", "ask_multi_permission", "compacting"}
+        "echo", "add", "ask_permission", "ask_multi_permission", "compacting", "interjecting"}
 
 
 def test_tool_defs_message_inserted_before_first_turn(

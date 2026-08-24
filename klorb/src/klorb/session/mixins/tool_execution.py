@@ -53,7 +53,9 @@ class SessionToolExecutionMixin(SessionBase):
         Also fires `callbacks.on_tool_call`, if given, once per call with a `ToolCallEvent`.
 
         Standing interjection providers are polled once per call to this method, and any
-        non-`None` results are attached as `system_interjections` on the first envelope.
+        non-`None` results are attached as `system_interjections` on the first envelope. A
+        successful call's own `Tool.call_interjection(result)` is attached to that call's own
+        envelope instead, regardless of its position in the round.
 
         Before executing each call, checks it against `config.max_tool_calls_per_turn`.
         Reaching it asks `_confirm_limit_increase()` whether to double it and keep going;
@@ -190,21 +192,25 @@ class SessionToolExecutionMixin(SessionBase):
                 else:
                     tool_stats.failed_count += 1
             is_first_call = call is tool_use_message.tool_calls[0]
-            first_call_interjections = (
-                tuple(system_interjections) if is_first_call else ())
+            call_interjections = list(system_interjections) if is_first_call else []
+            if tool is not None and error is None:
+                own_interjection = tool.call_interjection(result)
+                if own_interjection is not None:
+                    call_interjections.append(
+                        SystemInterjectionPayload(subject=tool.name(), body=own_interjection))
             if error is None and tool_succeeded is False:
                 # A tool whose `apply()` never raises but signals failure via its own result
                 # shape (e.g. `BashTool` for a non-zero exit) -- see `Tool.is_success()`.
                 envelope = ToolResponseEnvelope.error(
                     None, category="business_logic", response_body=result,
-                    system_interjections=first_call_interjections)
+                    system_interjections=tuple(call_interjections))
             elif error is None:
                 envelope = ToolResponseEnvelope.success(
-                    result, system_interjections=first_call_interjections)
+                    result, system_interjections=tuple(call_interjections))
             else:
                 envelope = ToolResponseEnvelope.error(
                     error, category=category, response_body=response_body,
-                    system_interjections=first_call_interjections)
+                    system_interjections=tuple(call_interjections))
             envelope = self._apply_tool_result_hook(call.name, envelope)
             if tool is not None:
                 new_args = tool.update_args(args, result, envelope.error_info())

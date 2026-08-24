@@ -29,8 +29,8 @@ class EditMemoryTool(Tool):
     other shape against a nonexistent memory raises `FileNotFoundError`.
 
     A `workspace`-namespace edit is gated by `tools.memory.writePermission`; a `global`-
-    namespace edit is always allowed. Editing `MEMORY.md` to 45+ lines attaches a `warning`
-    to the result urging compaction.
+    namespace edit is always allowed. Editing `MEMORY.md` to 45+ lines attaches a
+    `SystemInterjection` urging compaction.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -122,9 +122,6 @@ class EditMemoryTool(Tool):
 
         result["namespace"] = namespace
         result["filename"] = filename
-        warning = memory_toc_overflow_warning(namespace, filename, result["new_total_lines"])
-        if warning is not None:
-            result["warning"] = warning
         logger.debug(
             "EditMemory %s/%s replaced %d line(s) at line %d of what is now a %d-line memory",
             namespace, filename, result["replaced_lines"], result["start_line"],
@@ -139,6 +136,10 @@ class EditMemoryTool(Tool):
 
     def format_response(self, apply_output: Any) -> str:
         return format_edit_result(apply_output)
+
+    def call_interjection(self, result: Any) -> str | None:
+        return memory_toc_overflow_warning(
+            result["namespace"], result["filename"], result["new_total_lines"])
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         """Return a one-line summary with added/removed line counts on success."""

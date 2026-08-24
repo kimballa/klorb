@@ -61,45 +61,50 @@ def test_update_args_drops_content_on_success(
     assert updated == {"namespace": "global", "filename": "notes.md"}
 
 
-def test_creating_memory_md_under_the_warn_threshold_has_no_warning(
+def test_creating_memory_md_under_the_warn_threshold_has_no_interjection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
     content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 10))
+    tool = CreateMemoryTool(context)
 
-    result = CreateMemoryTool(context).apply({
+    result = tool.apply({
         "namespace": "global", "filename": "MEMORY.md", "content": content,
     })
 
-    assert "warning" not in result
+    assert tool.call_interjection(result) is None
 
 
-def test_creating_memory_md_at_the_warn_threshold_attaches_a_warning(
+def test_creating_memory_md_at_the_warn_threshold_attaches_an_interjection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
     content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 45))
+    tool = CreateMemoryTool(context)
 
-    result = CreateMemoryTool(context).apply({
+    result = tool.apply({
         "namespace": "global", "filename": "MEMORY.md", "content": content,
     })
 
     assert result["total_lines"] == 45
-    assert "warning" in result
-    assert "45" in result["warning"]
+    assert "warning" not in result
+    interjection = tool.call_interjection(result)
+    assert interjection is not None
+    assert "45" in interjection
 
 
-def test_creating_a_regular_memory_past_45_lines_has_no_warning(
+def test_creating_a_regular_memory_past_45_lines_has_no_interjection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
     content = "Topic\n" + "\n".join(f"L{i}" for i in range(1, 100))
+    tool = CreateMemoryTool(context)
 
-    result = CreateMemoryTool(context).apply({
+    result = tool.apply({
         "namespace": "global", "filename": "notes.md", "content": content,
     })
 
-    assert "warning" not in result
+    assert tool.call_interjection(result) is None
 
 
 def test_raises_if_memory_already_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

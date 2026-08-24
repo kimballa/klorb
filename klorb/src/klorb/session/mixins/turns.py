@@ -123,6 +123,13 @@ class SessionTurnsMixin(SessionBase):
             result.append(message.model_copy(update={"content": envelope.to_wire_content(tool)}))
         return result
 
+    def wire_message_snapshot(self) -> list[Message]:
+        """This session's current message history rewritten via `_build_wire_message_snapshot()`
+        -- every `tool_response` entry's `content` replaced by the free-text form actually sent
+        to the model, rather than the persisted envelope JSON. For callers outside the turn-
+        dispatch loop (e.g. eval tracing) that want to inspect the real wire payload."""
+        return self._build_wire_message_snapshot(list(self._messages))
+
     def _send_and_receive(
         self,
         message_snapshot: list[Message],

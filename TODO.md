@@ -5,6 +5,47 @@
 
 ### Bugs
 
+* arg stripping actually confuses it: "the CreateFile was called without content."
+* need to explicitly label post-edit content and edit diff fields. c.f.:
+
+```
+=== message role=tool_response id=8 ===
+<SystemInterjection subject="EditMemory">
+MEMORY.md is now 56 lines long. Only its first 50 lines are read automatically into your Memories interjection each session. Use EditMemory(namespace="global", filename="MEMORY.md") to compact it down, moving detail into an existing memory with EditMemory(namespace="global", filename="...") or a new one with CreateMemory(namespace="global", filename="...").
+</SystemInterjection>
+
+namespace: global
+filename: MEMORY.md
+edit_success: true
+start_line: 48
+end_line: 53
+replaced_lines: 3
+new_total_lines: 56
+note: No verification ReadFile needed.
+
+48|## Topic 16
+49|- fact about topic 16
+50|- see topic-16.md for detail
+51|## User Preferences
+52|- Prefers Reviewable over GitHub PR review UI
+53|- see user-preferences.md for detail
+
+43 43   - fact about topic 14
+44 44   - see topic-14.md for detail
+45 45   ## Topic 15
+46 46   - fact about topic 15
+47 47   - see topic-15.md for detail
+48 48   ## Topic 16
+49 49   - fact about topic 16
+50 50   - see topic-16.md for detail
+   51 + ## User Preferences
+   52 + - Prefers Reviewable over GitHub PR review UI
+   53 + - see user-preferences.md for detail
+51 54   ## Topic 17
+52 55   - fact about topic 17
+53 56   - see topic-17.md for detail
+```
+
 * the 'screenshot' option in the cmd palette doesn't work.
 
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.

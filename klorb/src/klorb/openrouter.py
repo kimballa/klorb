@@ -491,9 +491,7 @@ class OpenRouterApiProvider(ApiProvider):
                             "type": "function",
                             "function": {
                                 "name": call.name,
-                                "arguments": (
-                                    call.reflected_tool_args if call.reflected_tool_args is not None
-                                    else call.arguments),
+                                "arguments": call.wire_arguments(),
                             },
                         }
                         for call in message.tool_calls

@@ -30,7 +30,7 @@ class CreateMemoryTool(Tool):
     and must never be blank. A `workspace`-namespace create is gated by
     `tools.memory.writePermission`; a `global`-namespace create is always allowed.
 
-    Creating `MEMORY.md` at 45+ lines attaches a `warning` to the result urging compaction.
+    Creating `MEMORY.md` at 45+ lines attaches a `SystemInterjection` urging compaction.
     """
 
     def __init__(self, context: ToolSetupContext) -> None:
@@ -112,9 +112,6 @@ class CreateMemoryTool(Tool):
             redactor=self._secret_redactor, session=self.context.session)
         result["namespace"] = namespace
         result["filename"] = filename
-        warning = memory_toc_overflow_warning(namespace, filename, result["total_lines"])
-        if warning is not None:
-            result["warning"] = warning
 
         logger.debug("CreateMemory %s/%s created (%d lines)", namespace, filename, result["total_lines"])
         return result
@@ -126,6 +123,10 @@ class CreateMemoryTool(Tool):
 
     def format_response(self, apply_output: Any) -> str:
         return format_create_result(apply_output)
+
+    def call_interjection(self, result: Any) -> str | None:
+        return memory_toc_overflow_warning(
+            result["namespace"], result["filename"], result["total_lines"])
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         namespace = args.get("namespace", "?")

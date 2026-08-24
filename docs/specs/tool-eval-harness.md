@@ -197,6 +197,13 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
     re-run with `self_review=<text>`), so it reaches both outputs identically rather than only
     the terminal. It does not affect `main()`'s exit code. When `--self-review` isn't passed, the
     run prints a one-line reminder that it's available.
+  * `--trace`/`--no-trace` (off by default) makes `run_case()` call `_print_message_trace()`
+    once each case's `send_turn()` returns: it iterates `session.wire_message_snapshot()` —
+    `Session.wire_message_snapshot()`'s wire-rendered history, not the persisted `tool_response`
+    envelope JSON `session.messages` holds — and prints each message under an `=== message
+    role=<role> id=<n> ===` header, `id` counting up from `0`. A `role="tool_use"` message's
+    `provider_content()` alone is usually empty, so `_wire_payload_text()` also renders each of
+    its `tool_calls`' name and `ToolCallRequest.wire_arguments()`.
 
 ## Adding a new eval case
 

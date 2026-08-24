@@ -83,6 +83,11 @@ class ToolCallRequest(BaseModel):
     """`Tool.update_args()`'s raw JSON-encoded output for this call, sent to the model in
     place of `arguments`."""
 
+    def wire_arguments(self) -> str:
+        """This call's raw JSON-encoded arguments as actually sent to a model provider:
+        `reflected_tool_args` when set, else `arguments`."""
+        return self.reflected_tool_args if self.reflected_tool_args is not None else self.arguments
+
 
 class Message(BaseModel):
     """

@@ -19,6 +19,7 @@ import klorb.tools as tools_package
 import klorb.tools.memory.common as memory_common_module
 from klorb.agents.policy import compute_root_session_grants
 from klorb.api_provider import ApiProvider
+from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
@@ -178,10 +179,38 @@ def tool_call_args(session: Session, tool_name: str) -> list[dict]:
     ]
 
 
+def _wire_payload_text(message: Message) -> str:
+    """The actual wire payload text for `message`: `provider_content()`, plus -- for a
+    `role="tool_use"` message -- each requested call's name and `wire_arguments()`, the same
+    `tool_calls` array a provider request sends alongside `content` and that `provider_content()`
+    alone omits."""
+    content = message.provider_content()
+    body = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+    if message.role != "tool_use" or not message.tool_calls:
+        return body
+    lines = [body] if body else []
+    lines.extend(
+        f"tool_call id={call.id} name={call.name} arguments={call.wire_arguments()}"
+        for call in message.tool_calls)
+    return "\n".join(lines)
+
+
+def _print_message_trace(session: Session) -> None:
+    """Dump `session.wire_message_snapshot()` to stdout for `--trace`: one
+    `=== message role=<role> id=<n> ===` header per message, followed by that message's actual
+    wire payload text (not the persisted, pre-transform `tool_response` envelope JSON) and a
+    blank line."""
+    for index, message in enumerate(session.wire_message_snapshot()):
+        print(f"=== message role={message.role} id={index} ===")
+        print(_wire_payload_text(message))
+        print()
+
+
 def run_case(
     case: EvalCase, *, model: str, provider: ApiProvider,
     on_start: Callable[[str], None] | None = None,
     on_complete: Callable[[CaseResult], None] | None = None,
+    trace: bool = False,
 ) -> CaseResult:
     """Run one `EvalCase` end to end: seed a fresh temp workspace with `case.setup_files`, send
     `case.prompt` through a real `Session` offering the real `klorb.tools` package, then grade
@@ -194,6 +223,9 @@ def run_case(
     incremental progress — including each tool call's raw request/response, via
     `CaseResult.tool_call_log` — across a run of many cases, without waiting for every case to
     finish first.
+
+    `trace`, if set, prints every message's actual wire payload text to stdout (via
+    `_print_message_trace()`) once the turn finishes.
 
     The `global` memory namespace is repointed at a case-private temp directory for the
     duration of the case, seeded beforehand from `case.global_memory_files`, so a memory-tool
@@ -249,6 +281,8 @@ def run_case(
                 logger.warning("Eval case %r raised while running: %s", case.name, exc)
                 error = f"{type(exc).__name__}: {exc}"
             duration_s = time.monotonic() - start
+            if trace:
+                _print_message_trace(session)
 
             tool_call_log = _tool_call_log(session)
             tool_call_counts: dict[str, int] = {}
@@ -292,15 +326,17 @@ def run_evaluation(
     cases: list[EvalCase], *, model: str, provider: ApiProvider,
     on_case_start: Callable[[str], None] | None = None,
     on_case_complete: Callable[[CaseResult], None] | None = None,
+    trace: bool = False,
 ) -> list[CaseResult]:
     """Run every case in `cases` in sequence and return their `CaseResult`s in order.
 
     `on_case_start`/`on_case_complete`, if given, are forwarded to each `run_case()` call as
-    `on_start`/`on_complete`.
+    `on_start`/`on_complete`; `trace` is forwarded as-is.
     """
     return [
         run_case(
-            case, model=model, provider=provider, on_start=on_case_start, on_complete=on_case_complete)
+            case, model=model, provider=provider, on_start=on_case_start, on_complete=on_case_complete,
+            trace=trace)
         for case in cases
     ]
 

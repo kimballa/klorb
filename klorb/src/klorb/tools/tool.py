@@ -276,6 +276,13 @@ class Tool(ABC):
         result shape."""
         return json.dumps(apply_output, ensure_ascii=False)
 
+    def call_interjection(self, result: Any) -> str | None:
+        """Return a `<SystemInterjection subject=name()>` body to attach to this successful
+        call's own `tool_response` envelope, given its `apply()` `result`, or `None` (the
+        default). Unlike a standing interjection provider, this is evaluated once per call to
+        this tool and only ever attaches to that call's own envelope."""
+        return None
+
     def category(self) -> str:
         """Return this tool's category (e.g. `"FILES"`, `"MEMORY"`), used by
         `klorb.agents.intersection.compute_child_tool_set` to filter which tools a subagent

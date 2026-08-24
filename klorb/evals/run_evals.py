@@ -78,6 +78,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--list-suites", action="store_true",
         help="Print the name of every known eval suite and exit, without running anything.")
+    parser.add_argument(
+        "--trace", action=argparse.BooleanOptionalAction, default=False,
+        help=(
+            "After each case's turn finishes, dump every message's actual wire payload text "
+            "to stdout (default: --no-trace)."))
     return parser.parse_args(argv)
 
 
@@ -229,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
         results.extend(run_evaluation(
             cases, model=model, provider=provider,
             on_case_start=lambda name: _print_case_start(name, color=color),
-            on_case_complete=lambda result: _print_case_result(result, color=color)))
+            on_case_complete=lambda result: _print_case_result(result, color=color),
+            trace=args.trace))
 
     print()
     print(render_report(

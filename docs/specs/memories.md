@@ -161,10 +161,11 @@ mechanics treat it specially:
   content out via `EditMemory`/`CreateMemory` instead.
 * `klorb.tools.memory.common.memory_toc_overflow_warning()` returns a warning string once
   `MEMORY.md` reaches `MEMORY_TOC_WARN_LINES` (45) lines — `CreateMemoryTool`/`EditMemoryTool`
-  attach it to their result's `warning` field, since content past line 50 stops being picked up
-  by the interjection automatically. It names the exact `EditMemory`/`CreateMemory` calls
-  (including the current `namespace`) to compact `MEMORY.md` itself or move detail into another
-  memory file.
+  return it from their `Tool.call_interjection()` override, so it reaches the model as a
+  `<SystemInterjection subject="CreateMemory"/"EditMemory">` on that same call's response, since
+  content past line 50 stops being picked up by the interjection automatically. It names the
+  exact `EditMemory`/`CreateMemory` calls (including the current `namespace`) to compact
+  `MEMORY.md` itself or move detail into another memory file.
 
 ## Configuration
 
