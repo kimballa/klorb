@@ -6,3 +6,7 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
+
+* In the VSCode plugin, the SendMessage/GetMessages tools should pretty-print nicely with a
+  `<detail>` that can unfold. The tool chip should have a classic "email" logo that looks like a
+  mailing envelope.

@@ -12,7 +12,7 @@ from klorb.agents.messaging import get_agent_message_queue
 from klorb.agents.policy import compute_root_session_grants, try_wake_next_queued_agent
 from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, TurnEventHandlers
 from klorb.tools.exceptions import ToolCallError, ToolInterruptError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.get_messages import GetMessagesTool
@@ -113,6 +113,100 @@ def test_delivers_immediately_to_a_dormant_target(
     assert new_handle.state == "finished"
     assert new_handle.output == "second answer"
     assert new_handle.parent_interested is True
+
+
+def test_delivers_immediately_to_an_idle_root_target_with_a_wake_handler(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    provider = _FakeProvider()
+    context = _role_context(tmp_path, provider, make_session_config, "operator")
+    assert context.session is not None
+    root = context.session
+    woken = threading.Event()
+    root.register_wake_handler(woken.set)
+    child = _register_dormant_child(root, provider, make_session_config, role="reviewer")
+    child_context = ToolSetupContext(
+        process_config=context.process_config, session_config=child.config, session=child)
+
+    result = SendMessageTool(child_context).apply({"id": root.id, "message": "status update"})
+
+    assert result["status"] == "delivered"
+    assert woken.is_set()
+    queued_texts = root.pending_queued_message_texts
+    assert len(queued_texts) == 1
+    assert "status update" in queued_texts[0]
+    assert not get_agent_message_queue(root).has_pending(root.id)
+
+
+def test_root_target_with_no_host_falls_back_to_the_queue(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    provider = _FakeProvider()
+    context = _role_context(tmp_path, provider, make_session_config, "operator")
+    assert context.session is not None
+    root = context.session
+    child = _register_dormant_child(root, provider, make_session_config, role="reviewer")
+    child_context = ToolSetupContext(
+        process_config=context.process_config, session_config=child.config, session=child)
+
+    result = SendMessageTool(child_context).apply({"id": root.id, "message": "status update"})
+
+    assert result["status"] == "busy"
+    assert get_agent_message_queue(root).has_pending(root.id)
+    assert root.pending_queued_message_texts == []
+
+
+def test_busy_root_target_still_uses_the_agent_message_queue(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    provider = _FakeProvider()
+    context = _role_context(tmp_path, provider, make_session_config, "operator")
+    assert context.session is not None
+    root = context.session
+    root.register_wake_handler(lambda: None)
+    root._current_turn_handlers = TurnEventHandlers()
+    child = _register_dormant_child(root, provider, make_session_config, role="reviewer")
+    child_context = ToolSetupContext(
+        process_config=context.process_config, session_config=child.config, session=child)
+
+    result = SendMessageTool(child_context).apply({"id": root.id, "message": "status update"})
+
+    assert result["status"] == "busy"
+    assert get_agent_message_queue(root).has_pending(root.id)
+
+
+def test_concurrent_sends_to_an_idle_root_target_do_not_drop_a_message(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Several SendMessage calls landing on an idle root target in quick succession must each
+    land in its queued messages rather than race and clobber one another --
+    `Session.enqueue_queued_message`'s append is lock-protected, so concurrent callers fold
+    instead of dropping."""
+    provider = _FakeProvider()
+    context = _role_context(tmp_path, provider, make_session_config, "operator")
+    assert context.session is not None
+    root = context.session
+    root.register_wake_handler(lambda: None)
+    senders = [
+        _register_dormant_child(root, provider, make_session_config, role="reviewer", title=f"s{i}")
+        for i in range(5)
+    ]
+
+    def send(sender: Session, i: int) -> None:
+        sender_context = ToolSetupContext(
+            process_config=context.process_config, session_config=sender.config, session=sender)
+        SendMessageTool(sender_context).apply({"id": root.id, "message": f"update {i}"})
+
+    threads = [threading.Thread(target=send, args=(sender, i)) for i, sender in enumerate(senders)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    queued_texts = root.pending_queued_message_texts
+    assert len(queued_texts) == 5
+    for i in range(5):
+        assert any(f"update {i}" in text for text in queued_texts)
 
 
 def test_queues_for_a_running_target_and_notifies_it(

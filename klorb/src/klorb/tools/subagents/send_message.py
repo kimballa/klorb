@@ -1,15 +1,13 @@
 # © Copyright 2026 Aaron Kimball
 """Sends a message to any agent in the session tree, whether it's idle or mid-turn."""
 
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
-from klorb.agents.messaging import get_agent_message_queue
-from klorb.agents.policy import try_wake_next_queued_agent
+from klorb.agents.policy import deliver_or_queue_agent_message
 from klorb.agents.registry import get_agent_capabilities
 from klorb.agents.runtime import find_session_in_group
-from klorb.session import Session
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import MESSAGING_TOOL_CATEGORY
@@ -23,19 +21,10 @@ class SendMessageParameters(BaseModel):
     message: str = Field(description="The message to send.")
 
 
-def _target_state(target: Session) -> Literal["root", "running", "dormant"]:
-    """`target`'s state as it matters to `SendMessage`, right before it's actually enqueued:
-    `"root"` for a top-level session (no parent, never actively dispatched), `"running"`/
-    `"dormant"` for a subagent, read from its own tracked `SubagentHandle`."""
-    if target.parent is None:
-        return "root"
-    handle = target.parent.subagent_tracker.current_handle(target.id)
-    return "running" if handle is not None and handle.state == "running" else "dormant"
-
-
 class SendMessageTool(Tool):
-    """Delivers a message to a dormant agent immediately by starting its next turn, or -- if the
-    target is busy or at a concurrency limit -- queues it for delivery via `GetMessages`."""
+    """Delivers a message to a dormant agent (subagent or idle root) immediately by starting its
+    next turn, or -- if the target is busy or at a concurrency limit -- queues it for delivery via
+    `GetMessages`."""
 
     def name(self) -> str:
         return "SendMessage"
@@ -67,22 +56,14 @@ class SendMessageTool(Tool):
                 category="validation")
         target_id = args["id"]
         if target_id == sender.id:
-            raise ToolCallError("You cannot send a message to yourself.", category="validation")
+            raise ToolCallError(
+                "You cannot send a message to yourself. Use WakeUpTimer to schedule a message to "
+                "yourself instead.", category="validation")
         target = find_session_in_group(sender, target_id)
         if target is None:
             raise ToolCallError(f"No such agent: {target_id!r}", category="validation")
 
-        pre_state = _target_state(target)
-        get_agent_message_queue(sender).enqueue(
-            sender.id, sender.config.role_name, target.id, args["message"])
-        target.notify_new_message()
-        try_wake_next_queued_agent(context.process_config, sender)
-
-        if pre_state in ("root", "running"):
-            status = "busy"
-        else:
-            handle = target.parent.subagent_tracker.current_handle(target.id) if target.parent else None
-            status = "delivered" if handle is not None and handle.state == "running" else "capacity"
+        status = deliver_or_queue_agent_message(context.process_config, sender, target, args["message"])
         return {"status": status, "target_id": target.id}
 
     def format_response(self, apply_output: Any) -> str:

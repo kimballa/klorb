@@ -7,6 +7,7 @@ See docs/specs/subagents.md."""
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -162,6 +163,33 @@ class SubagentTracker:
         with self._lock:
             handle.delivered = True
 
+    def try_claim_for_relay(self, child_id: str) -> SubagentHandle | None:
+        """Atomically check-and-mark `child_id`'s finished, parent-interested handle delivered.
+        Returns `None`, without marking anything, if there's no such handle, it isn't
+        parent-interested, it hasn't finished yet, or it's already marked delivered.
+
+        The caller must call `release_relay_claim` on the returned handle if it turns out not to
+        actually deliver the output anywhere. Skipping that call permanently hides the handle from
+        `WaitForSubagent`, `pop_next_completed`, and `try_pop_completed`, even though nothing ever
+        delivered it.
+
+        This shares the tracker's own `_lock` with `pop_next_completed`/`try_pop_completed`'s own
+        check-and-set, so at most one of these three methods can claim a given handle."""
+        with self._lock:
+            handle = self._handles.get(child_id)
+            if (handle is None or not handle.parent_interested or handle.delivered
+                    or handle.output is None):
+                return None
+            handle.delivered = True
+            return handle
+
+    def release_relay_claim(self, handle: SubagentHandle) -> None:
+        """Reverse a `try_claim_for_relay` call: set `handle.delivered` back to `False`. Call this
+        when a `try_claim_for_relay` caller decides it will not deliver `handle`'s output anywhere,
+        so `WaitForSubagent`/`pop_next_completed`/`try_pop_completed` can still return it later."""
+        with self._lock:
+            handle.delivered = False
+
     def mark_parent_interested(self, child_id: str) -> None:
         """Set `child_id`'s current handle's `parent_interested` to `True` under this tracker's
         lock -- called whenever an agent message from this session's own `parent` actually
@@ -191,28 +219,38 @@ class SubagentTracker:
     def pop_next_completed(self, timeout: float) -> SubagentHandle | None:
         """Block up to `timeout` seconds for the next completed-but-undelivered, parent-interested
         subagent (oldest first), marking it delivered before returning it, or return `None` on
-        timeout.
-
-        Pops the `SubagentHandle` object the completion queue itself carries, rather than
-        re-resolving `child_id` through `self._handles`."""
-        try:
-            handle = self._completion_queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
-        with self._lock:
-            handle.delivered = True
-            return handle
+        timeout. A handle already marked delivered by another caller by the time it's popped is
+        skipped rather than returned again."""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                handle = self._completion_queue.get(timeout=remaining)
+            except queue.Empty:
+                return None
+            with self._lock:
+                if handle.delivered:
+                    continue
+                handle.delivered = True
+                return handle
 
     def try_pop_completed(self) -> SubagentHandle | None:
         """Pop and mark delivered at most one completed-but-undelivered, parent-interested
-        subagent, without blocking, or return `None` if none are waiting."""
-        try:
-            handle = self._completion_queue.get_nowait()
-        except queue.Empty:
-            return None
-        with self._lock:
-            handle.delivered = True
-            return handle
+        subagent, without blocking, or return `None` if none are waiting. A handle already marked
+        delivered by another caller by the time it's popped is skipped rather than returned
+        again."""
+        while True:
+            try:
+                handle = self._completion_queue.get_nowait()
+            except queue.Empty:
+                return None
+            with self._lock:
+                if handle.delivered:
+                    continue
+                handle.delivered = True
+                return handle
 
     def pop_all_completed(self, timeout: float) -> list[SubagentHandle]:
         """Block up to `timeout` seconds for at least one completed-but-undelivered subagent,

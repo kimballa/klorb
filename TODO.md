@@ -82,9 +82,6 @@
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
     (see "Plan 013: WebFetch" section below)
   * BroadcastMessage -- send a msg to the whole agent team
-  * Wake an idle root session automatically when SendMessage targets it while it isn't mid-turn.
-    Today the message just queues and surfaces via the AgentMessage interjection at the root's
-    next turn -- see docs/specs/subagents.md's "Out of scope" section.
   * SearchTools currently only does case-insensitive literal match over tool
     name/description/parameter schema docs. Add semantic index search too (requires a
     json- or tool-specific chunker).
@@ -138,7 +135,8 @@
 
 ### Bugs
 
-* test_rendering.py::test_scrolling_to_the_top_expands_a_collapsed_history_chunk is flaky in CI runs and sometimes fails even with timeout raised from 5 to 10s.
+* test_rendering.py::test_scrolling_to_the_top_expands_a_collapsed_history_chunk is flaky in CI runs
+  and sometimes fails even with timeout raised from 5 to 10s.
 
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird

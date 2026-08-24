@@ -138,6 +138,103 @@ def test_pop_next_completed_delivers_oldest_first(make_session_config: Callable[
     assert tracker.pop_next_completed(timeout=1.0) is second
 
 
+def test_try_claim_for_relay_marks_delivered_and_returns_the_handle(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+
+    claimed = tracker.try_claim_for_relay(handle.session.id)
+
+    assert claimed is handle
+    assert handle.delivered is True
+
+
+def test_try_claim_for_relay_returns_none_when_not_yet_finished(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+
+    assert tracker.try_claim_for_relay(handle.session.id) is None
+
+
+def test_try_claim_for_relay_returns_none_for_an_uninterested_handle(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config), parent_interested=False)
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+
+    assert tracker.try_claim_for_relay(handle.session.id) is None
+
+
+def test_try_claim_for_relay_returns_none_once_already_claimed(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+    tracker.try_claim_for_relay(handle.session.id)
+
+    assert tracker.try_claim_for_relay(handle.session.id) is None
+
+
+def test_release_relay_claim_makes_the_handle_available_again(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+    claimed = tracker.try_claim_for_relay(handle.session.id)
+    assert claimed is not None
+
+    tracker.release_relay_claim(claimed)
+
+    assert handle.delivered is False
+    assert tracker.pop_next_completed(timeout=1.0) is handle
+
+
+def test_pop_next_completed_skips_a_handle_already_delivered_via_relay(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """`mark_finished` always pushes an interested handle onto the completion queue regardless of
+    whether it also gets delivered some other way -- a handle a relay already claimed (and never
+    released) must be skipped here rather than handed back a second time."""
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+    tracker.try_claim_for_relay(handle.session.id)
+
+    assert tracker.pop_next_completed(timeout=0.05) is None
+
+
+def test_try_pop_completed_skips_a_handle_already_delivered_via_relay(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    parent = Session(make_session_config(), provider=MagicMock())
+    tracker = SubagentTracker()
+    handle = _handle(_child_session(parent, make_session_config))
+    tracker.register(handle)
+    _finish(tracker, handle.session.id, "the answer")
+    tracker.try_claim_for_relay(handle.session.id)
+
+    assert tracker.try_pop_completed() is None
+
+
 def test_try_pop_completed_is_nonblocking_and_delivers_at_most_one(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

@@ -426,13 +426,22 @@ shared) is where a message sits until it's actually delivered.
     is always acquired before any queue access, never the other way around" ordering the
     end-of-turn drain below follows, so the two can never deadlock or double-dispatch the same
     recipient.
-* **A message to a *running* target, or to a root session** (which has no active-wake path at
-  all — see "Out of scope" below), is left in the queue for the recipient to discover itself: a
-  standing `<SystemInterjection subject="AgentMessage">` (registered on every session in
-  `_reset_state`, the same mechanism as the `AgentGroup` interjection) fires whenever
-  `AgentMessageQueue.has_pending(self.id)` is true, reminding the session to call `GetMessages`.
-  This is polled at the same two points every other standing interjection is: the start of a new
-  turn, and between each round of tool calls within one.
+* **A message to an idle root session is delivered directly**, bypassing the queue entirely:
+  `SendMessageTool.apply()` checks `target.current_turn_handlers() is None` for a root target
+  and, if so, calls `Session.deliver_event_message()` with the message framed through
+  `format_new_turn_message()` — the same host-agnostic wake mechanism `Timer`/
+  `FileSystemModified`/`WorkspaceTrustChanged` hook output already uses to start an idle root's
+  next turn (`docs/specs/hooks-and-events.md`). A root built with no host attached (`_wake_handler`
+  is `None`, no turn in flight — a bare `Session()` in a test or minimal embedding) makes
+  `deliver_event_message()` raise `ChainedHookMessageUndeliverableError`; `SendMessageTool`
+  catches that and falls through to the ordinary queued path below rather than surfacing a tool
+  error to the sender.
+* **A message to a *running* target, or to a *busy* root session**, is left in the queue for the
+  recipient to discover itself: a standing `<SystemInterjection subject="AgentMessage">`
+  (registered on every session in `_reset_state`, the same mechanism as the `AgentGroup`
+  interjection) fires whenever `AgentMessageQueue.has_pending(self.id)` is true, reminding the
+  session to call `GetMessages`. This is polled at the same two points every other standing
+  interjection is: the start of a new turn, and between each round of tool calls within one.
 * **`WaitForSubagent` is interrupted by an incoming agent message**, exactly like a queued human
   message already interrupts it: `SendMessage` calls the target session's `Session.
   notify_new_message()` (which sets the same `_user_msg_event` `enqueue_queued_message()` sets)
@@ -476,6 +485,32 @@ described above. An uninterested completion (a human addressed this subagent dir
 "Direct user messaging") still gets `state`/`output` set, so it stays visible to the subagents
 panel and a later `SendMessage`, but is never queued: nothing pops it, and it is never handed
 to the parent.
+
+Right after `mark_finished()` (both call sites in `dispatch_subagent_turn`'s worker, always
+outside `dispatch_guard()` — see "Locking" above), `klorb.agents.policy.
+_relay_completion_to_parent()` tries to hand the output straight to the parent instead of leaving
+it for an explicit `WaitForSubagent` poll. It first calls `SubagentTracker.try_claim_for_relay()`
+to atomically check-and-mark the handle delivered, so a `WaitForSubagent` call racing on the
+parent's own thread can never also deliver the same completion — the two paths share the
+tracker's own `_lock`, and `pop_next_completed()`/`try_pop_completed()` both skip an
+already-delivered handle rather than returning it a second time. If the claim succeeds:
+
+* **`parent` already has a turn of its own in flight** (`current_turn_handlers() is not None`,
+  root or subagent): the claim is released and nothing further happens. `mark_finished()`'s
+  completion-queue push already covers this case for `WaitForSubagent`, and routing it through
+  `AgentMessageQueue` too would leave a self-addressed entry with no natural consumer other than
+  `GetMessages` — which nothing would ever think to call for it — spuriously interrupting that
+  same `WaitForSubagent` call, or a later one, with a "new message" that's actually just the
+  completion it's already about to return.
+* **`parent` is an idle root**: delivered the same way `SendMessage` delivers to an idle root (see
+  "Agent-to-agent messaging"), via `deliver_or_queue_agent_message()`. A root with no host
+  attached to wake (`ChainedHookMessageUndeliverableError`) releases the claim instead, leaving
+  the completion queue as the only delivery path, exactly as it already was.
+* **`parent` is a dormant subagent**: also routed through `deliver_or_queue_agent_message()`,
+  which actively wakes it via `try_wake_next_queued_agent()` — fixing what would otherwise be a
+  silent drop under `maxConcurrentPerParent`/`maxActiveTotal` contention, the same FIFO-fair
+  behavior a genuine `SendMessage` gets. If capacity is exceeded, the claim is released and the
+  message stays queued in `AgentMessageQueue`, discoverable once capacity frees.
 
 `klorb.agents.runtime.build_subagent_interjection_provider()` builds an equivalent
 zero-arg provider closure, in the same shape `Session.register_standing_interjection()` expects
@@ -681,14 +716,6 @@ problem, and a reload/restore of the same session renders correctly either way.)
 
 ## Out of scope
 
-* **Waking an idle root session.** `SendMessage` actively wakes a *dormant subagent* (see
-  "Agent-to-agent messaging"), but a root (top-level, user-facing) session has no equivalent
-  active-wake path — nothing proactively starts a fresh turn for it, whether to deliver a
-  finished subagent's output or an incoming `SendMessage`. Delivery to an idle root happens
-  opportunistically, the next time its own turn runs and polls the standing interjections (or
-  via an explicit `WaitForSubagent` call for subagent output). `Session.append_system_note()`
-  (used by `cascade_close_subagents`) is the primitive a future "wake an idle root" mechanism
-  would reuse for the message shape, but nothing calls it for that purpose today. See `TODO.md`.
 * **`VisionAssistant` role** and any other specialist role beyond Explorer and Reviewer.
 * **`@mention` filtering by the creator's `readDirs`.** Today a `@mention` in a message sent to
   a subagent is left entirely unresolved (see "Security model"); actually resolving it while

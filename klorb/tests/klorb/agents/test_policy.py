@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from tools.subagents.conftest import _FakeProvider
 
+from klorb.agents.messaging import get_agent_message_queue
 from klorb.agents.policy import (
     compute_root_session_grants,
     dispatch_direct_message,
@@ -22,11 +23,12 @@ from klorb.agents.runtime import SUBAGENT_MGMT_TOOL_NAMES, SubagentHandle, Subag
 from klorb.api_provider import ProviderResponse
 from klorb.hooks.config import HookConfig, TimerEventConfig
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig
+from klorb.session import Session, SessionConfig, TurnEventHandlers
 from klorb.session.events import QueuedMessage
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.subagents.wait import WaitForSubagentTool
 from klorb.workspace import Workspace
 
 
@@ -648,3 +650,158 @@ def test_dispatch_subagent_turn_chains_via_onsubagentturnend_until_the_cap_trips
     user_messages = [m.content for m in child.messages if m.role == "user"]
     assert user_messages[0].endswith("task")
     assert user_messages[1:] == ["keep going"] * 5
+
+
+def test_dispatch_subagent_turn_relays_output_to_an_idle_root_parent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A finished, parent-interested subagent's output reaches an idle root parent right away, the
+    same way SendMessage would deliver to it -- no explicit WaitForSubagent call needed."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    woken = threading.Event()
+    parent.register_wake_handler(woken.set)
+
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    assert woken.wait(timeout=5.0)
+    assert handle.delivered is True
+    queued_texts = parent.pending_queued_message_texts
+    assert len(queued_texts) == 1
+    assert "subagent reply" in queued_texts[0]
+    parent_context = ToolSetupContext(
+        process_config=process_config, session_config=parent.config, session=parent)
+    with pytest.raises(ToolCallError, match="no subagents"):
+        WaitForSubagentTool(parent_context).apply({})
+
+
+def test_dispatch_subagent_turn_relay_exception_does_not_strand_the_handle(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """An unexpected exception out of the relay's delivery attempt must not permanently hide the
+    handle from `WaitForSubagent`, and must not stop `dispatch_subagent_turn`'s worker from still
+    calling `try_wake_next_queued_agent` afterward."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    parent.register_wake_handler(lambda: None)
+    parent.deliver_event_message = MagicMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    assert handle.delivered is False
+    parent_context = ToolSetupContext(
+        process_config=process_config, session_config=parent.config, session=parent)
+    result = WaitForSubagentTool(parent_context).apply({})
+    assert result["completed"][0]["output"] == "subagent reply"
+
+
+def test_dispatch_subagent_turn_does_not_relay_to_a_busy_parent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A parent with a turn already in flight when its child finishes must not get a
+    self-addressed AgentMessageQueue entry -- that would spuriously interrupt a WaitForSubagent
+    call already polling on that same turn with a "new message" that's actually just the
+    completion it's about to return anyway. `mark_finished`'s completion-queue push already
+    covers delivery for this case."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    parent._current_turn_handlers = TurnEventHandlers()
+    try:
+        handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
+        handle.thread.join(timeout=5.0)
+
+        assert handle.delivered is False
+        assert parent.subagent_tracker.has_undelivered()
+        assert not get_agent_message_queue(parent).has_pending(parent.id)
+        assert parent.pending_queued_message_texts == []
+    finally:
+        parent._current_turn_handlers = None
+
+
+def test_dispatch_subagent_turn_wakes_a_dormant_subagent_parent(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A finished child's output actively wakes its own dormant subagent parent -- not just the
+    parent's parent -- fixing what would otherwise be a silent drop under the old
+    `_deliver_event_to_subagent`-style approach."""
+    provider = _FakeProvider(reply_text="child reply")
+    process_config = ProcessConfig()
+    grandparent = Session(
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config)
+    parent = Session(
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config, parent=grandparent)
+    dormant_parent_handle = SubagentHandle(
+        session=parent, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="operator", title="parent task",
+        outcome=SubagentTurnOutcome(output="earlier parent output", completed=True))
+    grandparent.subagent_tracker.register(dormant_parent_handle)
+    child = Session(
+        make_session_config(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config, parent=parent)
+
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    assert handle.delivered is True
+    woken_handle = grandparent.subagent_tracker.handles()[-1]
+    assert woken_handle is not dormant_parent_handle
+    woken_handle.thread.join(timeout=5.0)
+    assert len(provider.calls) >= 2
+    relayed_prompt = next(m for m in provider.calls[1] if m.role == "user").content
+    assert "child reply" in relayed_prompt
+    assert f"From {child.id}" in relayed_prompt
+
+
+def test_dispatch_subagent_turn_leaves_a_capacity_blocked_parent_queued_not_delivered(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """When waking the dormant parent would exceed `maxConcurrentPerParent`, the relay leaves the
+    message queued instead of delivering it or dropping it -- discoverable later once capacity
+    frees up, the same fairness guarantee `try_wake_next_queued_agent` gives any other queued
+    agent message."""
+    provider = _FakeProvider(reply_text="child reply")
+    process_config = ProcessConfig(subagents_max_concurrent_per_parent=0)
+    grandparent = Session(
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config)
+    parent = Session(
+        make_session_config(role_name="operator", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config, parent=grandparent)
+    dormant_parent_handle = SubagentHandle(
+        session=parent, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="operator", title="parent task",
+        outcome=SubagentTurnOutcome(output="earlier parent output", completed=True))
+    grandparent.subagent_tracker.register(dormant_parent_handle)
+    child = Session(
+        make_session_config(role_name="explorer", workspace=Workspace(path=tmp_path, trusted=True)),
+        provider=provider, process_config=process_config, parent=parent)
+
+    handle = dispatch_subagent_turn(process_config, parent, child, "explorer", "title", "task")
+    handle.thread.join(timeout=5.0)
+
+    assert handle.delivered is False
+    assert get_agent_message_queue(parent).has_pending(parent.id)
+    assert grandparent.subagent_tracker.handles() == [dormant_parent_handle]
+
+
+def test_dispatch_subagent_turn_does_not_relay_a_human_addressed_completion(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """`parent_interested=False` (a human addressed this subagent directly) must never surface to
+    the parent through the relay either, exactly as it never did through `WaitForSubagent`."""
+    provider = _FakeProvider(reply_text="subagent reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    woken = threading.Event()
+    parent.register_wake_handler(woken.set)
+
+    handle = dispatch_subagent_turn(
+        process_config, parent, child, "explorer", "title", "task", parent_interested=False)
+    handle.thread.join(timeout=5.0)
+
+    assert not woken.is_set()
+    assert parent.pending_queued_message_texts == []
+    assert handle.delivered is False

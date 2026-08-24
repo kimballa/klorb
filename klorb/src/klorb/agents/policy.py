@@ -17,7 +17,7 @@ from klorb.agents.intersection import (
     compute_child_subagent_roles,
     compute_child_tool_set,
 )
-from klorb.agents.messaging import format_new_turn_message, get_agent_message_queue
+from klorb.agents.messaging import QueuedAgentMessage, format_new_turn_message, get_agent_message_queue
 from klorb.agents.registry import get_agent_registry
 from klorb.agents.runtime import (
     SUBAGENT_ABORTED_MARKER,
@@ -43,6 +43,7 @@ from klorb.session import (
     SessionConfig,
     TurnEventHandlers,
 )
+from klorb.session.constants import ChainedHookMessageUndeliverableError
 from klorb.session.events import QueuedMessage
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.registry import ToolRegistry
@@ -389,6 +390,7 @@ def dispatch_subagent_turn(
         while True:
             if not outcome.completed:
                 parent.subagent_tracker.mark_finished(child.id, outcome)
+                _relay_completion_to_parent(process_config, parent, child)
                 try_wake_next_queued_agent(process_config, child)
                 return
             # The queue-empty checks and `mark_finished` happen under the same dispatch guard
@@ -410,6 +412,7 @@ def dispatch_subagent_turn(
                         parent.subagent_tracker.mark_finished(child.id, outcome)
                         just_finished = True
             if just_finished:
+                _relay_completion_to_parent(process_config, parent, child)
                 try_wake_next_queued_agent(process_config, child)
                 return
             assert pending is not None
@@ -427,16 +430,15 @@ def dispatch_subagent_turn(
 
 def try_wake_next_queued_agent(process_config: ProcessConfig, session: Session) -> None:
     """Try to deliver the oldest still-queued agent message whose recipient is a dormant
-    subagent with room to run, anywhere in `session`'s tree -- called by `SendMessage` after
-    enqueueing, and by `dispatch_subagent_turn`'s own worker every time a subagent finishes (the
-    only two events that can free a concurrency slot or add a new candidate). A no-op if nothing
-    in the queue is currently both dormant and within `tools.subagents.maxConcurrentPerParent`/
-    `maxActiveTotal`.
+    subagent with room to run, anywhere in `session`'s tree. Must be re-invoked whenever a new
+    message is queued or a concurrency slot frees up, since those are the only two changes that
+    can make a queued candidate newly eligible. A no-op if nothing in the queue is currently both
+    dormant and within `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`.
 
     First does a lock-light peek to name a *candidate* recipient (the oldest dormant one, so
     several agents waiting for a slot are woken in send order), then re-validates that candidate
-    under its own `SubagentTracker.dispatch_guard()` before popping its messages and dispatching
-    -- the peek alone can go stale between naming the candidate and acting on it, so nothing here
+    under its own `SubagentTracker.dispatch_guard()` before popping its messages and dispatching.
+    The peek alone can go stale between naming the candidate and acting on it, so nothing here
     trusts it without a second, guarded check. Silently does nothing if the candidate is no
     longer eligible by then; its messages stay queued for the next call to pick up."""
     root = session
@@ -471,6 +473,97 @@ def try_wake_next_queued_agent(process_config: ProcessConfig, session: Session) 
             process_config, recipient.parent, recipient, handle.role, handle.title,
             format_new_turn_message(messages, recipient.parent.id),
             parent_interested=any(m.sender_id == recipient.parent.id for m in messages))
+
+
+def _try_deliver_event_message(sender: Session, recipient: Session, body: str) -> bool:
+    """Deliver `body` into `recipient`'s conversation via `Session.deliver_event_message()`,
+    framed as coming from `sender`. Returns `False` only if `recipient` has no wake handler and no
+    turn already running."""
+    framed = format_new_turn_message(
+        [QueuedAgentMessage(sender.id, sender.config.role_name, recipient.id, body)],
+        recipient_parent_id=None)
+    try:
+        recipient.deliver_event_message(framed)
+        return True
+    except ChainedHookMessageUndeliverableError:
+        return False
+
+
+def deliver_or_queue_agent_message(
+    process_config: ProcessConfig, sender: Session, recipient: Session, body: str,
+) -> Literal["delivered", "busy", "capacity"]:
+    """Deliver `body` from `sender` to `recipient`: directly into an idle root's next turn, or
+    queued in the tree-wide `AgentMessageQueue` for a busy or dormant recipient.
+
+    Returns `"delivered"` if `recipient`'s next turn is already running with `body` in it,
+    `"capacity"` if a dormant subagent recipient couldn't be resumed within
+    `tools.subagents.maxConcurrentPerParent`/`maxActiveTotal`, or `"busy"` if `body` is left
+    queued for `recipient` to discover via `GetMessages`.
+    """
+    if recipient.parent is None:
+        if recipient.current_turn_handlers() is None and _try_deliver_event_message(sender, recipient, body):
+            return "delivered"
+        get_agent_message_queue(sender).enqueue(sender.id, sender.config.role_name, recipient.id, body)
+        recipient.notify_new_message()
+        try_wake_next_queued_agent(process_config, sender)
+        return "busy"
+
+    # `was_running` only picks between the "busy"/"capacity" wording below; a stale read here
+    # can't misreport "delivered", which is decided separately below from a fresh
+    # `AgentMessageQueue.has_pending()` call made after try_wake_next_queued_agent() has run.
+    handle = recipient.parent.subagent_tracker.current_handle(recipient.id)
+    was_running = handle is not None and handle.state == "running"
+    queue = get_agent_message_queue(sender)
+    queue.enqueue(sender.id, sender.config.role_name, recipient.id, body)
+    recipient.notify_new_message()
+    try_wake_next_queued_agent(process_config, sender)
+    if queue.has_pending(recipient.id):
+        return "busy" if was_running else "capacity"
+    return "delivered"
+
+
+def _relay_completion_to_parent(process_config: ProcessConfig, parent: Session, child: Session) -> None:
+    """Proactively hand `child`'s just-finished output to `parent`, if eligible. Never raises."""
+    handle = parent.subagent_tracker.try_claim_for_relay(child.id)
+    if handle is None:
+        # Nothing to claim: not parent-interested, not finished yet, or another caller
+        # (WaitForSubagent, cascade_close_subagents) already claimed it first.
+        return
+
+    if parent.current_turn_handlers() is not None:
+        # `parent` has a turn of its own running right now. `mark_finished` already pushed this
+        # handle onto the completion queue, so a `WaitForSubagent` call on that turn will see it
+        # without our help. Enqueueing into `AgentMessageQueue` too would incorrectly trip
+        # `WaitForSubagentTool`'s pending-agent-message interrupt on that same call.
+        parent.subagent_tracker.release_relay_claim(handle)
+        return
+
+    # From here on, `handle` is claimed (marked delivered) until proven otherwise: `delivered`
+    # only flips to `True` on confirmed success, and the `finally` below releases the claim
+    # whenever it doesn't -- including if `_try_deliver_event_message`/
+    # `deliver_or_queue_agent_message` raises, so this can never strand the handle as
+    # permanently claimed with nothing having actually delivered it.
+    delivered = False
+    try:
+        # `try_claim_for_relay` only claims a handle whose `output` is already set.
+        assert handle.output is not None, "try_claim_for_relay must not claim a handle with no output"
+        if parent.parent is None:
+            # `parent` is an idle root: deliver directly into its next turn, the same mechanism
+            # Timer/FileSystemModified hook output already uses to wake an idle root.
+            delivered = _try_deliver_event_message(child, parent, handle.output)
+        else:
+            # `parent` is itself a dormant subagent: actively wake it, respecting
+            # maxConcurrentPerParent/maxActiveTotal, via the same path SendMessage uses. `parent`
+            # has no turn in flight here (checked above), so this can't trip the
+            # WaitForSubagent-interrupt problem the busy branch above avoids.
+            status = deliver_or_queue_agent_message(process_config, child, parent, handle.output)
+            delivered = status == "delivered"
+    except Exception:
+        logger.exception(
+            "Relaying subagent %s's completion to parent %s failed", child.id, parent.id)
+    finally:
+        if not delivered:
+            parent.subagent_tracker.release_relay_claim(handle)
 
 
 def dispatch_direct_message(

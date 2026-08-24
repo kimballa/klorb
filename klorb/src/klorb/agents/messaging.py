@@ -103,10 +103,16 @@ def format_new_turn_message(
     for the turn that delivers them -- used both when a dormant recipient is woken to receive
     them and when a running recipient's own turn drains them at its end, in place of GetMessages.
     """
-    parts = ["You have received the following message(s) from other agents, not the user:", ""]
+    count = len(messages)
+    suffix = "s" if count > 1 else ""
+    parts = [
+        f"You have received the following {count} message{suffix} from other agents, not the user:",
+        ""
+    ]
+
     for i, message in enumerate(messages, start=1):
         tag = " (your parent)" if message.sender_id == recipient_parent_id else ""
-        parts.append(f"{i}. From {message.sender_id}{tag}:\n{message.body}")
+        parts.append(f"Message {i}. From {message.sender_id}{tag}:\n{message.body}")
     parts.append(
         "Respond to your own work as appropriate. If you want to reply to a sender that isn't "
         "your parent, use SendMessage.")
