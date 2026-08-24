@@ -20,7 +20,7 @@ Klorb Code is an experimental coding agent system with:
 
 * A harness with flexible tools for software engineering and general agentic reasoning tasks
   * Skills and memories
-  * Subagent use with several built-in roles
+  * [Subagent use with several built-in roles](docs/user/subagents.md)
   * Built-in local task tracking
   * Standard tools for bash, file I/O, scratchpad, filesystem search, etc.
 * Out of the box support for several open models, and easy ability to add any other openrouter.ai-supported inference model

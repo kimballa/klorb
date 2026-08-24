@@ -138,7 +138,7 @@ than delivered.
 ### Subagent roles can grant hooks/events
 
 An internal `agents.json` role definition (one of the specialist subagent roles klorb launches via
-`CreateSubagent` — see docs/specs/subagents.md) may itself carry `hooks`/`events` fields, in the
+`CreateSubagent` — see `docs/user/subagents.md`) may itself carry `hooks`/`events` fields, in the
 same shape shown at the top of this document. Every subagent created as that role picks them up
 automatically, on top of whatever hooks/events it inherits from its creator — no skill activation
 or config file needed. This is how, for example, the Pair Programmer role keeps a live
