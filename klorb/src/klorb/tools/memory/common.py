@@ -94,8 +94,9 @@ def memory_toc_overflow_warning(namespace: Namespace, filename: str, total_lines
     return (
         f"{MEMORY_TOC_FILENAME} is now {total_lines} lines long. Only its first "
         f"{MEMORY_TOC_AUTO_READ_LINES} lines are read automatically into your Memories "
-        f'interjection each session. Use EditMemory(namespace="{namespace}", '
-        f'filename="{MEMORY_TOC_FILENAME}") to compact it down, moving detail into an existing '
+        f"interjection each session, so you must reduce it to {MEMORY_TOC_AUTO_READ_LINES} or fewer lines."
+        f'Use EditMemory(namespace="{namespace}", filename="{MEMORY_TOC_FILENAME}") to remove lines '
+        f'from {MEMORY_TOC_FILENAME} and move the information into an existing '
         f'memory with EditMemory(namespace="{namespace}", filename="...") or a new one with '
         f'CreateMemory(namespace="{namespace}", filename="...").'
     )

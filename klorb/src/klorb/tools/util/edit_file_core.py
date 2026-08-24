@@ -35,9 +35,9 @@ def format_edit_result(result: dict[str, Any]) -> str:
     header_lines = format_header_lines(
         result, _EDIT_RESULT_HEADER_ORDER,
         known_elsewhere=frozenset({"post_edit_content", "diff"}))
-    post_edit_content: str = result.get("post_edit_content", "")
+    post_edit_content: str = "Post-edit content:\n========\n" + result.get("post_edit_content", "")
     diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
-    diff_block = format_diff_hunks(diff_hunks)
+    diff_block = "Applied diff:\n========\n" + format_diff_hunks(diff_hunks)
     return "\n\n".join(["\n".join(header_lines), post_edit_content, diff_block])
 
 
@@ -106,9 +106,22 @@ class EditFileCore:
     """
 
     def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
-        """`{}` once the call succeeded, since `apply()`'s own `post_edit_content`/`diff`
+        """Removes old_text / new_text once the call succeeded, since `apply()`'s own `post_edit_content`/`diff`
         already show the file's new state; unchanged on error."""
-        return tool_args if err_info.is_error else {}
+        if err_info.is_error:
+            return tool_args # No change.
+
+        out = dict(tool_args)
+        if out.get("old_text"):
+            out["old_text"] = "(Applied correctly; arguments truncated. See response)"
+        if out.get("old_text_start"):
+            out["old_text_start"] = "(Applied correctly; arguments truncated. See response)"
+        if out.get("old_text_end"):
+            out["old_text_end"] = "(Applied correctly; arguments truncated. See response)"
+        if out.get("new_text"):
+            out["new_text"] = "(Applied correctly; arguments truncated. See response)"
+
+        return out
 
     def parameter_properties(self) -> dict[str, Any]:
         """Return the JSON-schema properties for the edit tools' `parameters()`."""

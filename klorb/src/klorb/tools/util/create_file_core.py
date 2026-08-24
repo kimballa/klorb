@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from klorb.tools.response_envelope import ToolCallErrorInfo
 from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
-from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
@@ -25,12 +24,10 @@ header lines in."""
 
 def format_create_result(result: dict[str, Any]) -> str:
     """Render a `CreateFileCore.apply()`-shaped result dict as `key: value` header lines in
-    `_CREATE_RESULT_HEADER_ORDER`, followed by `diff` as a plain-text block."""
+    `_CREATE_RESULT_HEADER_ORDER`, followed by `content` as a plain-text block."""
     header_lines = format_header_lines(
-        result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"diff"}))
-    diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
-    diff_block = format_diff_hunks(diff_hunks)
-    return "\n".join(header_lines) + "\n\n" + diff_block
+        result, _CREATE_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"content"}))
+    return "\n".join(header_lines) + "\n\nCreated content:\n========\n" + result["content"]
 
 
 class CreateFileCore:
@@ -40,12 +37,14 @@ class CreateFileCore:
     """
 
     def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
-        """`tool_args` with `content` dropped once the call succeeded, since `apply()`'s own
-        `diff` already reflects it; unchanged on error."""
+        """`tool_args.content` dropped once the call succeeded, since `apply()`'s own
+        `content` already reflects it; unchanged on error."""
         if err_info.is_error:
             return tool_args
         new_args = dict(tool_args)
-        new_args.pop("content", None)
+        # We can't *entirely* remove the field or it confuses the agent to read it back; replace
+        # the actual lengthy contents with a short update.
+        new_args["content"] = "(Applied correctly; arguments truncated. See response)"
         return new_args
 
     def parameter_properties(self) -> dict[str, Any]:
@@ -64,7 +63,7 @@ class CreateFileCore:
         redactor: SecretRedactor | None = None, session: "Session | None" = None,
     ) -> dict[str, Any]:
         """Create `path` with `args["content"]`, returning `total_lines`, `created`, `note`, and
-        `diff` (the caller adds `filename` if it has one).
+        `content` (the caller adds `filename` if it has one).
 
         `subject` names the thing being created, for the "already exists" error message (e.g.
         a filename, or a memory's namespace/filename pair); `edit_hint` names the tool to use
@@ -72,13 +71,15 @@ class CreateFileCore:
 
         When `redactor` is given, `content` is detokenized before writing -- so a
         `[[SECRET:...]]` token echoed from an earlier `ReadFile` resolves to the file's real
-        bytes rather than being written literally. The returned `diff` is then re-redacted so
+        bytes rather than being written literally. The returned `content` is then re-redacted so
         the result never carries a plaintext secret either. See
         docs/specs/secret-redaction.md.
         """
-        content = args["content"]
+        redacted_content = args["content"]
         if redactor is not None:
-            content = redactor.detokenize(session, content)
+            content = redactor.detokenize(session, redacted_content)
+        else:
+            content = redacted_content
         if path.exists():
             raise FileExistsError(f"{subject} already exists; use {edit_hint} to modify it instead")
 
@@ -86,14 +87,9 @@ class CreateFileCore:
         path.write_text(content, encoding="utf-8")
 
         new_lines = content.splitlines()
-        diff_hunks = build_diff_hunks([], new_lines)
-        if redactor is not None:
-            for hunk in diff_hunks:
-                for diff_line in hunk.lines:
-                    diff_line.text = redactor.redact(session, diff_line.text)
         return {
             "total_lines": len(new_lines),
             "created": True,
-            "diff": [hunk.model_dump() for hunk in diff_hunks],
+            "content": redacted_content,
             "note": NO_READFILE_VERIFICATION_NOTE,
         }
