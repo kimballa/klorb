@@ -33,7 +33,9 @@ docs/specs/subagents.md and docs/specs/hooks-and-events.md already established:
 * **`klorb.agents.messaging.AgentMessageQueue`** (`klorb/src/klorb/agents/messaging.py`) is the
   closest existing analogue: one instance per session tree, held on the root `Session` and
   reached by every descendant via `.parent` (`get_agent_message_queue`), the same sharing pattern
-  `workspace_indexer` uses. A new `klorb.agents.chat.ChatRoom` follows this exact shape.
+  `workspace_indexer` uses. A new `klorb.agents.chat.Channel` follows this exact shape — named
+  `Channel`, in keeping with the IRC framing TODO itself reaches for ("It looks like IRC"), not
+  `ChatRoom`.
 * **Standing interjections** (`Session.register_standing_interjection`, polled on every
   `send_turn()` and between tool-call rounds within a turn) are how `AgentMessageQueue` reminds a
   session it has unread messages waiting (`subject="AgentMessage"`) without a live push channel.
@@ -73,13 +75,8 @@ docs/specs/subagents.md and docs/specs/hooks-and-events.md already established:
 * Desktop/OS-level notifications (terminal bell, `notify-send`, etc.) on an `@user` mention — no
   such mechanism exists anywhere in klorb today (checked: no bell/notify-send call sites), and
   adding one is an unrelated, standalone feature.
-* Role-name-based `@mention` addressing (`@explorer` instead of a session id) — see "Open design
-  questions" below.
 * Chat message editing/deletion, and any content moderation beyond the runaway-wake-loop guard
   described below.
-* True real-time delivery while no klorb process is running for the workspace — same constraint
-  `Plan 022`'s `Timer` event already lives with (`docs/specs/hooks-and-events.md`: "best-effort
-  only, not real cron"); a genuine daemon mode is that plan's own deferred item, not this one's.
 
 ## Data model
 
@@ -87,27 +84,38 @@ New module `klorb/src/klorb/agents/chat.py`, sibling to `klorb/src/klorb/agents/
 
 * **`ChatMessage`** (frozen dataclass): `seq: int` (a monotonically increasing, never-reused
   sequence number — see "why not a list index" below), `sender_id: str` (a session id, or the
-  reserved literal `"user"`), `sender_role: str | None` (`None` for the user), `sender_title:
-  str | None` (the session's own display name/title, for a human-readable chat nickname —
-  `None` falls back to rendering `sender_id`), `timestamp: datetime`, `body: str`, `mentions:
-  list[str]` (participant ids/`"user"` recognized in `body`), `unresolved_mentions: list[str]`
-  (an `@token` in `body` that didn't resolve to any live participant — left as plain text, not
-  specially rendered, but recorded so `PostChat`'s own result can tell the caller a mention
-  didn't land).
-* **`ChatRoom`**: one instance per session tree, constructed lazily and held on the root
-  `Session` (`Session.chat_room`, mirroring `Session.agent_message_queue`), reached by every
+  reserved literal `"user"`), `timestamp: datetime`, `body: str` (the raw text exactly as posted,
+  never rewritten), `mentions: list[str]` (participant ids/`"user"` recognized in `body`),
+  `unresolved_mentions: list[str]` (an `@token` in `body` that didn't resolve to any live
+  participant — left as plain text, not specially rendered, but recorded so `PostChat`'s own
+  result can tell the caller a mention didn't land). Deliberately **no** `sender_role`/
+  `sender_title` field: a sender's role and display nickname are derivable from `sender_id` alone
+  by walking the live session tree at render time (see "Nicknames" below), so nothing needs to be
+  captured redundantly at post time.
+* **`Channel`**: one instance per session tree, constructed lazily and held on the root
+  `Session` (`Session.chat_channel`, mirroring `Session.agent_message_queue`), reached by every
   descendant via the same `.parent`-walk `get_agent_message_queue` already uses. Holds:
   * `_messages: list[ChatMessage]` — the full retained log, oldest first.
-  * `_next_seq: int` — the sequence counter.
+  * `_next_seq: klorb.counter.AtomicCounter` — the sequence generator. A bare `int` plus `+=`
+    is exactly the "unsynchronized read-modify-write counter" hazard
+    docs/specs/threading-audit.md's finding 7 already documents for `Session.
+    _allocate_child_index` (two concurrent `PostChat` calls, from two different agents' own
+    threads, could otherwise read the same `_next_seq` before either writes it back and produce
+    two messages sharing one `seq`) — `AtomicCounter.increment()` is the established fix for
+    this exact shape, used instead of introducing a second ad hoc locking pattern.
   * `_hwm: dict[str, int]` — each participant's last-seen `seq` (their high-water mark).
-  * `_lock: threading.Lock` guarding all of the above, the same granularity
-    `AgentMessageQueue` uses.
+  * `_mention_wake_count: klorb.counter.AtomicCounter` — see "Runaway-wake-loop guard" below;
+    same reasoning as `_next_seq` for why this isn't a plain `int`.
+  * `_lock: threading.Lock` guarding `_messages`/`_hwm` (the fields `AtomicCounter` doesn't
+    already cover on its own), the same granularity `AgentMessageQueue` uses.
 
-  Methods: `post(sender_id, sender_role, sender_title, body) -> ChatMessage` (assigns `seq`,
+  Methods: `post(sender_id, body) -> ChatMessage` (assigns `seq` via `_next_seq.increment()`,
   parses mentions, appends, trims if `tools.chat.maxHistory` is exceeded — see "Config" below);
   `register_participant(participant_id, at_seq=None)` (seeds a fresh hwm entry, defaulting
-  `at_seq` to the *current* `_next_seq` — this is the literal mechanism behind TODO's "new agents
-  have their hwm start at 'now', not the beginning"); `unread_count(participant_id) -> int`;
+  `at_seq` to the *current* `_next_seq.get_value()` — this is the literal mechanism behind TODO's
+  "new agents have their hwm start at 'now', not the beginning"); `unread_count(participant_id)
+  -> int`; `unread_mention_count(participant_id) -> int` (of that same unread set, how many
+  `mentions` this participant — see "Standing 'unread chat' interjection" below);
   `read_and_advance(participant_id, limit=None) -> list[ChatMessage]` (the only way a
   participant's own hwm moves forward); `history(limit=None) -> list[ChatMessage]` (the full/tail
   log regardless of any hwm, for the TUI transcript, which always shows everything rather than
@@ -124,39 +132,70 @@ access to the oldest messages they hadn't read yet, the same acceptable trade-of
 `grep_max_results` cap already makes for a single call's result size, just applied to retention
 instead.
 
-### Participant identity, and `@user`
+### Participant identity, `@user`, and nicknames
 
 A "participant" is any session id in the current tree (root or subagent, `walk_session_tree`) plus
-the one reserved literal `"user"`, standing in for the human at the TUI/ACP client — this is
-exactly what lets `@mentioning an agent that's alive` and `@mention the user by referring to
-@user` share one resolution path in `post()`: split `body` on the same start/whitespace-anchored
-`@token` grammar `at-mention-file-inlining.md` uses for its own delimiter rules (leading `@`,
-optional quoting/escaping for a body containing literal `@name` text that isn't meant as a
-mention... in practice a chat mention token is a bare id or `user`, so the escaping machinery that
-grammar needs for arbitrary filenames is unnecessary here — a plain `@[A-Za-z0-9_.-]+` token
-suffices), then resolve each token against `ChatRoom.participant_ids() | {"user"}`. This is a
-**separate grammar from `@`-file-mention inlining**, scoped only to `PostChat`'s own `message`
-argument and the TUI chat input widget — never applied to the ordinary agent prompt input, so
-there is no collision with `docs/specs/at-mention-file-inlining.md`'s existing `@foo.txt` syntax.
+the one reserved literal `"user"`, standing in for the human at the TUI/ACP client.
 
-Addressing an agent by its raw session id (e.g. `@1706040000-blue-otter`) is unwieldy for a human
-to type, but it's the same identifier `SendMessage`'s own `id` argument already requires and the
-`AgentGroup` standing interjection already surfaces to every agent in the tree — so no new
-identifier scheme is introduced for agent-to-agent mentions. The TUI can soften this with
-autocomplete (see "TUI integration" below) without changing what `PostChat` actually receives.
+**Two distinct `@mention` surfaces, both resolved against the same live tree snapshot, but
+favoring different forms:**
+
+* **Agents author mentions by raw session id** (`@1706040000-blue-otter`) — the same identifier
+  `SendMessage`'s own `id` argument already requires and the `AgentGroup` standing interjection's
+  `Id` column already surfaces to every agent in the tree (docs/specs/subagents.md), so an agent
+  composing a `PostChat` message reaches for an identifier it already has on hand rather than one
+  it has to compute.
+* **The user authors (and reads) mentions by a role+address nickname** — `@<role>-<address>`, e.g.
+  `@explorer-1.1` or `@operator-1` (`address` is `Session.address()`'s own dotted-decimal string,
+  docs/specs/subagents.md's "Addressing"). This is unambiguous (an address is unique and stable
+  for a session's lifetime) and far more readable than a raw id for a human typing or scanning a
+  transcript.
+
+`Channel`'s mention parser accepts **either** form uniformly: split `body` on a start/whitespace-
+anchored `@token` grammar (a plain `@[A-Za-z0-9_.-]+` token suffices — a chat mention never needs
+the quoting/escaping `at-mention-file-inlining.md`'s own grammar carries for arbitrary filenames),
+then resolve each token against a snapshot built fresh from `walk_session_tree` for this one
+`post()` call: an exact session-id match, an exact `f"{role_name}-{address}"` nickname match, or
+the literal `user`. This is a **separate grammar from `@`-file-mention inlining**, scoped only to
+`PostChat`'s own `message` argument and the TUI chat input widget — never applied to the ordinary
+agent prompt input, so there is no collision with docs/specs/at-mention-file-inlining.md's
+existing `@foo.txt` syntax.
+
+**Rendering always prefers the nickname form for the human**, regardless of which form the
+original poster typed: the TUI transcript (see "TUI integration" below) substitutes any resolved
+mention token with `@<role>-<address>`, computed fresh at render time from the live tree (never
+stored on `ChatMessage`, since a role/address pairing is only meaningful while that session is
+still part of the tree — this is also why `sender_id` alone, not a captured `sender_role`/
+`sender_title`, is enough on the stored message: the nickname is a view, not stored data). A
+message an agent reads via `ReadChat` is returned with `body` verbatim, unrewritten — an agent
+already correlates ids via its own `AgentGroup` table and doesn't need the nickname substitution
+the human-facing view performs.
+
+`klorb.agents.chat.chat_nickname(session_or_id) -> str` is the one shared helper both the mention
+resolver and the TUI renderer call, so the two never compute the mapping differently: `"user"` ->
+`"user"`; a live session -> `f"{session.config.role_name}-{session.address()}"`; a session id no
+longer present in the tree (a closed process's leftover, or a stale persisted message) -> falls
+back to the raw id, since there's no live role/address left to compute from.
 
 ## Persistence
 
-`ChatRoom` persists to a new `sessions/<subdir>/chat.json` — schema-versioned per
+`Channel` persists to a new `sessions/<subdir>/chat.json` — schema-versioned per
 docs/specs/persisted-json-schema-versioning.md (`{"schema": {"name": "klorb-chat", "version":
 "1.0.0"}, "messages": [...], "hwm": {...}, "next_seq": ...}`). Rather than writing on every single
-`PostChat` call, `ChatRoom` tracks a dirty flag and `SessionPersistenceMixin.persist_state()` — the
+`PostChat` call, `Channel` tracks a dirty flag and `SessionPersistenceMixin.persist_state()` — the
 root session's own existing whole-file-rewrite save path (docs/specs/session-persistence.md) —
 additionally rewrites `chat.json` when dirty, in the same call. This reuses the existing
 session-subdir-claim/lock machinery instead of adding a second, independent write path with its
 own atomicity story. On restore (`try_restore_session`), a present `chat.json` seeds a fresh
-`ChatRoom`'s `_messages`/`_hwm`/`_next_seq` directly; a restored hwm entry for a session id that
+`Channel`'s `_messages`/`_hwm`/`_next_seq` directly; a restored hwm entry for a session id that
 never reappears in the new process (an old subagent) is simply inert — never pruned, but harmless.
+
+**The chat log does not survive `/clear`/`reset_session()`.** It's conversation-scoped state, the
+same category `_reset_state()` already wipes for `_messages`/`agent_message_queue`/
+`subagent_tracker` and everything else "Session reset" in docs/specs/hooks-and-events.md
+enumerates — a fresh conversation starts with a fresh, empty `Channel`, not the prior
+conversation's transcript. `Session.chat_channel` is rebuilt (not merely cleared in place) the
+same way the rest of `_reset_state()`'s conversation-scoped fields are.
 
 ## New tools: `PostChat` / `ReadChat`
 
@@ -169,9 +208,9 @@ tool families already use.
 Args: `message: str` (required). Requires a live `context.session` (raises `ToolCallError`,
 category `"validation"`, otherwise — the same requirement `GrepTool`'s spill path has for a
 different reason: there's no meaningful "post to a chat room" without a session identity to post
-*as*). `apply()` calls `ChatRoom.post(session.id, session.config.role_name, session.name,
-message)`, then attempts the `@mention` active-wake path (below) for each resolved mention.
-Result: `{"seq", "mentions", "unresolved_mentions", "note"}`, `note` a fixed reminder that other
+*as*). `apply()` calls `Channel.post(session.id, message)`, then attempts the `@mention`
+active-wake path (below) for each resolved mention. Result: `{"seq", "mentions",
+"unresolved_mentions", "note"}`, `note` a fixed reminder that other
 agents receive this asynchronously via their own `ReadChat` call, not immediately. `summary()`:
 `"Posted to chat room (#<seq>)"`, with a mention count suffix when non-empty. `is_read_only() ==
 True` — like `SendMessage`/`EditScratchpad`, this mutates harness-managed shared conversation
@@ -181,14 +220,14 @@ state, not the user's files or environment, so it's safe to offer even under
 ### `ReadChat`
 
 Args: `limit: int | None` (optional per-call cap, hard-bounded by `tools.chat.maxReadPerCall`
-regardless). `apply()` calls `ChatRoom.read_and_advance(session.id, limit=...)`. Result:
+regardless). `apply()` calls `Channel.read_and_advance(session.id, limit=...)`. Result:
 `{"messages": [...], "count", "remaining_unread"}` — `remaining_unread` is non-zero only when
 `limit` cut the batch short, telling the caller to call `ReadChat` again rather than assuming
 it's caught up. An empty result (`count == 0`) is not an error, mirroring `GetMessages`'s "No new
 messages waiting." shape. `is_read_only() == True`.
 
-Both tools ship `default_visible() == True`/`default_described() == True` — small, two-field (or
-zero-field) schemas, no reason to hide them behind `SearchTools` the way `ReplaceAll` is.
+Both tools ship `default_visible() == True`/`default_described() == True` — each has at most one
+argument, no reason to hide either behind `SearchTools` the way `ReplaceAll` is.
 
 ## Delivery: the unread interjection and `@mention` wakes
 
@@ -199,10 +238,13 @@ zero-field) schemas, no reason to hide them behind `SearchTools` the way `Replac
 `SessionCoreMixin._reset_state()` (so every session, root or subagent, carries it from
 construction), polled on every `send_turn()` call and between tool-call rounds, emitting
 `<SystemInterjection subject="ChatUnread">You have N unread chat room message(s). Call ReadChat to
-see them.</SystemInterjection>` whenever `ChatRoom.unread_count(session.id) > 0` — no
+see them.</SystemInterjection>` whenever `Channel.unread_count(session.id) > 0` — no
 change-tracking needed beyond that, since a session that calls `ReadChat` naturally silences its
 own interjection by draining its unread count to zero, the same self-quieting behavior
-`AgentMessage`'s interjection already has.
+`AgentMessage`'s interjection already has. When `Channel.unread_mention_count(session.id)` is also
+non-zero, the same interjection appends a second sentence calling that out specifically: `"...
+including M that @mention you directly."` — so a session skimming a long unread count still knows
+whether any of it was addressed to it by name, without having to call `ReadChat` just to find out.
 
 This alone satisfies TODO's "all chat reading is async" and "new agents have their hwm start at
 now" requirements for any agent that's already actively turning, or that turns again later for any
@@ -212,8 +254,8 @@ soon.
 
 ### `@mention` active wake
 
-`PostChatTool.apply()`, after `ChatRoom.post()` returns the resolved `mentions`, calls a new
-`klorb.agents.policy.notify_chat_mention(session, chat_room, mentioned_id)` once per mention
+`PostChatTool.apply()`, after `Channel.post()` returns the resolved `mentions`, calls a new
+`klorb.agents.policy.notify_chat_mention(session, chat_channel, mentioned_id)` once per mention
 (skipping the poster's own id, if it somehow mentions itself). This reuses the exact same
 three-way branch `SendMessage`'s own delivery already has
 (docs/specs/subagents.md's "Agent-to-agent messaging"):
@@ -244,9 +286,10 @@ keeps that invariant intact at the small cost of one extra tool round trip.
 Two agents that each `@mention` the other back in every reply could wake each other indefinitely
 across turns — a distinct failure mode from the bounded, single-turn `max_chained_hook_turns`
 guard (docs/specs/hooks-and-events.md), since this spans independent turns on two different
-sessions. `ChatRoom` tracks a simple counter, `_mention_wake_count`, incremented once per actual
-wake attempted (not per mention parsed — a mention of an already-running session costs nothing).
-Once it reaches `tools.chat.maxMentionWakesPerSession` (see "Config"), `notify_chat_mention`
+sessions. `Channel._mention_wake_count` (the `AtomicCounter` from "Data model" above) is
+incremented once per actual wake attempted (not per mention parsed — a mention of an
+already-running session costs nothing). Once it reaches `tools.chat.maxMentionWakesPerSession`
+(see "Config"), `notify_chat_mention`
 stops attempting further active wakes for the rest of this tree's lifetime — logged at `warning`
 — but `PostChat` itself keeps succeeding and the standing interjection keeps working normally,
 so the chat room degrades to "passive only" rather than breaking. This mirrors the "cap it, log a
@@ -261,11 +304,11 @@ Every role whose `agents.json` entry leaves `restrict_to.tools` unset (`operator
 `implementer`, `pair_programmer` — see docs/specs/subagents.md) inherits both automatically,
 matching TODO's "everyone has PostChat and ReadChat tools." `explorer`'s entry, however, sets an
 *explicit* narrow `tools` allowlist (`FindFile`, `Grep`, `ListDir`, `ReadFile`, ...) — "everyone"
-does not reach it for free, so Phase 1 must decide whether to add `PostChat`/`ReadChat` to that
-list. See "Open design questions" below: this is flagged rather than assumed, since Explorer's
-whole contract today is "silent, bounded, report-only" (docs/specs/subagents.md's "Explorer
-role"), and a standing broadcast channel is a real change to that contract, not a mechanical
-tool-list edit.
+does not reach it for free, so Phase 1 adds `PostChat`/`ReadChat` to that list explicitly:
+Explorer gets chat access too, confirmed rather than left as an open question, even though it's a
+real addition to a role whose contract (docs/specs/subagents.md's "Explorer role") is otherwise
+silent and report-only — an Explorer can now also post a finding or a question into the shared
+room while it works, not only in its final report.
 
 ## Config
 
@@ -298,16 +341,20 @@ root-vs-subagent branches wherever they currently decide what to render/route, r
 "chat" into `_selected_session` itself (which isn't a real `Session` and would force every one of
 those call sites to add a `None`-but-actually-chat special case instead of one new flag check).
 The exact mechanism is left to the implementer to confirm once the real branches are in front of
-them — see "Open design questions."
+them, rather than mandated here.
 
 ### Rendering
 
 A new `#chat-history` `VerticalScroll` (parallel to `#history`/`#subagent-history`), populated
-from `ChatRoom.history()` and rendered IRC/Slack-style: `[HH:MM] <sender title or id>: <body>`,
-with `@mentions` (including `@user`) rendered in bold, and the user's own posted messages styled
-distinctly from agent posts. Reuses the pinned-to-bottom scroll tracking pattern
+from `Channel.history()` and rendered IRC/Slack-style: `[HH:MM] <nickname>: <body>`, where
+`<nickname>` is `chat_nickname(sender_id)` (`@user` renders as e.g. `"You"`, an agent as its own
+`role-address` nickname — see "Participant identity, `@user`, and nicknames" above) and any
+`@mention` inside `body` (including `@user`) is substituted with its own nickname form and
+rendered in bold, regardless of whether the original poster typed a raw id or a nickname. The
+user's own posted messages are styled distinctly from agent posts. Reuses the pinned-to-bottom
+scroll tracking pattern
 (`_subagent_history_pinned_to_bottom`/`_on_subagent_history_scroll_changed`) `#subagent-history`
-already has, under new names scoped to `#chat-history`. Because `ChatRoom` is shared tree-wide and
+already has, under new names scoped to `#chat-history`. Because `Channel` is shared tree-wide and
 already lives on the root session, this view needs no per-subagent variant the way the transcript
 view does — there is exactly one chat room per tree, matching there being exactly one
 `AgentMessageQueue`.
@@ -315,26 +362,41 @@ view does — there is exactly one chat room per tree, matching there being exac
 ### Composing and posting as the user
 
 When the chat row is selected, the existing prompt input's Enter-key handling routes to
-`PostChatTool` directly — a synchronous log append via `ChatRoom.post("user", None, <a fixed
-display name like "You">, text)`, not an LLM turn (there is no model call involved in the user
-posting to chat, mirroring how a human's direct message to a subagent, per docs/specs/
-subagents.md's "Direct user messaging," is host-side dispatch rather than a tool call — posting
-to chat is host-side too, just even simpler, since there's no target session to wake or queue
-into for the user's own post). Posting implicitly counts as "read up to here" for the poster,
-matching ordinary chat-client behavior, so `ChatRoom.post` also advances the poster's own hwm to
-the message it just wrote.
+`PostChatTool` directly — a synchronous log append via `Channel.post("user", text)`, not an LLM
+turn (there is no model call involved in the user posting to chat, mirroring how a human's direct
+message to a subagent, per docs/specs/subagents.md's "Direct user messaging," is host-side
+dispatch rather than a tool call — posting to chat is host-side too, just even simpler, since
+there's no target session to wake or queue into for the user's own post). The composer accepts
+`@role-address` nicknames directly (e.g. typing `@explorer-1.1`); no separate autocomplete-then-
+rewrite step is needed, since `Channel`'s mention parser already resolves that exact form (see
+"Participant identity, `@user`, and nicknames" above) — a live-roster autocomplete popup as the
+user types `@` is a natural, but non-essential, usability nicety layered on top later, not a
+prerequisite for the nickname form to work. Posting implicitly counts as "read up to here" for the
+poster, matching ordinary chat-client behavior, so `Channel.post` also advances the poster's own
+hwm to the message it just wrote.
 
 ### Attention/unread indicator
 
 `ReplApp._attention_needed` (today populated only for a subagent panel row whose interactive ask
-is waiting on the user) gains a synthetic `"chat"` entry whenever `ChatRoom.unread_count("user") >
-0` while `_chat_selected` is `False` — driving the exact same blinking `(!)` marker
-`SubagentsPanel.show_rows` already renders for a subagent row, and the same
-`#subagent-attention-status`-style status-line fallback text (e.g. "Chat room has new messages")
-when the panel itself is closed. This is the literal mechanism behind TODO's "you get a
-notification if you're on an agent history screen rather than in the chat" — reusing, not
-reimplementing, the same infrastructure that already handles "you're looking at session X but
-session Y needs you."
+is waiting on the user) gains a synthetic `"chat"` entry whenever `Channel.unread_count("user") >
+0` while `_chat_selected` is `False`. Unlike the subagent-attention case, this needs **two**
+distinguishable visual states, not one, since an unread ordinary post and an unread post that
+`@user`-mentions the human are different urgency levels:
+
+* **Plain unread** (`unread_count("user") > 0`, `unread_mention_count("user") == 0`) — a
+  **steady** `!` marker on the chat row, not blinking. Present, but not demanding attention the
+  way the existing subagent-ask marker does.
+* **Unread `@mention`** (`unread_mention_count("user") > 0`) — the existing blinking `(!)` marker
+  `SubagentsPanel.show_rows`/`_tick_subagents_panel` already renders for a subagent row awaiting
+  the user's input, reused as-is: an `@user` mention is exactly the "this needs you specifically"
+  signal that marker was already built for.
+
+Both states also drive the `#subagent-attention-status`-style status-line fallback text when the
+panel itself is closed (e.g. "Chat room has new messages" vs. "Chat room: you were mentioned"),
+mirroring the existing steady-vs-blinking split in the marker itself. This is the literal
+mechanism behind TODO's "you get a notification if you're on an agent history screen rather than
+in the chat" — reusing, not reimplementing, the same infrastructure that already handles "you're
+looking at session X but session Y needs you," extended with one more severity level.
 
 ### Keybinding
 
@@ -345,38 +407,19 @@ Slack"), not something that belongs nested inside a panel titled around subagent
 keeps it one keystroke away. `Ctrl+R` is unused today (existing bindings: `ctrl+c`/`ctrl+q`/
 `ctrl+o`/`ctrl+t`/`ctrl+g`/`ctrl+e`, per `klorb/src/klorb/tui/app.py`).
 
-## Open design questions
-
-These should be resolved (or explicitly deferred with a stated default) before this plan moves to
-`ready/`:
-
-1. **Should `PostChat`/`ReadChat` really be universal, including Explorer?** TODO says "everyone,"
-   but Explorer's whole role contract (docs/specs/subagents.md's "Explorer role") is a silent,
-   bounded specialist whose only deliverable is its final report — a standing broadcast channel is
-   a real behavior change to that contract, not a mechanical `agents.json` tools-list edit.
-   Recommend confirming explicitly rather than defaulting either way.
-2. **Autocomplete for `@mention` in the TUI chat input.** Raw session ids are unwieldy to type.
-   Recommend a Phase-3 autocomplete that maps a friendly label (role name, title) back to the real
-   id before the text reaches `PostChat`, without changing the wire-level grammar (which stays
-   id-based, per "Participant identity" above).
-3. **Does the chat log survive `/clear`/`reset_session()`?** Recommend mirroring whatever
-   `AgentMessageQueue` itself does across a reset (its current behavior should be confirmed by
-   reading `_reset_state()` directly during Phase 1, not assumed here) — the chat room's window
-   should track its host queue's own definition of "which session state is conversation-scoped."
-4. **Role-name mention addressing** (`@explorer` resolving to the sole live agent of that role, if
-   unambiguous). Recommend deferring — see "Future work."
-
 ## Implementation phases
 
 ### Phase 1: Core data model and tools
 
-* `klorb.agents.chat.ChatMessage`/`ChatRoom`, `Session.chat_room` (lazily constructed, tree-shared,
-  mirroring `agent_message_queue`).
-* `PostChat`/`ReadChat` tools (`klorb/src/klorb/tools/chat/`), unit tests for mention parsing, hwm
-  advancement, the `maxHistory` trim, and the `maxReadPerCall` cap.
+* `klorb.agents.chat.ChatMessage`/`Channel`/`chat_nickname()`, `Session.chat_channel` (lazily
+  constructed, tree-shared, mirroring `agent_message_queue`; rebuilt fresh on
+  `reset_session()`/`/clear`, per "Persistence" above).
+* `PostChat`/`ReadChat` tools (`klorb/src/klorb/tools/chat/`), unit tests for mention parsing
+  (both raw-id and `role-address` nickname forms), hwm advancement, the `maxHistory` trim, and the
+  `maxReadPerCall` cap.
 * `tools.chat.*` config keys wired into `ProcessConfig`/`default-config.json`.
-* Resolve open question 1 above; update `resources/agents.json`'s `explorer` entry accordingly if
-  the answer is "yes, include it."
+* Add `PostChat`/`ReadChat` to `resources/agents.json`'s `explorer` entry's `restrict_to.tools`
+  allowlist.
 * `chat.json` persistence (write on `persist_state()`, load in `try_restore_session`).
 
 ### Phase 2: Unread interjection and `@mention` wakes
@@ -393,9 +436,12 @@ These should be resolved (or explicitly deferred with a stated default) before t
 
 * `#chat-history` rendering, the panel's synthetic chat row, the `_chat_selected` state, and
   prompt-input routing for posting as the user.
-* `_attention_needed`'s `"chat"` entry and its blinking-marker/status-line rendering.
+* `_attention_needed`'s `"chat"` entry, its steady-vs-blinking marker split, and status-line
+  rendering.
 * `Ctrl+R` binding.
-* Resolve open question 2 (autocomplete) if in scope for this phase, else defer explicitly.
+* A live-roster `@`-autocomplete popup in the chat composer, as a usability nicety on top of the
+  `role-address` nickname grammar `PostChat` already accepts as of Phase 1 (not a prerequisite for
+  it — see "Composing and posting as the user" above).
 * Pilot-based integration tests, following the pattern `klorb/tests/klorb/tui/mixins/
   test_subagents_panel.py` already uses for the analogous subagent-selection mechanics.
 
@@ -416,11 +462,7 @@ archived, per `docs/plans/README-PLANS.md`:
 * VS Code plugin / ACP rendering of the chat room — needs its own ACP extension methods/
   notifications and webview messaging design, not a reuse of the TUI panel's own mechanics.
 * Desktop/OS-level notification (terminal bell, `notify-send`) on an `@user` mention.
-* Role-name-based `@mention` addressing (`@explorer`), with defined ambiguity-handling once more
-  than one live agent shares a role.
 * Chat message editing/deletion.
 * A `SearchChat`-style tool for scrolling back through history older than a participant's own hwm
   window, if bounded retention (`tools.chat.maxHistory`) turns out to be too aggressive in
   practice for long sessions.
-* True always-on chat delivery independent of any klorb process being alive for the workspace —
-  blocked on Plan 022's own deferred "genuine persistent daemon mode."
