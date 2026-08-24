@@ -68,7 +68,7 @@ class SubagentPlan:
     session_config: SessionConfig
     tool_classes: "dict[str, type[Tool]]"
     effective_subagent_roles: frozenset[str]
-    role_events: "dict[str, list[EventConfig]]"
+    role_events: dict[str, list[EventConfig]]
     """`role_definition`'s own `events` grant, already folded into `session_config.events`. Kept
     separately since a subagent never fires its own `onSessionStart`, so the caller must start
     its watcher explicitly once the child `Session` exists."""
@@ -224,11 +224,17 @@ def plan_subagent_creation(
     # The role's own agents.json hooks/events grant lands on every subagent created as this
     # role, on top of whatever it inherited above from its creator.
     role_hooks = agent_hook_configs(role_definition)
+    if role_hooks:
+        logger.debug(
+            "Role %r grants hook handler(s) for %s.", role_definition.name, sorted(role_hooks))
     merged_hooks = {name: list(handlers) for name, handlers in child_config.hooks.items()}
     concatenate_named_handler_lists(merged_hooks, role_hooks)
     child_config.hooks = merged_hooks
 
     role_events = agent_event_configs(role_definition)
+    if role_events:
+        logger.debug(
+            "Role %r grants event handler(s) for %s.", role_definition.name, sorted(role_events))
     merged_events = {name: list(handlers) for name, handlers in child_config.events.items()}
     concatenate_named_handler_lists(merged_events, role_events)
     child_config.events = merged_events

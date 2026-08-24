@@ -77,6 +77,10 @@ The Klorb project is organized as a collection of subprojects:
 * Use explicit typing as often as possible. At minimum, every method and method return type must be declared.
   * Python methods that return nothing explicitly declare `-> None`.
   * For Typescript methods, `: void`.
+  * Don't quote a Python type annotation (`x: "Foo"`) unless it's truly required — a genuine
+    forward reference (the name isn't defined yet at that point in the file) or a real circular
+    import guarded by `if TYPE_CHECKING:`. If the type is already imported and resolvable, write
+    it unquoted.
 * Encapsulate related state and behavior in a class, even for only one instance
   (a singleton). No module-level mutable variables + functions that read/write
   them (Function/var declarations outside a class); wrap them in a class, with private

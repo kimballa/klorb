@@ -93,10 +93,8 @@ prompts); changing what a role can do means editing the packaged file. One entry
   the whole group is tracking, not just its own), `send_messages` (may message another agent in
   the group directly — any role may still *receive* a message regardless of this flag).
 * **`hooks`** / **`events`** — let a role come with its own background behavior built in, in the
-  same shape a skill's own `metadata.klorb.hooks`/`.events` grant uses (see `docs/user/hooks.md`).
-  Every subagent created as this role picks these up automatically — no extra setup needed. This
-  is how, for example, the Pair Programmer role keeps a live watch on your file changes from its
-  very first turn.
+  same shape as the hooks and events blocks of `klorb-config.json` (see `docs/user/hooks.md`).
+  Every subagent created as this role picks these up automatically.
 
 ## Role-specific system prompts
 
@@ -109,7 +107,6 @@ klorb system-prompt --role explorer
 ```
 
 This prints the fully resolved system prompt (the shared default plus that role's own addendum),
-the tool definitions it would receive, and a token-count breakdown — the same thing klorb would
-actually send to the model. Add `--model` to see a model-specific prompt tier if one exists for
-that role. See `klorb system-prompt --help`, or `docs/user/usage.md`'s `COMMANDS` section, for the
-full flag list.
+the tool definitions it would receive, and a token-count breakdown. Add `--model` to see a
+model-specific prompt tier if one exists for that role. See `klorb system-prompt --help`, or
+`docs/user/usage.md`'s `COMMANDS` section, for the full flag list.

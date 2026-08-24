@@ -63,7 +63,7 @@ def parse_session_scoped_hook_dict(
     name. A name outside `HOOK_NAMES`, or a `PROCESS_SCOPED_HOOK_NAMES` entry (a session-scoped
     grant may never add a process-wide handler), is dropped, logged as a `logger.warning()`.
     Every parsed `HookConfig` whose raw dict didn't set `isHeritable` explicitly gets
-    `is_heritable=default_is_heritable` forced onto it.
+    `is_heritable=default_is_heritable` forced onto it, itself `False` by default.
     """
     if not isinstance(raw_hooks, dict):
         logger.warning("%s must be an object; got %r", source_label, raw_hooks)
