@@ -11,22 +11,22 @@ one on its own when it judges it applicable.
 
 ## Where klorb looks for skills
 
-Skills are discovered from three locations, checked in this order (most specific wins on a name
-collision):
+Skills are discovered from three locations, checked in this order (the first match wins):
 
-1. **User** — `~/.local/share/klorb/skills/<name>/SKILL.md`. Anything you add here follows you
-   across every project.
-2. **Workspace** — `.klorb/skills/<name>/SKILL.md` in the current project. Only used once you've
+1. **Workspace** — `.klorb/skills/<name>/SKILL.md` in the current project. Only used once you've
    trusted the workspace.
+2. **User** — `~/.local/share/klorb/skills/<name>/SKILL.md`. Anything you add here follows you
+   across every project.
 3. **Internal** — shipped inside klorb itself. This is where the skills described below live.
 
 Each is a directory named after the skill (`pair-programming/`, not `Pair Programming/`)
 containing a `SKILL.md` file: a short YAML header (`name`, `description`) followed by the actual
 instructions in markdown. See `/create-edit-skill` below if you want to write your own.
 
-If a project already has Claude-Code-style skills under `.claude/skills/`, turn on
-`compatibility.claudeSkills` in `klorb-config.json` (or just run `/claude-compatibility`) and
-klorb will read those too, alongside `.klorb/skills/`.
+If a project already has Claude-Code-style skills under its own `.claude/skills/` (a workspace-
+relative directory, not `~/.claude/skills/`), turn on `compatibility.claudeSkills` in
+`klorb-config.json` (or just run `/claude-compatibility`) and klorb will read those too, alongside
+`.klorb/skills/`.
 
 ## What's different about a klorb skill
 
@@ -51,12 +51,9 @@ metadata:
 * **`bashCommands`** pre-approves specific commands the skill's own instructions rely on, so
   you're not asked to approve them the first time the agent runs one.
 * **`hooks`/`events`** let activating the skill subscribe the current session to a lifecycle hook
-  or a standing event — most notably `FileSystemModified`, which watches files on disk and wakes
-  the agent when they change (see [Hooks and events](hooks.md)). This is how `/pair-programming`
-  (below) gives its reviewing agent a live view of your edits.
+  or a standing event.
 * **`disable-model-invocation`** marks a skill as reachable only by typing its exact `/name` — the
-  agent won't stumble into it on its own. A few of klorb's internal skills use this for narrow
-  setup steps you'll never need to invoke directly.
+  agent won't stumble into it on its own.
 
 Everything else about a `SKILL.md` file — the `name`/`description` frontmatter, the markdown
 body — follows the same format Claude Code skills use, so existing skill-authoring habits transfer
@@ -66,16 +63,16 @@ directly.
 
 klorb ships several skills you can invoke by name. A few worth knowing about:
 
-* **`/pair-programming`** — work through a large or uncertain task alongside a second agent: agree
-  on the design together first, then let it watch your edits and your todo list as you implement,
-  trading feedback over chat as you go.
-* **`/code-review`** — review the working diff, the latest commit, a branch, or a GitHub PR for
-  bugs, architecture fit, and (if one exists) conformance to its plan or spec.
-* **`/write-plan`** — turn a feature, refactor, or other engineering task into a written
-  implementation plan before code gets written.
-* **`/create-edit-skill`** — author or edit a skill of your own, in the workspace or user tier.
 * **`/claude-compatibility`** — turn on support for a project's existing `.claude/skills/`/
   `CLAUDE.md` files.
+* **`/code-review`** — review the working diff, the latest commit, a branch, or a GitHub PR for
+  bugs, architecture fit, and (if one exists) conformance to its plan or spec.
+* **`/create-edit-skill`** — author or edit a skill of your own, in the workspace or user tier.
+* **`/pair-programming`** — give your agent a second agent to pair with on a large or uncertain
+  task: they agree on the design together first, then the pairer watches your agent's edits and
+  todo list as it implements, trading feedback over chat as it goes.
+* **`/write-plan`** — turn a feature, refactor, or other engineering task into a written
+  implementation plan before code gets written.
 
 klorb also ships a handful of narrower skills the agent activates on its own when they're relevant
 (debugging technique, multithreading pitfalls, and similar know-how). You don't need to remember

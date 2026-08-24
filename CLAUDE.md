@@ -57,6 +57,12 @@ delete the whole clause or sentence they appear in:
 * **Never push directly to `main`.** Always work on a named feature branch and open a PR.
 * When running as an interactive Claude Code terminal session (`CLAUDE_CODE_REMOTE` is not
   `"true"`), do **not** submit a PR automatically — present your changes to the user for review.
+* A remote session has no `gh` CLI or direct GitHub API access (`gh`/raw HTTPS calls to
+  `api.github.com` fail with "GitHub access is not enabled for this session"), and the GitHub MCP
+  tools don't cover every endpoint (e.g. direct commit-page comments, as opposed to PR review
+  comments). When you hit data the MCP tools can't reach, ask the user to open the API URL in
+  their own browser and paste the JSON back, rather than working around it with a headless
+  browser or other scripted fetch.
 
 ## Important Rules for using tools and bash shell commands
 
