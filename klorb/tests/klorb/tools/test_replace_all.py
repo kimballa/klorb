@@ -11,6 +11,7 @@ from klorb.process_config import ProcessConfig
 from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.tools.replace_all import ReplaceAllTool
 from klorb.tools.setup_context import ToolSetupContext
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
 from klorb.workspace import Workspace
 
 
@@ -43,8 +44,9 @@ def test_literal_replace_all_occurrences(tmp_path: Path) -> None:
         {"filename": str(file_path), "search": "foo", "new_text": "qux"})
 
     assert file_path.read_text() == "qux bar qux baz qux\n"
-    assert result["replacements_made"] == 3
+    assert result["num_replacements_made"] == 3
     assert result["is_regex"] is False
+    assert result["lines"] == ["*1|qux bar qux baz qux"]
 
 
 def test_literal_search_treats_regex_metacharacters_literally(tmp_path: Path) -> None:
@@ -54,7 +56,7 @@ def test_literal_search_treats_regex_metacharacters_literally(tmp_path: Path) ->
         {"filename": str(file_path), "search": "a.b", "new_text": "X"})
 
     assert file_path.read_text() == "X X axb\n"
-    assert result["replacements_made"] == 2
+    assert result["num_replacements_made"] == 2
 
 
 def test_regex_replace_with_backreference(tmp_path: Path) -> None:
@@ -65,7 +67,7 @@ def test_regex_replace_with_backreference(tmp_path: Path) -> None:
     })
 
     assert file_path.read_text() == "bar(1) bar(2)\n"
-    assert result["replacements_made"] == 2
+    assert result["num_replacements_made"] == 2
     assert result["is_regex"] is True
 
 
@@ -81,7 +83,7 @@ def test_replacement_scanning_resumes_after_inserted_text_not_from_within_it(tmp
         {"filename": str(file_path), "search": "an", "new_text": "banana"})
 
     assert file_path.read_text() == "bbananabananaa\n"
-    assert result["replacements_made"] == 2
+    assert result["num_replacements_made"] == 2
 
 
 def test_case_insensitive_literal_replace(tmp_path: Path) -> None:
@@ -92,7 +94,7 @@ def test_case_insensitive_literal_replace(tmp_path: Path) -> None:
     })
 
     assert file_path.read_text() == "bar bar bar\n"
-    assert result["replacements_made"] == 3
+    assert result["num_replacements_made"] == 3
 
 
 def test_multiline_regex_anchors_match_each_line(tmp_path: Path) -> None:
@@ -103,7 +105,30 @@ def test_multiline_regex_anchors_match_each_line(tmp_path: Path) -> None:
     })
 
     assert file_path.read_text() == "one\nTwo\nThree\n"
-    assert result["replacements_made"] == 2
+    assert result["num_replacements_made"] == 2
+    assert result["lines"] == ["*2|Two", "*3|Three"]
+
+
+def test_match_spanning_multiple_lines_collapses_to_one_changed_line(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "one\ntwo\nthree\nfour\n")
+
+    result = ReplaceAllTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "search": "two\nthree", "new_text": "TWOTHREE"})
+
+    assert file_path.read_text() == "one\nTWOTHREE\nfour\n"
+    assert result["num_replacements_made"] == 1
+    assert result["lines"] == ["*2|TWOTHREE"]
+
+
+def test_new_text_inserting_a_newline_marks_both_resulting_lines(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "one two three\n")
+
+    result = ReplaceAllTool(_context(tmp_path)).apply(
+        {"filename": str(file_path), "search": "two", "new_text": "TWO\nSPLIT"})
+
+    assert file_path.read_text() == "one TWO\nSPLIT three\n"
+    assert result["num_replacements_made"] == 1
+    assert result["lines"] == ["*1|one TWO", "*2|SPLIT three"]
 
 
 def test_zero_matches_leaves_file_untouched(tmp_path: Path) -> None:
@@ -113,7 +138,8 @@ def test_zero_matches_leaves_file_untouched(tmp_path: Path) -> None:
         {"filename": str(file_path), "search": "nowhere", "new_text": "x"})
 
     assert file_path.read_text() == "hello world\n"
-    assert result["replacements_made"] == 0
+    assert result["num_replacements_made"] == 0
+    assert result["lines"] == []
 
 
 def test_path_outside_workspace_root_rejected(tmp_path: Path) -> None:
@@ -235,3 +261,43 @@ def test_summary_on_failure_includes_the_error() -> None:
 
     assert tool.summary({"filename": "missing.txt"}, error="not found") == (
         "Replace all: missing.txt failed: not found")
+
+
+# --- format_response() ---
+
+
+def test_format_response_renders_headers_then_filename_and_changed_lines(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "one\ntwo\nthree\n")
+    tool = ReplaceAllTool(_context(tmp_path))
+    args = {
+        "filename": str(file_path), "search": r"^t", "new_text": "T",
+        "is_regex": True, "multiline": True,
+    }
+
+    result = tool.apply(args)
+
+    assert tool.format_response(result) == (
+        f"filename: {file_path}\n"
+        "search: ^t\n"
+        "is_regex: true\n"
+        "num_replacements_made: 2\n"
+        f"note: {NO_READFILE_VERIFICATION_NOTE}\n"
+        "\n"
+        f"{file_path}\n"
+        "*2|Two\n"
+        "*3|Three")
+
+
+def test_format_response_omits_body_when_nothing_matched(tmp_path: Path) -> None:
+    file_path = _write(tmp_path, "sample.txt", "hello world\n")
+    tool = ReplaceAllTool(_context(tmp_path))
+    args = {"filename": str(file_path), "search": "nowhere", "new_text": "x"}
+
+    result = tool.apply(args)
+
+    assert tool.format_response(result) == (
+        f"filename: {file_path}\n"
+        "search: nowhere\n"
+        "is_regex: false\n"
+        "num_replacements_made: 0\n"
+        f"note: {NO_READFILE_VERIFICATION_NOTE}")

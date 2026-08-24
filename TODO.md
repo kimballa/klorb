@@ -13,9 +13,7 @@
 ### Feature backlog
 
 * Rework various tool calls to be less json-like.
-  * ReplaceAll: add "no verification ReadFile needed" language to response.
-  * Append to the FindFile description:
-    *"The search is recursive within `dirname`. To find all files named `summary.txt` at any depth under `reports/`, use `pattern='summary.txt', dirname='reports'` — no `**` path syntax is needed."*
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want

@@ -46,7 +46,9 @@ class FindFileTool(InterruptibleTool):
             "Recursively finds files and directories in a directory tree whose bare name (not "
             "full path) matches a glob pattern, e.g. '*.py' or '*_context*', so you can locate "
             "a file without knowing exactly where it lives. dirname is optional, defaulting to "
-            f"the whole project root. Returns at most {self._max_results} matches per call; a "
+            "the whole project root. If dirname is given, search is recursive under `dirname`. "
+            "Do not use `**` expressions; the syntax is not recognized, and unnecessary. "
+            "Returns at most {self._max_results} matches per call; a "
             "'truncated' flag in the result means more matches exist than were returned. A "
             "subdirectory your readDirs permissions deny, or that requires confirmation, is "
             "silently skipped rather than failing the whole search — only dirname itself "
@@ -92,7 +94,8 @@ class FindFileTool(InterruptibleTool):
         }
 
     def apply(self, args: dict[str, Any]) -> Any:
-        dirname = args.get("dirname", "")  # Empty-string default searches recursively from ${workspaceRoot}.
+        # Empty-string default searches recursively from ${workspaceRoot}.
+        dirname = args.get("dirname", "")
         try:
             pattern = args["pattern"]
         except KeyError:

@@ -7,9 +7,42 @@ from typing import Any
 
 from klorb.permissions.table import raise_if_not_allowed
 from klorb.permissions.workspace import resolve_and_evaluate_write
-from klorb.tools.tool import Tool
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE, Tool
+from klorb.tools.util import format_match_line
+from klorb.tools.util.response_headers import format_header_lines
 
 logger = logging.getLogger(__name__)
+
+_REPLACE_ALL_RESULT_HEADER_ORDER = (
+    "filename", "search", "is_regex", "num_replacements_made", "note",
+)
+"""Key order `ReplaceAllTool.format_response()` renders a result dict's header lines in."""
+
+
+def _apply_replacements(
+    content: str, pattern: re.Pattern[str], new_text: str,
+) -> tuple[str, int, list[int]]:
+    """Replace every non-overlapping match of `pattern` in `content` with `new_text`'s
+    backreference expansion, returning the new content, the number of replacements made, and
+    the ascending 1-based line numbers (in the new content) that any replacement touched."""
+    parts: list[str] = []
+    changed_lines: set[int] = set()
+    current_line = 1
+    pos = 0
+    count = 0
+    for match in pattern.finditer(content):
+        prefix = content[pos:match.start()]
+        parts.append(prefix)
+        current_line += prefix.count("\n")
+        expansion = match.expand(new_text)
+        start_line = current_line
+        parts.append(expansion)
+        current_line += expansion.count("\n")
+        changed_lines.update(range(start_line, current_line + 1))
+        pos = match.end()
+        count += 1
+    parts.append(content[pos:])
+    return "".join(parts), count, sorted(changed_lines)
 
 
 class ReplaceAllTool(Tool):
@@ -41,8 +74,9 @@ class ReplaceAllTool(Tool):
             "a Python regular expression, in which case new_text may use \\1-style backreferences. "
             "multiline makes ^ and $ match the "
             "start/end of each line rather than only the start/end of the whole file "
-            "(only meaningful with is_regex). Returns replacements_made so you can sanity-check "
-            "an unexpectedly large or zero match count."
+            "(only meaningful with is_regex). Returns num_replacements_made so you can "
+            "sanity-check an unexpectedly large or zero match count, plus every post-replacement "
+            "line that changed — no follow-up ReadFile is needed to verify."
         )
 
     def parameters(self) -> dict[str, Any]:
@@ -111,22 +145,44 @@ class ReplaceAllTool(Tool):
 
         content = path.read_text(encoding="utf-8")
 
-        pattern = search if is_regex else re.escape(search)
+        pattern_text = search if is_regex else re.escape(search)
         flags = re.IGNORECASE if case_insensitive else re.NOFLAG
         if multiline:
             flags |= re.MULTILINE
+        pattern = re.compile(pattern_text, flags)
 
-        new_content, replacements_made = re.subn(pattern, new_text, content, flags=flags)
-        if replacements_made > 0:
+        new_content, num_replacements_made, changed_lines = _apply_replacements(
+            content, pattern, new_text)
+        if num_replacements_made > 0:
             path.write_text(new_content, encoding="utf-8")
 
-        logger.debug("ReplaceAll %s made %d replacement(s)", filename, replacements_made)
+        logger.debug(
+            "ReplaceAll %s made %d replacement(s) across %d line(s)",
+            filename, num_replacements_made, len(changed_lines))
+
+        new_lines = new_content.splitlines()
+        lines = [format_match_line(n, new_lines[n - 1], matched=True) for n in changed_lines]
 
         return {
             "filename": filename,
-            "replacements_made": replacements_made,
+            "search": search,
             "is_regex": is_regex,
+            "num_replacements_made": num_replacements_made,
+            "note": NO_READFILE_VERIFICATION_NOTE,
+            "lines": lines,
         }
+
+    def format_response(self, apply_output: Any) -> str:
+        """Render `apply_output` as `key: value` header lines in
+        `_REPLACE_ALL_RESULT_HEADER_ORDER`, followed by the filename and its already-prefixed
+        `*N|text` changed lines, in the same plain-text block format as `GrepTool`."""
+        header_lines = format_header_lines(
+            apply_output, _REPLACE_ALL_RESULT_HEADER_ORDER, known_elsewhere=frozenset({"lines"}))
+        lines = apply_output.get("lines")
+        if not lines:
+            return "\n".join(header_lines)
+        body = "\n".join([apply_output["filename"], *lines])
+        return "\n".join(header_lines) + "\n\n" + body
 
     def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
         filename = args.get("filename", "?")
@@ -134,7 +190,7 @@ class ReplaceAllTool(Tool):
             return f"Replace all: {filename} failed: {error}"
         if not isinstance(result, dict):
             return f"Replace all: {filename}"
-        count = result.get("replacements_made")
+        count = result.get("num_replacements_made")
         kind = "regex" if result.get("is_regex") else "literal"
         plural = "" if count == 1 else "s"
         return f"Replace all: {result.get('filename', filename)} ({count} {kind} replacement{plural})"
