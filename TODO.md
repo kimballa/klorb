@@ -10,7 +10,10 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* Unclear if Session or TUI but we have another race condition. Observed a subagent with two animated "subagent is working..." spinners in TUI. Subagent had received multiple msgs from parent via SendMessage before that point; user had switched from main history to subagent view and back a couple of times. User also approved a permission panel on the root agent view.
+* Unclear if Session or TUI but we have another race condition. Observed a subagent with two
+  animated "subagent is working..." spinners in TUI. Subagent had received multiple msgs from parent
+  via SendMessage before that point; user had switched from main history to subagent view and back a
+  couple of times. User also approved a permission panel on the root agent view.
 
 ### Feature backlog
 
@@ -126,9 +129,6 @@
 ## TUI
 
 ### Bugs
-
-* test_rendering.py::test_scrolling_to_the_top_expands_a_collapsed_history_chunk is flaky in CI runs
-  and sometimes fails even with timeout raised from 5 to 10s.
 
 * LLM output is being added to the history in an markdown-aware way and if the LLM
   itself emits `<xml>`-like tags, it starts syntax-highlighting its own output in weird

@@ -690,6 +690,7 @@ async def test_scrolling_to_the_top_expands_a_collapsed_history_chunk(
         for i in range(turn_count):
             await _submit_and_complete(pilot, app, prompt_input, f"message {i}")
         await _wait_until(pilot, lambda: bool(list(history.query(HistoryPlaceholder))), timeout=5.0)
+        await _settle_history_virtualizer(pilot, app)
         placeholder_count_before = len(list(history.query(HistoryPlaceholder)))
         topmost_placeholder = min(
             history.query(HistoryPlaceholder).results(HistoryPlaceholder),
