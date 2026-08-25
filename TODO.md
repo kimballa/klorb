@@ -153,18 +153,11 @@
 
 ### Bugs
 
-* Ability to drag and drop image files into the message box no longer works. Nor does the ability to paste
-  image data from the clipboard into the message box.
+* If you are using a model that does not support image vision, drag/drop of an image or paste of
+  image data into the prompt should display a quick error toast (a small "pop-up panel right over
+  the prompt itself) that says "This model does not support vision."
 
 ### Feature backlog
-
-* A tool call's `system_interjections` never reach the history view today, live or replayed
-  (`ToolCallEvent` carries no such field, and `update_mapping.py`'s replay builder discards
-  `system_interjections` when decoding a saved `tool_response`). Surface them the same way
-  `parseSystemInterjections.ts`/`HistoryView.tsx` already render a `role="user"` prompt's
-  `<SystemInterjection>` blocks: thread a structured field through the live ACP update and
-  `_replay_tool_call_entry`/`build_session_replay`, and add a webview rendering path fed that
-  structured data instead of text-parsed. See docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
