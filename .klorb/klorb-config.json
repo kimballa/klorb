@@ -86,7 +86,9 @@
         "workspace:add-cli-flag",
         "workspace:enable-software-factory",
         "internal:code-review",
-        "workspace:add-openrouter-model"
+        "workspace:add-openrouter-model",
+        "workspace:vscode-plugin-architecture",
+        "workspace:vscode-plugin-ui"
       ]
     },
     "webDomains": {
