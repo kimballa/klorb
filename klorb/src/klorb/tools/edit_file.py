@@ -68,10 +68,6 @@ class EditFileTool(Tool):
                     "type": "string",
                     "description": "Path to the text file to edit. Mutually exclusive with path.",
                 },
-                "path": {
-                    "type": "string",
-                    "description": "Alias for filename, used only when filename is not given.",
-                },
                 **self.edit_file_core.parameter_properties(),
             },
             "required": ["new_text"],
