@@ -82,11 +82,10 @@ def try_restore_session(
     session.load_messages(state.messages)
     if state.statistics is not None:
         session.load_statistics(state.statistics)
-    chat_state = read_chat_state(workspace, entry.subdir)
-    if chat_state is not None:
+    chat_snapshot = read_chat_state(workspace, entry.subdir)
+    if chat_snapshot is not None:
         session.load_chat_channel(Channel.restore(
-            chat_state.messages, chat_state.hwm, chat_state.next_seq,
-            chat_state.mention_wake_count, max_history=process_config.chat_max_history,
+            chat_snapshot, max_history=process_config.chat_max_history,
             max_mention_wakes=process_config.chat_max_mention_wakes))
     session.adopt_claimed_session_directory(entry.subdir, lock)
     logger.debug("Restored session %s (subdir=%s) for workspace %s.",

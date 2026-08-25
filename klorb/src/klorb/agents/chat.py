@@ -10,12 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from klorb.agents.runtime import walk_session_tree
 from klorb.counter import AtomicCounter
 
 if TYPE_CHECKING:
     from klorb.session import Session
 
-DEFAULT_MAX_HISTORY = 2000
+DEFAULT_MAX_HISTORY = 1000
 """Fallback retained-message cap for a `Channel` built without a `ProcessConfig`."""
 
 DEFAULT_MAX_MENTION_WAKES = 50
@@ -48,6 +49,17 @@ class ChatMessage:
     """`@token`s in `body` that didn't resolve to any live participant."""
 
 
+@dataclass(frozen=True)
+class ChannelSnapshot:
+    """A `Channel`'s full persistable state: every retained message, each participant's hwm,
+    the next seq to assign, and the mention-wake count."""
+
+    messages: list[ChatMessage]
+    hwm: dict[str, int]
+    next_seq: int
+    mention_wake_count: int
+
+
 def chat_nickname(session_or_id: "Session | str") -> str:
     """The human-facing nickname for a chat participant: `"user"` unchanged, a live `Session`'s
     `f"{role}-{address}"` form, or the given id itself when it isn't a live session."""
@@ -77,8 +89,6 @@ def _live_mention_targets(session: "Session") -> dict[str, str]:
     """Build a fresh token -> canonical participant id map from `session`'s own live tree, for
     one `Channel.post()` call: every session's raw id and `chat_nickname()` form, plus the
     reserved `"user"` literal."""
-    from klorb.agents.runtime import walk_session_tree
-
     root = session
     while root.parent is not None:
         root = root.parent
@@ -111,15 +121,18 @@ class Channel:
         """Post `body` from `sender_id`, resolving its `@mention`s against `session`'s live
         tree."""
         mentions, unresolved = _resolve_mentions(body, _live_mention_targets(session))
-        seq = self._next_seq.increment()
-        message = ChatMessage(
-            seq=seq, sender_id=sender_id, timestamp=datetime.now(), body=body,
-            mentions=mentions, unresolved_mentions=unresolved)
         with self._lock:
+            seq = self._next_seq.increment()
+            message = ChatMessage(
+                seq=seq, sender_id=sender_id, timestamp=datetime.now(), body=body,
+                mentions=mentions, unresolved_mentions=unresolved)
             self._messages.append(message)
             if len(self._messages) > self._max_history:
                 self._messages = self._messages[-self._max_history:]
-            self._hwm[sender_id] = seq
+            # Only advance the sender's own hwm if they'd already read everything up to this
+            # message; otherwise posting would silently mark their unread backlog as read too.
+            if self._hwm.get(sender_id, 0) == seq - 1:
+                self._hwm[sender_id] = seq
             self._dirty = True
         return message
 
@@ -127,17 +140,16 @@ class Channel:
         """Seed a fresh high-water mark for `participant_id`; a no-op if one already exists.
         `at_seq` defaults to the channel's current sequence value, so a newly registered
         participant's hwm starts at the current moment."""
-        seed = at_seq if at_seq is not None else self._next_seq.get_value()
         with self._lock:
             if participant_id not in self._hwm:
-                self._hwm[participant_id] = seed
+                self._hwm[participant_id] = at_seq if at_seq is not None else self._next_seq.get_value()
                 self._dirty = True
 
     def unread_count(self, participant_id: str) -> int:
-        """How many retained messages `participant_id` hasn't yet read."""
+        """How many messages `participant_id` hasn't yet read."""
         with self._lock:
             hwm = self._hwm.get(participant_id, 0)
-            return sum(1 for message in self._messages if message.seq > hwm)
+            return max(self._next_seq.get_value() - hwm, 0)
 
     def unread_mention_count(self, participant_id: str) -> int:
         """How many of `participant_id`'s unread messages `@mention` it directly."""
@@ -193,32 +205,27 @@ class Channel:
         with self._lock:
             self._dirty = False
 
-    def snapshot(self) -> tuple[list[ChatMessage], dict[str, int], int, int]:
-        """This channel's full persistable state: retained messages, each participant's hwm,
-        the next seq to assign, and the mention-wake count."""
+    def snapshot(self) -> ChannelSnapshot:
+        """This channel's full persistable state."""
         with self._lock:
-            return (
-                list(self._messages), dict(self._hwm), self._next_seq.get_value(),
-                self._mention_wake_count.get_value())
+            return ChannelSnapshot(
+                messages=list(self._messages), hwm=dict(self._hwm),
+                next_seq=self._next_seq.get_value(),
+                mention_wake_count=self._mention_wake_count.get_value())
 
     @classmethod
     def restore(
-        cls, messages: list[ChatMessage], hwm: dict[str, int], next_seq: int,
-        mention_wake_count: int, *, max_history: int = DEFAULT_MAX_HISTORY,
+        cls, snapshot: ChannelSnapshot, *, max_history: int = DEFAULT_MAX_HISTORY,
         max_mention_wakes: int = DEFAULT_MAX_MENTION_WAKES,
     ) -> "Channel":
         """Rebuild a `Channel` from previously persisted state."""
         channel = cls(max_history=max_history, max_mention_wakes=max_mention_wakes)
-        channel._messages = list(messages)
-        channel._hwm = dict(hwm)
-        channel._next_seq = AtomicCounter(next_seq)
-        channel._mention_wake_count = AtomicCounter(mention_wake_count)
+        channel._messages = list(snapshot.messages)
+        channel._hwm = dict(snapshot.hwm)
+        channel._next_seq = AtomicCounter(snapshot.next_seq)
+        channel._mention_wake_count = AtomicCounter(snapshot.mention_wake_count)
+        channel._dirty = False
         return channel
-
-
-def get_chat_channel(session: "Session") -> Channel:
-    """The `Channel` shared by `session`'s entire tree."""
-    return session.chat_channel
 
 
 def build_chat_unread_interjection_provider(session: "Session") -> Callable[[], "str | None"]:

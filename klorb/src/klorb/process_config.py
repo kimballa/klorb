@@ -287,7 +287,7 @@ DEFAULT_MESSAGING_MAX_QUEUE_SIZE = 100
 entries the whole session tree's agent-message queue may hold at once; `SendMessage` rejects a
 call that would exceed it. See docs/specs/subagents.md."""
 
-DEFAULT_CHAT_MAX_HISTORY = 2000
+DEFAULT_CHAT_MAX_HISTORY = 1000
 """Default for `ProcessConfig.chat_max_history`: the most retained chat-room messages a
 session tree's `Channel` keeps before trimming the oldest. See docs/specs/subagents.md."""
 

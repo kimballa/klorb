@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
-from klorb.agents.chat import ChatMessage
+from klorb.agents.chat import ChannelSnapshot, ChatMessage
 from klorb.schema_envelope import read_versioned_json, write_versioned_json
 from klorb.workspace import Workspace
 from klorb.workspace.session_store import session_subdir_path
@@ -35,20 +35,18 @@ def chat_state_path(workspace: Workspace, subdir: str) -> Path:
     return session_subdir_path(workspace, subdir) / CHAT_STATE_FILENAME
 
 
-def write_chat_state(
-    workspace: Workspace, subdir: str, messages: list[ChatMessage], hwm: dict[str, int],
-    next_seq: int, mention_wake_count: int,
-) -> None:
+def write_chat_state(workspace: Workspace, subdir: str, snapshot: ChannelSnapshot) -> None:
     """Save a `Channel`'s full state to `sessions/<subdir>/chat.json`, schema-enveloped.
     Overwrites any previous state for this specific `subdir` outright."""
     state = ChatState(
-        messages=messages, hwm=hwm, next_seq=next_seq, mention_wake_count=mention_wake_count)
+        messages=snapshot.messages, hwm=snapshot.hwm, next_seq=snapshot.next_seq,
+        mention_wake_count=snapshot.mention_wake_count)
     write_versioned_json(
         chat_state_path(workspace, subdir), state.model_dump(mode="json"),
         schema_name=CHAT_STATE_SCHEMA_NAME, schema_version=CHAT_STATE_SCHEMA_VERSION)
 
 
-def read_chat_state(workspace: Workspace, subdir: str) -> ChatState | None:
+def read_chat_state(workspace: Workspace, subdir: str) -> ChannelSnapshot | None:
     """Load the chat room saved in `sessions/<subdir>/chat.json`, or `None` if no file exists
     there, it belongs to a different schema, or its data doesn't validate as `ChatState`."""
     data = read_versioned_json(
@@ -56,9 +54,12 @@ def read_chat_state(workspace: Workspace, subdir: str) -> ChatState | None:
     if not data:
         return None
     try:
-        return ChatState.model_validate(data)
+        state = ChatState.model_validate(data)
     except ValidationError as exc:
         logger.warning(
             "%s failed to validate as a %s save file; leaving it as-is: %s",
             chat_state_path(workspace, subdir), CHAT_STATE_SCHEMA_NAME, exc)
         return None
+    return ChannelSnapshot(
+        messages=state.messages, hwm=state.hwm, next_seq=state.next_seq,
+        mention_wake_count=state.mention_wake_count)

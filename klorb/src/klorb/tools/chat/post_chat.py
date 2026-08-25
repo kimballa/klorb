@@ -5,7 +5,6 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
-from klorb.agents.chat import get_chat_channel
 from klorb.agents.policy import notify_chat_mention
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
@@ -15,8 +14,8 @@ from klorb.tools.tool import Tool
 
 class PostChatParameters(BaseModel):
     message: str = Field(description=(
-        "The message to post to the chat room. @mention another agent by its session id or "
-        "role-address nickname (e.g. @explorer-1.1) to notify it."))
+        "The message to post to the chat room. @mention another agent by its session id to "
+        "notify it."))
 
 
 class PostChatTool(Tool):
@@ -34,9 +33,9 @@ class PostChatTool(Tool):
 
     def description(self) -> str:
         return (
-            "Post a message to the shared chat room every agent (and the user) can read. "
-            "Other agents receive it asynchronously, via their own ReadChat call, not "
-            "immediately -- @mention one to nudge it to check chat sooner."
+            "Post a message to the shared chat room all agents and the user can read "
+            "asynchronously. @mention other agents to explicitly nudge them to check chat "
+            "sooner."
         )
 
     def parameters(self) -> type[BaseModel]:
@@ -49,7 +48,7 @@ class PostChatTool(Tool):
         message = args["message"]
         if not message:
             raise ToolCallError("message must not be empty.", category="validation")
-        channel = get_chat_channel(session)
+        channel = session.chat_channel
         chat_message = channel.post(session.id, message, session)
         for mentioned_id in chat_message.mentions:
             notify_chat_mention(context.process_config, channel, session, mentioned_id)

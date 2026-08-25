@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from klorb.agents.chat import ChatMessage
+from klorb.agents.chat import ChannelSnapshot, ChatMessage
 from klorb.message import Message, MessageFragment
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
@@ -71,10 +71,11 @@ def test_restore_loads_a_saved_chat_room(tmp_path: Path) -> None:
         workspace, "sess-1", SessionConfig(workspace_access=WorkspaceAccess(workspace=workspace)), [])
     write_chat_state(
         workspace, "sess-1",
-        [ChatMessage(
-            seq=1, sender_id="1", timestamp=datetime(2026, 7, 12, 0, 0, 0), body="hello room",
-            mentions=[], unresolved_mentions=[])],
-        hwm={"1": 1}, next_seq=1, mention_wake_count=0)
+        ChannelSnapshot(
+            messages=[ChatMessage(
+                seq=1, sender_id="1", timestamp=datetime(2026, 7, 12, 0, 0, 0),
+                body="hello room", mentions=[], unresolved_mentions=[])],
+            hwm={"1": 1}, next_seq=1, mention_wake_count=0))
 
     session = try_restore_session(
         workspace, RecentSession(session_id="sess-1", subdir="sess-1"),

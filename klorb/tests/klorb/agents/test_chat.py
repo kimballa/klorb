@@ -107,6 +107,47 @@ def test_post_advances_the_posters_own_hwm(make_session_config: Callable[..., Se
     assert message.seq == 2
 
 
+def test_post_does_not_advance_hwm_past_an_unread_backlog(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    poster = _make_session(make_session_config)
+    other = _make_session(make_session_config)
+    channel = Channel()
+    channel.register_participant(poster.id, at_seq=0)
+    channel.post(other.id, "one", other)
+    channel.post(other.id, "two", other)
+
+    channel.post(poster.id, "three", poster)
+
+    # `poster` was behind by two messages before posting; its hwm stays put rather than
+    # jumping to its own message, so the whole backlog (including that message) stays unread.
+    assert channel.unread_count(poster.id) == 3
+    unread = channel.read_and_advance(poster.id)
+    assert [m.body for m in unread] == ["one", "two", "three"]
+
+
+def test_concurrent_posts_keep_messages_in_seq_order(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    session = _make_session(make_session_config)
+    channel = Channel()
+    barrier = threading.Barrier(8)
+
+    def post(i: int) -> None:
+        barrier.wait(timeout=5.0)
+        channel.post(session.id, f"message {i}", session)
+
+    threads = [threading.Thread(target=post, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    seqs = [m.seq for m in channel.history()]
+    assert seqs == sorted(seqs)
+    assert seqs == list(range(1, 9))
+
+
 def test_register_participant_seeds_hwm_at_current_seq(
     make_session_config: Callable[..., SessionConfig],
 ) -> None:
@@ -212,8 +253,7 @@ def test_snapshot_and_restore_round_trip(make_session_config: Callable[..., Sess
     channel.post(session.id, "one", session)
     channel.increment_mention_wake_count()
 
-    messages, hwm, next_seq, mention_wake_count = channel.snapshot()
-    restored = Channel.restore(messages, hwm, next_seq, mention_wake_count)
+    restored = Channel.restore(channel.snapshot())
 
     assert [m.body for m in restored.history()] == ["one"]
     assert restored.mention_wake_count() == 1

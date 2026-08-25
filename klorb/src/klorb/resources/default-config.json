@@ -311,7 +311,7 @@
   "tools.subagents.maxConcurrentPerParent": 4,
   "tools.subagents.maxActiveTotal": 16,
   "tools.messaging.maxQueueSize": 100,
-  "tools.chat.maxHistory": 2000,
+  "tools.chat.maxHistory": 1000,
   "tools.chat.maxReadPerCall": 200,
   "tools.chat.maxMentionWakesPerSession": 50,
   "models.default.fast": "xiaomi/mimo-v2.5",

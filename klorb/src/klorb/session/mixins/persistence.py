@@ -101,10 +101,7 @@ class SessionPersistenceMixin(SessionBase):
             session_name=self._session_name, cur_chainlink_task_id=self.cur_chainlink_task_id,
             last_modified_timestamp=self._last_modified_at)
         if self._chat_channel.is_dirty():
-            messages, hwm, next_seq, mention_wake_count = self._chat_channel.snapshot()
-            write_chat_state(
-                self.config.workspace, self._session_subdir, messages, hwm, next_seq,
-                mention_wake_count)
+            write_chat_state(self.config.workspace, self._session_subdir, self._chat_channel.snapshot())
             self._chat_channel.mark_persisted()
         touch_recent_session(
             self.config.workspace, self.id, self._session_subdir, self._session_name,

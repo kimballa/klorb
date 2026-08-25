@@ -5,7 +5,6 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
-from klorb.agents.chat import get_chat_channel
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.subagents.common import MESSAGING_TOOL_CATEGORY
 from klorb.tools.tool import Tool
@@ -35,7 +34,7 @@ class ReadChatTool(Tool):
     def description(self) -> str:
         return (
             "Read the chat room's unread messages since you last checked, oldest first. "
-            "Advances your own read position -- a later call returns only messages posted "
+            "Advances your own read position, so a later call returns only messages posted "
             "since."
         )
 
@@ -49,7 +48,7 @@ class ReadChatTool(Tool):
         requested_limit = args.get("limit")
         max_per_call = context.process_config.chat_max_read_per_call
         limit = max_per_call if requested_limit is None else min(requested_limit, max_per_call)
-        channel = get_chat_channel(session)
+        channel = session.chat_channel
         messages = channel.read_and_advance(session.id, limit=limit)
         return {
             "messages": [
@@ -76,7 +75,7 @@ class ReadChatTool(Tool):
             lines.append("")
         if data["remaining_unread"]:
             lines.append(
-                f"{data['remaining_unread']} more unread message(s) remain -- call ReadChat "
+                f"{data['remaining_unread']} more unread message(s) remain. Call ReadChat "
                 "again to see them.")
         return "\n".join(lines).rstrip()
 

@@ -4,7 +4,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from klorb.agents.chat import ChatMessage
+from klorb.agents.chat import ChannelSnapshot, ChatMessage
 from klorb.workspace import Workspace
 from klorb.workspace.chat_store import read_chat_state, write_chat_state
 
@@ -28,7 +28,8 @@ def test_write_then_read_round_trips_messages_and_hwm(tmp_path: Path) -> None:
             mentions=["1"], unresolved_mentions=[]),
     ]
 
-    write_chat_state(workspace, "sess-1", messages, {"1": 1, "1.1": 0}, next_seq=2, mention_wake_count=1)
+    snapshot = ChannelSnapshot(messages=messages, hwm={"1": 1, "1.1": 0}, next_seq=2, mention_wake_count=1)
+    write_chat_state(workspace, "sess-1", snapshot)
     state = read_chat_state(workspace, "sess-1")
 
     assert state is not None
