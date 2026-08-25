@@ -105,7 +105,7 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
     assert tool.name() == "CreateFile"
     assert set(parameters["required"]) == {"content"}
-    assert {"filename", "path"} <= set(parameters["properties"])
+    assert {"filename"} <= set(parameters["properties"])
 
 
 def test_creates_a_new_file_via_path(tmp_path: Path) -> None:

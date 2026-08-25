@@ -60,10 +60,6 @@ class CreateFileTool(Tool):
                     "type": "string",
                     "description": "Path of the new text file to create. Mutually exclusive with path.",
                 },
-                "path": {
-                    "type": "string",
-                    "description": "Alias for filename, used only when filename is not given.",
-                },
                 **self.create_file_core.parameter_properties(),
             },
             "required": ["content"],
