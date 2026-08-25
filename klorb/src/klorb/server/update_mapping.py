@@ -798,6 +798,7 @@ def _replay_tool_call_entry(
         "status": "failed" if failed else "completed",
         "title": _tool_title(call.name, args, tool_registry),
         "toolKind": TOOL_KIND_MAP.get(call.name, "other"),
+        "toolName": call.name,
         "locations": [loc.model_dump(mode="json") for loc in locations] if locations else [],
         "contentText": content_text,
         "expanded": False,

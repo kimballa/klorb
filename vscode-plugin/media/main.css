@@ -649,6 +649,91 @@ button.bash-tool-call-command {
   color: var(--vscode-errorForeground);
 }
 
+.messaging-tool-call details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.messaging-tool-call details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.messaging-tool-call details[open] > summary {
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+.messaging-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.messaging-detail-field {
+  display: flex;
+  gap: 8px;
+}
+
+.messaging-detail-label {
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  min-width: 4em;
+}
+
+.messaging-detail-value {
+  overflow-wrap: anywhere;
+}
+
+.messaging-detail-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+}
+
+.messaging-detail-error {
+  color: var(--vscode-errorForeground);
+}
+
+.messaging-detail-count {
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.messaging-message {
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-radius: 4px;
+}
+
+.messaging-message > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+}
+
+.messaging-message > summary::-webkit-details-marker {
+  display: none;
+}
+
+.messaging-message-sender {
+  font-weight: 600;
+}
+
+.messaging-message-role {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.messaging-message-body {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .readfile-content {
   font-family: var(--vscode-editor-font-family, monospace);
   overflow-x: auto;

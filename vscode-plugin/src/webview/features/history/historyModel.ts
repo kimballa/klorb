@@ -69,6 +69,10 @@ export interface ToolCallHistoryEntry {
   status: 'in_progress' | 'completed' | 'failed';
   title: string;
   toolKind: string;
+  /** The server's own `_meta.klorb.toolName` (e.g. `"SendMessage"`), omitted for a non-klorb
+   * ACP agent -- lets the chip dispatch to a specialized renderer for tools that share one
+   * `kind` bucket (e.g. `SendMessage`/`GetMessages` both map to `"other"`). */
+  toolName?: string;
   locations: ToolCallLocation[];
   contentText?: string;
   diff?: ToolCallDiff;
@@ -307,6 +311,7 @@ function appendToolCallStarted(
     status: 'in_progress',
     title: message.title,
     toolKind: message.kind,
+    ...(message.toolName !== undefined ? { toolName: message.toolName } : {}),
     locations: message.locations,
     bashMeta: message.bashMeta,
     expanded: false,

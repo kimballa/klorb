@@ -753,6 +753,7 @@ class TestBuildSessionReplay:
         assert entries[0]["callId"] == "call-1"
         assert entries[0]["status"] == "completed"
         assert entries[0]["contentText"] == "42"
+        assert entries[0]["toolName"] == "SampleTool"
 
     def test_user_message_after_a_tool_round_replays_as_a_prompt_entry(
         self, tmp_path: Path, make_session_config: Callable[..., SessionConfig],

@@ -588,7 +588,7 @@ def test_name_and_parameters(tmp_path: Path) -> None:
 
     assert tool.name() == "EditFile"
     assert set(parameters["required"]) == {"new_text"}
-    assert {"filename", "path", "old_text", "old_text_start", "old_text_end"} <= set(
+    assert {"filename", "old_text", "old_text_start", "old_text_end"} <= set(
         parameters["properties"])
     assert not {"old_text", "old_text_start", "old_text_end"} & set(parameters["required"])
 
@@ -743,7 +743,8 @@ def test_detail_view_truncates_long_edited_content_to_eight_lines(tmp_path: Path
     result = tool.apply(args)
     detail = json.loads(tool.detail_view(args, result))
 
-    assert detail["result"]["post_edit_content"] == "\n".join(f"{i + 1}|line{i}" for i in range(8)) + "\n..."
+    assert detail["result"]["post_edit_content"] == "\n".join(
+        f"{i + 1}|line{i}" for i in range(8)) + "\n..."
 
 
 # --- diff_preview() (see docs/specs/terminal-repl.md) ---

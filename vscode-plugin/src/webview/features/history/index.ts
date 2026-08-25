@@ -5,6 +5,7 @@ import HistoryView, { type HistoryViewProps } from './components/HistoryView';
 import MentionHighlightedText, {
   type MentionHighlightedTextProps,
 } from './components/MentionHighlightedText';
+import MessagingToolCallChip from './components/MessagingToolCallChip';
 import SessionStatsCard from './components/SessionStatsCard';
 import ToolCallChip from './components/ToolCallChip';
 import {
@@ -77,6 +78,7 @@ export {
   BashToolCallChip,
   HistoryView,
   MentionHighlightedText,
+  MessagingToolCallChip,
   SessionStatsCard,
   ToolCallChip,
 };

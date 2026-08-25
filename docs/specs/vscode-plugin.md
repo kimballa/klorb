@@ -379,9 +379,12 @@ extension specifically.
     streaming: boolean}` — an `'interaction'` entry is always `streaming: false`, a compact
     permanent record of an answered permission ask (see "Approval panel" below).
     `ToolCallHistoryEntry` is `{kind: 'toolCall', callId, status: 'in_progress' | 'completed' |
-    'failed', title, toolKind, locations, contentText?, diff?, expanded: boolean}` — `toolKind`
-    and `status` are plain strings (mirroring `HostMessage`'s own `kind`/`status` fields), and
-    `expanded` is this one chip's own collapsed/expanded state (see below).
+    'failed', title, toolKind, toolName?, locations, contentText?, diff?,
+    bashMeta?, readFileMeta?, expanded: boolean}` — `toolKind`, `toolName`, and `status` are
+    plain strings (mirroring `HostMessage`'s own `kind`/`status` fields); `toolName` (the
+    server's `_meta.klorb.toolName`, e.g. `"SendMessage"`) lets `HistoryView` dispatch to a
+    specialized chip renderer for tools that share one `kind` bucket (see "Tool-call rendering
+    and editor integration" below); `expanded` is this one chip's own collapsed/expanded state.
   * `appendPrompt(entries, text)` appends a finished `'prompt'` entry. `appendInteraction(entries,
     ask, decisionName)` appends an `'interaction'` entry recording an answered `PermissionAskMessage`:
     the header line (`"Privilege escalation"` when `ask.klorbMeta.escalation` is set, else
@@ -474,6 +477,16 @@ extension specifically.
   `diff.hunks` is present, else a plain `<pre>` of `diff.newText` (the fallback for a plain ACP
   diff block lacking `_meta.klorb.diffHunks` — not colored, since there's no hunk structure to
   render), plus an "Open diff" `<vscode-button>` posting `openDiff {callId, path}`.
+* `MessagingToolCallChip.tsx` renders `SendMessage`/`GetMessages` tool calls (dispatched by
+  `toolName` in `HistoryView`'s `Entry` component) with a native `<details>` disclosure and a
+  `mail` codicon instead of the generic `ToolCallChip`'s chevron-based expand. The collapsed
+  summary row shows a `<vscode-progress-ring>` while `in_progress`, an error icon when `failed`,
+  or the `mail` icon on success; the title is plain text (no location link — messaging tools
+  never name a filesystem path). The expanded detail parses `contentText` as the
+  `default_tool_call_detail` JSON envelope: `SendMessage` renders the target id, message body,
+  and any error; `GetMessages` renders a message count plus each message as a nested
+  `<details>` with sender/role summary and body; malformed or unrecognized JSON falls back to
+  raw text.
 * `vscode-plugin/src/webview/main.tsx` additionally imports `@vscode-elements/elements`'s
   `vscode-icon`/`vscode-progress-ring` modules (alongside `vscode-button`/`vscode-textarea`) to
   register those custom elements.

@@ -468,6 +468,7 @@ export interface SessionReplayToolCallEntry {
   status: 'completed' | 'failed';
   title: string;
   toolKind: string;
+  toolName?: string;
   locations: ToolCallLocation[];
   contentText?: string | null;
   bashMeta?: BashToolMeta;

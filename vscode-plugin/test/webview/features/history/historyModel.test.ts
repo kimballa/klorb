@@ -296,6 +296,52 @@ describe('applyHostMessage tool calls', () => {
     entries = applyHostMessage(entries, { type: 'agentChunk', text: 'after' });
     expect(entries.map((entry) => entry.kind)).toEqual(['response', 'toolCall', 'response']);
   });
+
+  it('threads toolName from toolCallStarted through to the history entry', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'msg-1',
+      title: 'Send message to agent child-1',
+      kind: 'other',
+      locations: [],
+      toolName: 'SendMessage',
+    });
+    expect(entries).toEqual([
+      {
+        kind: 'toolCall',
+        id: 'msg-1',
+        callId: 'msg-1',
+        status: 'in_progress',
+        title: 'Send message to agent child-1',
+        toolKind: 'other',
+        toolName: 'SendMessage',
+        locations: [],
+        expanded: false,
+      },
+    ]);
+  });
+
+  it('preserves toolName through toolCallUpdated', () => {
+    let entries: HistoryEntry[] = [];
+    entries = applyHostMessage(entries, {
+      type: 'toolCallStarted',
+      callId: 'msg-1',
+      title: 'Send message to agent child-1',
+      kind: 'other',
+      locations: [],
+      toolName: 'SendMessage',
+    });
+    entries = applyHostMessage(entries, {
+      type: 'toolCallUpdated',
+      callId: 'msg-1',
+      status: 'completed',
+      contentText: 'Message delivered.',
+    });
+    const toolCall = entries.find((e) => e.kind === 'toolCall');
+    expect(toolCall).toBeDefined();
+    expect((toolCall as ToolCallHistoryEntry).toolName).toBe('SendMessage');
+  });
 });
 
 describe('applyToolCallExpandedToggle', () => {
@@ -688,6 +734,37 @@ describe('applySessionReplay', () => {
 
     expect(result).toEqual([
       { kind: 'prompt', text: 'hi', streaming: false, id: expect.any(String) },
+    ]);
+  });
+
+  it('threads toolName through a replayed tool-call entry', () => {
+    const replayed = applySessionReplay([
+      {
+        kind: 'toolCall',
+        callId: 'msg-1',
+        status: 'completed',
+        title: 'Send message to agent child-1',
+        toolKind: 'other',
+        toolName: 'SendMessage',
+        locations: [],
+        contentText: 'Message delivered.',
+        expanded: false,
+      },
+    ]);
+
+    expect(replayed).toEqual([
+      {
+        kind: 'toolCall',
+        id: 'msg-1',
+        callId: 'msg-1',
+        status: 'completed',
+        title: 'Send message to agent child-1',
+        toolKind: 'other',
+        toolName: 'SendMessage',
+        locations: [],
+        contentText: 'Message delivered.',
+        expanded: false,
+      },
     ]);
   });
 });

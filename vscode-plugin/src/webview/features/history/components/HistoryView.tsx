@@ -23,6 +23,7 @@ import { renderYamlFrontmatter } from '../renderYamlFrontmatter';
 
 import BashToolCallChip from './BashToolCallChip';
 import MentionHighlightedText from './MentionHighlightedText';
+import MessagingToolCallChip from './MessagingToolCallChip';
 import SessionStatsCard from './SessionStatsCard';
 import ToolCallChip from './ToolCallChip';
 
@@ -181,6 +182,9 @@ const Entry = memo(function Entry({
         return (
           <BashToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />
         );
+      }
+      if (entry.toolName === 'SendMessage' || entry.toolName === 'GetMessages') {
+        return <MessagingToolCallChip entry={entry} key={index} />;
       }
       return <ToolCallChip entry={entry} onToggleExpanded={onToggleToolCallExpanded} key={index} />;
     case 'sessionStats':
