@@ -25,9 +25,10 @@ DEFAULT_MAX_MENTION_WAKES = 50
 CHAT_UNREAD_INTERJECTION_SUBJECT = "ChatUnread"
 """`SystemInterjection subject=` value the standing unread-chat reminder uses."""
 
-_USER_PARTICIPANT_ID = "user"
+CHAT_USER_ID = "user"
+"""The reserved participant id standing in for the human at the TUI/ACP client."""
 
-_MENTION_TOKEN_RE = re.compile(r"(?<!\S)@([A-Za-z0-9_.-]+)")
+MENTION_TOKEN_RE = re.compile(r"(?<!\S)@([A-Za-z0-9_.-]+)")
 """A start/whitespace-anchored `@token`."""
 
 
@@ -74,7 +75,7 @@ def _resolve_mentions(body: str, resolvable: dict[str, str]) -> tuple[list[str],
     first-seen order."""
     mentions: list[str] = []
     unresolved: list[str] = []
-    for match in _MENTION_TOKEN_RE.finditer(body):
+    for match in MENTION_TOKEN_RE.finditer(body):
         token = match.group(1)
         resolved = resolvable.get(token)
         if resolved is not None:
@@ -85,14 +86,13 @@ def _resolve_mentions(body: str, resolvable: dict[str, str]) -> tuple[list[str],
     return mentions, unresolved
 
 
-def _live_mention_targets(session: "Session") -> dict[str, str]:
-    """Build a fresh token -> canonical participant id map from `session`'s own live tree, for
-    one `Channel.post()` call: every session's raw id and `chat_nickname()` form, plus the
-    reserved `"user"` literal."""
+def live_mention_targets(session: "Session") -> dict[str, str]:
+    """Build a fresh token -> canonical participant id map from `session`'s own live tree: every
+    session's raw id and `chat_nickname()` form, plus the reserved `"user"` literal."""
     root = session
     while root.parent is not None:
         root = root.parent
-    resolvable: dict[str, str] = {_USER_PARTICIPANT_ID: _USER_PARTICIPANT_ID}
+    resolvable: dict[str, str] = {CHAT_USER_ID: CHAT_USER_ID}
     for node in walk_session_tree(root):
         resolvable[node.session.id] = node.session.id
         resolvable[chat_nickname(node.session)] = node.session.id
@@ -120,7 +120,7 @@ class Channel:
     def post(self, sender_id: str, body: str, session: "Session") -> ChatMessage:
         """Post `body` from `sender_id`, resolving its `@mention`s against `session`'s live
         tree."""
-        mentions, unresolved = _resolve_mentions(body, _live_mention_targets(session))
+        mentions, unresolved = _resolve_mentions(body, live_mention_targets(session))
         with self._lock:
             seq = self._next_seq.increment()
             message = ChatMessage(

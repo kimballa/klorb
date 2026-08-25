@@ -15,7 +15,13 @@ from klorb.process_config import user_config_path
 from klorb.token_estimate import configure_tiktoken_cache_env
 from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
-from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID, SUBAGENT_HISTORY_ID, TASK_SIDEBAR_ID
+from klorb.tui.constants import (
+    CHAT_HISTORY_ID,
+    HISTORY_ID,
+    PROMPT_INPUT_ID,
+    SUBAGENT_HISTORY_ID,
+    TASK_SIDEBAR_ID,
+)
 from klorb.tui.formatting import capture_scroll_anchor, random_greeting, restore_scroll_anchor
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -85,6 +91,8 @@ class KeyActionsMixin(ReplAppBase):
         """Whether there's anything for Escape/Ctrl+C to interrupt right now, for whichever
         session is currently selected: a subagent's own turn (`_selected_handle`) if one is
         selected, else the root session's turn/shell command (`_turn_in_flight`)."""
+        if self._chat_selected:
+            return False
         if self._selected_handle is not None:
             return self._selected_handle.state == "running"
         return self._turn_in_flight
@@ -96,7 +104,7 @@ class KeyActionsMixin(ReplAppBase):
         if action == "abort_response":
             return self._something_abortable_for_selection()
         if action == "expand_history_placeholder":
-            return self._active_history_virtualizer().has_collapsed_chunks()
+            return not self._chat_selected and self._active_history_virtualizer().has_collapsed_chunks()
         return True
 
     def _active_history_virtualizer(self) -> VirtualizedHistoryContainer:
@@ -244,6 +252,9 @@ class KeyActionsMixin(ReplAppBase):
 
         subagent_history = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         self.watch(subagent_history, "scroll_y", self._on_subagent_history_scroll_changed, init=False)
+
+        chat_history = self.query_one(f"#{CHAT_HISTORY_ID}", VerticalScroll)
+        self.watch(chat_history, "scroll_y", self._on_chat_history_scroll_changed, init=False)
 
         self._mount_mascot_greeting(history)
 

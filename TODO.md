@@ -12,8 +12,6 @@
 
 ### Feature backlog
 
-* Group chat plan 026, phases 3 & 4 remaining.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -141,11 +139,30 @@
 
 ### Feature backlog
 
-* chat room with your agents
+* Interactive chat room UI rough edges:
+  * set hotkey to ^M, not ^B.
+  * Trying to `@reference` the agent, the `@` pops up the *file* fuzzy-finder, but it should be
+    popping up the agent nickname finder.
+  * A reference to `@operator-1` doesn't seem to activate it, although the agent *does* note when
+    restarted that it has a system interjection specifically saying:
+
+    ```plain
+    <SystemInterjection subject="ChatUnread">
+    You have 3 unread chat room message(s). Call ReadChat to see them. This includes 1 that @mention you directly.
+    </SystemInterjection>
+    ```
+
+    ... so it did parse a real mention from this. But the root session activation via
+    _send_agent_message isn't activating.
+  * Related, it's unclear to me whether I should address `@operator-1` or `@Operator-1`, but either
+    way the TUI should help you out and fix up the correct case in the msg so that it does mention
+    with a case-insensitive input.
+  * When in the chat room, the header which is usually `/workspace/path - model (high)`, should
+    instead read: `/workspace/path - (Agent chat)`.
 
 * a "files" side panel that lists all files read and written by the agents this session. Indicator
   column on the left for reads vs written/modified/created. Clicking a filename pops a modal to read
-  the whole file, and see diffs highlighted.
+  the whole file, and see diffs highlighted. Hotkey is ^F.
 
 ## VSCode plugin
 
@@ -288,5 +305,15 @@
   (`command_rules`, `skill_rules`, `read_dirs`/`write_dirs`/`read_files`/`write_files`), so a
   subagent's creation can filter those the same way it now filters hooks/events, instead of a
   subagent always inheriting every one of its parent's bash/skill/directory grants unconditionally.
+
+### Plan 026: Group chat room
+
+* VS Code plugin / ACP rendering of the chat room — needs its own ACP extension methods/
+  notifications and webview messaging design, not a reuse of the TUI panel's own mechanics.
+* Desktop/OS-level notification (terminal bell, `notify-send`) on an `@user` mention.
+* Chat message editing/deletion.
+* A `SearchChat`-style tool for scrolling back through history older than a participant's own hwm
+  window, if bounded retention (`tools.chat.maxHistory`) turns out to be too aggressive in
+  practice for long sessions.
 
 ## Meta / dev environment

@@ -52,6 +52,10 @@ class PromptSubmissionMixin(ReplAppBase):
             self._submit_shell_command(prompt_text[1:].lstrip())
             return
 
+        if self._chat_selected:
+            self._submit_chat_post(prompt_text)
+            return
+
         if self._selected_handle is not None:
             self._submit_subagent_prompt(prompt_text)
             return

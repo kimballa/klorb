@@ -12,6 +12,7 @@ from textual.containers import Vertical
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
+from klorb.tui.constants import CHAT_ROW_ID
 from klorb.tui.widgets.task_sidebar import TASK_SIDEBAR_WIDTH
 
 SUBAGENTS_PANEL_WIDTH = TASK_SIDEBAR_WIDTH
@@ -25,6 +26,13 @@ _HEADER_TEXT = "Agents"
 _ATTENTION_MARKER = "!"
 _RUNNING_MARKER = "*"
 _IDLE_MARKER = " "
+
+_CHAT_ROW_LABEL = "💬 Chat Room"
+_CHAT_ROW_FOOTER_TEXT = "Chat Room"
+
+ChatRowMarker = Literal["none", "unread", "mention"]
+"""The chat row's own unread state: `"none"` (nothing unread), `"unread"` (plain unread
+messages, steady marker), or `"mention"` (an unread `@user` mention, blinking marker)."""
 
 
 def _friendly_role_name(role_name: str) -> str:
@@ -110,30 +118,44 @@ class SubagentsPanel(Vertical, can_focus=False):
 
     def show_rows(
         self, rows: list[SubagentRowData], selected_session_id: str,
-        attention_ids: frozenset[str], blink_on: bool,
+        attention_ids: frozenset[str], blink_on: bool, *,
+        chat_selected: bool, chat_marker: ChatRowMarker,
     ) -> None:
-        """Replace the displayed rows with `rows` (expected in `klorb.agents.runtime.
-        walk_session_tree` order), highlighting whichever one's `session_id` matches
-        `selected_session_id` and updating the footer with its role. `attention_ids` -- sessions
-        with an ask waiting for the user to select them -- get a `(!)` marker, shown only while
-        `blink_on` so repeated calls from `SubagentsPanelMixin._tick_subagents_panel` make it
-        blink rather than stay lit solid.
-        """
+        """Replace the displayed rows with a synthetic chat-room row followed by `rows`,
+        highlighting whichever one is selected and updating the footer to match."""
         option_list = self.query_one(f"#{SUBAGENTS_LIST_ID}", OptionList)
         option_list.clear_options()
+        chat_row_option = Option(
+            self._render_chat_row_label(chat_marker, blink_on), id=CHAT_ROW_ID)
+        option_list.add_option(chat_row_option)
         selected_index = 0
         selected_role = ""
-        for index, row in enumerate(rows):
+        for index, row in enumerate(rows, start=1):
+            # `attention_ids` marks sessions with a pending ask; blinks a `(!)` marker while `blink_on`.
             needs_attention = row.session_id in attention_ids and blink_on
             label = self._render_row_label(row, needs_attention)
             option_list.add_option(SubagentPanelOption(row, label))
-            if row.session_id == selected_session_id:
+            if row.session_id == selected_session_id and not chat_selected:
                 selected_index = index
                 selected_role = row.role
-        if rows:
-            option_list.highlighted = selected_index
+        option_list.highlighted = selected_index
         footer = self.query_one(f"#{_FOOTER_ID}", Static)
-        footer.update(f"Role: {_friendly_role_name(selected_role)}" if selected_role else "")
+        if chat_selected:
+            footer.update(_CHAT_ROW_FOOTER_TEXT)
+        else:
+            footer.update(f"Role: {_friendly_role_name(selected_role)}" if selected_role else "")
+
+    @staticmethod
+    def _render_chat_row_label(chat_marker: ChatRowMarker, blink_on: bool) -> Text:
+        """The chat row's own marker: a steady `!` for a plain unread backlog, the same
+        blinking `!` the attention marker uses for an unread `@user` mention, else blank."""
+        if chat_marker == "mention":
+            marker = _ATTENTION_MARKER if blink_on else _IDLE_MARKER
+        elif chat_marker == "unread":
+            marker = _ATTENTION_MARKER
+        else:
+            marker = _IDLE_MARKER
+        return Text(f"{marker} {_CHAT_ROW_LABEL}")
 
     @staticmethod
     def _render_row_label(row: SubagentRowData, needs_attention: bool) -> Text:

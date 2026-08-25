@@ -15,6 +15,10 @@ TASK_SIDEBAR_ID = "task-sidebar"
 SUBAGENTS_PANEL_ID = "subagents-panel"
 SUBAGENT_HISTORY_ID = "subagent-history"
 SUBAGENT_ATTENTION_STATUS_ID = "subagent-attention-status"
+CHAT_HISTORY_ID = "chat-history"
+
+CHAT_ROW_ID = "__chat__"
+"""Sentinel `SubagentPanelOption.session_id` for the panel's synthetic chat-room row."""
 
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through."""

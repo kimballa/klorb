@@ -37,6 +37,7 @@ from klorb.tui.commands.theme_commands import ThemeCommandProvider
 from klorb.tui.commands.thinking_commands import ThinkingCommandProvider
 from klorb.tui.commands.trust_commands import TrustWorkspaceCommandProvider
 from klorb.tui.constants import (
+    CHAT_HISTORY_ID,
     HISTORY_ID,
     INTERACTION_PANEL_ID,
     NEW_SESSION_LABEL,
@@ -136,6 +137,15 @@ class ReplApp(
     #subagent-history {
         height: 1fr;
         display: none;
+    }
+
+    #chat-history {
+        height: 1fr;
+        display: none;
+    }
+
+    .chat-message-own {
+        color: $accent;
     }
 
     #interaction-panel {
@@ -296,6 +306,7 @@ class ReplApp(
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
         ("ctrl+t", "toggle_task_sidebar", "Tasks"),
         ("ctrl+g", "toggle_subagents_panel", "Agents"),
+        ("ctrl+b", "open_chat_room", "Chat"),
         ("ctrl+e", "expand_history_placeholder", "Expand"),
         Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
     ]
@@ -509,6 +520,18 @@ class ReplApp(
         `_mount_subagent_status_notice` showing "Sending interrupt…" across every tick until
         the abort actually lands.
         """
+        self._chat_selected: bool = False
+        """Whether the chat room, rather than `_selected_session`, is the currently displayed
+        view. `_selected_session`/`_selected_handle` stay pointed at whichever (sub)agent was
+        last chosen.
+        """
+        self._chat_history_rendered_count: int = 0
+        """How many of `Session.chat_channel.history()`'s messages `#chat-history` currently
+        shows, letting `SubagentsPanelMixin._append_new_chat_messages` mount only the delta."""
+        self._chat_history_pinned_to_bottom: bool = True
+        """Whether `#chat-history` was scrolled to its end the last time its `scroll_y`
+        changed.
+        """
         self._active_turn_callbacks: TurnEventHandlers | None = None
         """The `TurnEventHandlers` built by `_send_prompt` for the turn currently in flight, or
         `None` between turns. `Session.drain_queued_messages()`'s `on_send_queued_message` hook
@@ -527,6 +550,7 @@ class ReplApp(
         yield SubagentsPanel(id=SUBAGENTS_PANEL_ID)
         yield VerticalScroll(id=HISTORY_ID)
         yield VerticalScroll(id=SUBAGENT_HISTORY_ID)
+        yield VerticalScroll(id=CHAT_HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield FileFinderPanel(id=FILE_FINDER_ID)
         yield SkillFinderPanel(id=SKILL_FINDER_ID)

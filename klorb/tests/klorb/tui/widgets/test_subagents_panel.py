@@ -44,3 +44,25 @@ def test_render_row_label_attention_wins_over_running() -> None:
     label = SubagentsPanel._render_row_label(row, needs_attention=True)
 
     assert str(label) == "! 1.1 New session..."
+
+
+def test_render_chat_row_label_no_unread() -> None:
+    label = SubagentsPanel._render_chat_row_label("none", blink_on=True)
+
+    assert str(label) == "  💬 Chat Room"
+
+
+def test_render_chat_row_label_plain_unread_is_a_steady_marker() -> None:
+    on = SubagentsPanel._render_chat_row_label("unread", blink_on=True)
+    off = SubagentsPanel._render_chat_row_label("unread", blink_on=False)
+
+    assert str(on) == "! 💬 Chat Room"
+    assert str(off) == "! 💬 Chat Room"
+
+
+def test_render_chat_row_label_mention_blinks() -> None:
+    on = SubagentsPanel._render_chat_row_label("mention", blink_on=True)
+    off = SubagentsPanel._render_chat_row_label("mention", blink_on=False)
+
+    assert str(on) == "! 💬 Chat Room"
+    assert str(off) == "  💬 Chat Room"

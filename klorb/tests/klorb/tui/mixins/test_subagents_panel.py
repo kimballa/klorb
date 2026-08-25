@@ -10,15 +10,19 @@ from textual.widget import Widget
 from textual.widgets import Markdown, OptionList, Static
 from tui.conftest import _session, _wait_until
 
+from klorb.agents.chat import CHAT_USER_ID, chat_nickname
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, SubagentTurnOutcome
 from klorb.message import Message, MessageRole, ToolCallRequest
 from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import (
+    CHAT_HISTORY_ID,
+    CHAT_ROW_ID,
     HISTORY_ID,
     OUTPUT_TOKENS_ID,
     PROMPT_INPUT_ID,
     SESSION_NAME_ID,
+    SUBAGENT_ATTENTION_STATUS_ID,
     SUBAGENT_HISTORY_ID,
     SUBAGENTS_PANEL_ID,
     TASK_SIDEBAR_ID,
@@ -333,9 +337,9 @@ async def test_selecting_a_row_via_the_option_list_switches_selection(
         await pilot.pause()
 
         option_list = app.query_one(f"#{SUBAGENTS_LIST_ID}", OptionList)
-        assert option_list.highlighted == 0  # root row, selected by default
+        assert option_list.highlighted == 1  # root row, selected by default (row 0 is chat)
 
-        option_list.highlighted = 1  # the subagent row
+        option_list.highlighted = 2  # the subagent row
         await pilot.pause()
 
         assert app._selected_session is handle.session
@@ -371,7 +375,7 @@ async def test_root_row_never_shows_a_running_marker_but_footer_shows_its_role(
 
         panel = app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
         option_list = panel.query_one(f"#{SUBAGENTS_LIST_ID}", OptionList)
-        assert option_list.option_count == 1
+        assert option_list.option_count == 2  # the synthetic chat row, plus the root row
 
 
 async def test_new_subagent_messages_stay_pinned_to_the_bottom_when_already_there(
@@ -584,3 +588,183 @@ async def test_transcript_reconstructs_an_empty_thinking_body_from_reasoning_det
         container = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
         bodies = list(container.query(".thinking-body"))
         assert any("the real reasoning" in str(widget.render()) for widget in bodies)
+
+
+async def test_selecting_the_chat_row_shows_chat_history_and_hides_the_others(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        chat_history = app.query_one(f"#{CHAT_HISTORY_ID}", VerticalScroll)
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        subagent_history = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+
+        await app._select_session(handle.session.id)
+        await pilot.pause()
+
+        await app._select_chat()
+        await pilot.pause()
+
+        chat_selected_after_chat = app._chat_selected
+        chat_shown = chat_history.display
+        history_shown = history.display
+        subagent_history_shown = subagent_history.display
+        assert chat_selected_after_chat
+        assert chat_shown
+        assert not history_shown
+        assert not subagent_history_shown
+
+        await app._select_session(session.id)
+        await pilot.pause()
+
+        chat_selected_after_root = app._chat_selected
+        chat_shown_now = chat_history.display
+        history_shown_now = history.display
+        assert not chat_selected_after_root
+        assert not chat_shown_now
+        assert history_shown_now
+
+
+async def test_chat_row_is_first_in_the_panel_and_selectable_via_the_option_list(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        option_list = app.query_one(f"#{SUBAGENTS_LIST_ID}", OptionList)
+        assert option_list.get_option_at_index(0).id == CHAT_ROW_ID
+
+        option_list.highlighted = 0
+        await pilot.pause()
+
+        assert app._chat_selected
+
+
+async def test_posting_from_the_prompt_input_while_chat_selected_appends_to_the_chat_log(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await app._select_chat()
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hello room"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        history = session.chat_channel.history()
+        assert len(history) == 1
+        assert history[0].sender_id == CHAT_USER_ID
+        assert history[0].body == "hello room"
+
+        container = app.query_one(f"#{CHAT_HISTORY_ID}", VerticalScroll)
+        statics = list(container.query(Static))
+        assert any("hello room" in str(widget.render()) for widget in statics)
+
+
+async def test_chat_draft_text_is_preserved_when_switching_away_and_back(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await app._select_chat()
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "unsent draft"
+
+        await app._select_session(session.id)
+        await pilot.pause()
+        assert prompt_input.text == ""
+
+        await app._select_chat()
+        await pilot.pause()
+        assert prompt_input.text == "unsent draft"
+
+
+async def test_chat_row_marker_is_steady_for_plain_unread_and_blinks_for_a_mention(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        assert app._current_chat_marker() == "none"
+
+        session.chat_channel.post("some-agent", "just chatting", session)
+        assert app._current_chat_marker() == "unread"
+
+        session.chat_channel.post("some-agent", "hey @user check this out", session)
+        assert app._current_chat_marker() == "mention"
+
+        await app._select_chat()
+        await pilot.pause()
+        assert app._current_chat_marker() == "none"
+
+
+async def test_status_line_fallback_reports_chat_unread_when_panel_is_hidden(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        session.chat_channel.post("some-agent", "just chatting", session)
+        app._tick_subagents_panel()
+        await pilot.pause()
+
+        status = app.query_one(f"#{SUBAGENT_ATTENTION_STATUS_ID}", Static)
+        assert bool(status.display) is True
+        assert str(status.render()) == "Chat room has new messages"
+
+        session.chat_channel.post("some-agent", "hey @user look", session)
+        app._tick_subagents_panel()
+        await pilot.pause()
+        assert str(status.render()) == "Chat room: you were mentioned"
+
+
+async def test_ctrl_b_opens_the_panel_and_selects_chat_directly(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        panel = app.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
+        assert bool(panel.display) is False
+
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+
+        assert bool(panel.display) is True
+        assert app._chat_selected
+
+
+async def test_mention_of_a_live_subagent_renders_its_nickname_in_bold(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
+    session.chat_channel.post("some-agent", f"hey @{handle.session.id} look", session)
+    app = ReplApp(session=session)
+
+    async with app.run_test() as pilot:
+        await app._select_chat()
+        await pilot.pause()
+
+        nickname = chat_nickname(handle.session)
+        container = app.query_one(f"#{CHAT_HISTORY_ID}", VerticalScroll)
+        statics = list(container.query(Static))
+        assert any(f"@{nickname}" in str(widget.render()) for widget in statics)

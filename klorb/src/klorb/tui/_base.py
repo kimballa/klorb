@@ -92,6 +92,9 @@ class ReplAppBase(App[None]):
     _subagent_transcript_notice: Static | None
     _subagent_transcript_render_in_flight: bool
     _subagent_interrupt_pending: str | None
+    _chat_selected: bool
+    _chat_history_rendered_count: int
+    _chat_history_pinned_to_bottom: bool
     _replacing_session: bool
     _pending_session_replacement: bool
     _pending_session_replacement_initial_message: str | None
@@ -233,4 +236,8 @@ class ReplAppBase(App[None]):
 
     async def _on_subagent_history_scroll_changed(self) -> None: ...
 
+    async def _on_chat_history_scroll_changed(self) -> None: ...
+
     def _note_subagent_interrupt_requested(self, handle: SubagentHandle) -> None: ...
+
+    def _submit_chat_post(self, prompt_text: str) -> None: ...
