@@ -1,0 +1,36 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "openai/gpt-5.6-luna",
+  "family": "gpt-luna",
+  "model_version": "5.6",
+  "knowledge_cutoff": "2026-02-16",
+  "settings": {},
+  "capabilities": {
+    "vision": true,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1050000,
+    "max_output_tokens": 128000,
+    "function_calling": true,
+    "streaming": true,
+    "vision_details": {
+      "supported_mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif"
+      ],
+      "max_width_px": null,
+      "max_height_px": null,
+      "max_megapixels": 1.572864,
+      "token_formula": "openai_patch_budget",
+      "max_images_per_request": 1500,
+      "patch_budget": 1536,
+      "token_multiplier": 2.46
+    }
+  },
+  "cache_mgmt_style": "AUTOMATIC"
+}

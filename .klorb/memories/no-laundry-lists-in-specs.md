@@ -1,0 +1,3 @@
+No exhaustive lists in specs — use "such as X, Y, & Z" not a full catalogue
+
+When a spec or doc says "it ships N things" or "it supports X, Y, Z...", don't enumerate every item. Write "klorb ships built-in models such as X, Y, & Z" instead of naming all of them. A reader can look at the directory or registry for the full inventory. Listing everything creates run-on sentences and makes the doc a maintenance burden every time the set changes. Pick a few illustrative examples (the default, one that has a notable distinction) and stop.
