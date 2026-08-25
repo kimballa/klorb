@@ -122,7 +122,9 @@
           "EditScratchpad",
           "ReadScratchpad",
           "WebFetch",
-          "GetMessages"
+          "GetMessages",
+          "PostChat",
+          "ReadChat"
         ],
         "skills": [
           "internal:launch-explorer-subagent"

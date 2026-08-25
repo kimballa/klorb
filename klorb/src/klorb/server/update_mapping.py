@@ -94,6 +94,8 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "WaitForSubagent": "other",
     "SendMessage": "other",
     "GetMessages": "other",
+    "PostChat": "other",
+    "ReadChat": "other",
     "WakeUpTimer": "think",
 }
 """Every tool name `ToolRegistry.discover_tools()` can produce today, mapped to its ACP

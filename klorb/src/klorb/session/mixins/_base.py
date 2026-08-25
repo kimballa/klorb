@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     # `klorb.agents.runtime` imports `klorb.session.mixins.turns`, which itself is part of
     # assembling `Session`.
     from klorb.agents.runtime import SubagentTracker
+    from klorb.agents.chat import Channel
     # `klorb.hooks.dispatcher` depends on `klorb.session.config`, so a real import here
     # would be circular; needed only to type `_dispatch_hook`'s return value.
     from klorb.hooks.hook_api import HookOutput
@@ -113,6 +114,7 @@ class SessionBase:
     _chain_continuation_pending: bool
     scratchpad: Scratchpad
     subagent_tracker: "SubagentTracker"
+    _chat_channel: "Channel"
     statistics: SessionStatistics
     _session_lock: Lockfile | None
     _session_subdir: str | None
