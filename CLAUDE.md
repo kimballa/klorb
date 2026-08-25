@@ -41,6 +41,10 @@ delete the whole clause or sentence they appear in:
 * "(e.g. ...)" and "(unlike ...)" parenthetical asides
 * Any other parenthetical whose content isn't the definition itself (i.e. it's an example,
   comparison, or cross-reference rather than integral to what's being described)
+* A trailing "never ..." / "not ..." / "doesn't ..." clause tacked onto an otherwise complete
+  sentence to rule out some alternative. State the positive fact and stop; don't append the
+  negative space around it. "The raw text exactly as posted, never rewritten" is banned --
+  "The raw text exactly as posted" is the whole sentence.
 
 ## Cloud / Remote Agent Behavior
 

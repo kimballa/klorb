@@ -320,10 +320,9 @@ class SessionCoreMixin(SessionBase):
         (a caller-supplied path to reuse, or `None` for a freshly provisioned one);
         `reset_session()` always passes `None`, since a reset has no path to reuse.
 
-        `chat_channel` is the one field here that isn't tree-lifetime-scoped like
-        `_agent_message_queue`: a subagent's reset re-fetches its parent's existing instance,
-        but a root session's reset rebuilds a fresh, empty `Channel`, safe since
-        `reset_session()`'s own `cascade_close_subagents` call has already run by this point.
+        A subagent's reset re-fetches `chat_channel` from its parent. A root session's reset
+        rebuilds it fresh and empty, safe since `cascade_close_subagents` has already run by
+        this point.
         """
         self.cur_chainlink_task_id: int | None = None
         self.tool_state: dict[str, Any] = {}
@@ -542,8 +541,8 @@ class SessionCoreMixin(SessionBase):
     @property
     def chat_channel(self) -> "Channel":
         """Return the chat-room `Channel` shared by this session's entire tree. A root
-        session's reset rebuilds this fresh; a subagent's does not, since the chat log is
-        conversation-scoped like `messages`."""
+        session's reset rebuilds this fresh, since the chat log is conversation-scoped like
+        `messages`."""
         return self._chat_channel
 
     @property
@@ -906,8 +905,7 @@ class SessionCoreMixin(SessionBase):
 
     def load_chat_channel(self, channel: "Channel") -> None:
         """Replace this session's `chat_channel` with `channel`, intended to be called once
-        immediately after construction. Only meaningful on a root session; a subagent's own
-        `chat_channel` is always its parent's live instance."""
+        immediately after construction on a root session."""
         self._chat_channel = channel
 
     def set_permission_framework(self, value: PermissionFramework) -> None:

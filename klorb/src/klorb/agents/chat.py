@@ -35,12 +35,12 @@ class ChatMessage:
     """One posted chat-room message, retained until trimmed by `Channel`'s own `max_history`."""
 
     seq: int
-    """A monotonically increasing sequence number, never reused or renumbered, so a stored
-    high-water mark stays valid across a trim."""
+    """A monotonically increasing sequence number, stable across a trim so a stored
+    high-water mark stays valid."""
     sender_id: str
     timestamp: datetime
     body: str
-    """The raw text exactly as posted, never rewritten."""
+    """The raw text exactly as posted."""
     mentions: list[str]
     """Participant ids (or `"user"`) `body`'s `@token`s resolved to, against the live session
     tree at post time."""
@@ -126,7 +126,7 @@ class Channel:
     def register_participant(self, participant_id: str, at_seq: int | None = None) -> None:
         """Seed a fresh high-water mark for `participant_id`; a no-op if one already exists.
         `at_seq` defaults to the channel's current sequence value, so a newly registered
-        participant's hwm starts at "now," not the beginning of the log."""
+        participant's hwm starts at the current moment."""
         seed = at_seq if at_seq is not None else self._next_seq.get_value()
         with self._lock:
             if participant_id not in self._hwm:
@@ -150,8 +150,8 @@ class Channel:
     def read_and_advance(
         self, participant_id: str, limit: int | None = None,
     ) -> list[ChatMessage]:
-        """Return `participant_id`'s unread messages, oldest first, capped at `limit` if given.
-        This is the only way a participant's hwm advances."""
+        """Return `participant_id`'s unread messages, oldest first, capped at `limit` if
+        given, advancing their high-water mark to the last one returned."""
         with self._lock:
             hwm = self._hwm.get(participant_id, 0)
             unread = [message for message in self._messages if message.seq > hwm]
@@ -207,8 +207,7 @@ class Channel:
         mention_wake_count: int, *, max_history: int = DEFAULT_MAX_HISTORY,
         max_mention_wakes: int = DEFAULT_MAX_MENTION_WAKES,
     ) -> "Channel":
-        """Rebuild a `Channel` from previously persisted state. A restored hwm entry for a
-        session id that never reappears is simply inert."""
+        """Rebuild a `Channel` from previously persisted state."""
         channel = cls(max_history=max_history, max_mention_wakes=max_mention_wakes)
         channel._messages = list(messages)
         channel._hwm = dict(hwm)
