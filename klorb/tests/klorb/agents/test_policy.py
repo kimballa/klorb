@@ -198,6 +198,60 @@ def test_finished_but_undelivered_subagent_does_not_count_toward_concurrent_limi
     assert plan.session_config.role_name == "explorer"
 
 
+def test_rejects_a_second_copy_of_a_role_capped_at_one(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """`reviewer`'s own `agents.json` entry sets `max_copies: 1`."""
+    context = _operator_context(tmp_path, make_session_config)
+    assert context.session is not None
+    child = Session(make_session_config(role_name="reviewer"), provider=MagicMock(), parent=context.session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="reviewer", title="earlier review")
+    context.session.subagent_tracker.register(handle)
+
+    with pytest.raises(ToolCallError, match="SendMessage") as exc_info:
+        plan_subagent_creation(context, "reviewer", None, None)
+    assert exc_info.value.category == "validation"
+    assert child.id in str(exc_info.value)
+
+
+def test_max_copies_counts_a_finished_dormant_copy_too(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """Unlike the concurrency checks, `max_copies` counts every existing session of the role,
+    running or dormant."""
+    context = _operator_context(tmp_path, make_session_config)
+    assert context.session is not None
+    child = Session(make_session_config(role_name="reviewer"), provider=MagicMock(), parent=context.session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="reviewer", title="earlier review")
+    context.session.subagent_tracker.register(handle)
+    context.session.subagent_tracker.mark_finished(
+        child.id, SubagentTurnOutcome(output="done", completed=True))
+
+    with pytest.raises(ToolCallError, match="SendMessage"):
+        plan_subagent_creation(context, "reviewer", None, None)
+
+
+def test_uncapped_role_allows_more_than_one_copy(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """`explorer`'s own `agents.json` entry leaves `max_copies` unset."""
+    context = _operator_context(tmp_path, make_session_config)
+    assert context.session is not None
+    child = Session(make_session_config(role_name="explorer"), provider=MagicMock(), parent=context.session)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="earlier search")
+    context.session.subagent_tracker.register(handle)
+
+    plan = plan_subagent_creation(context, "explorer", None, None)  # must not raise
+
+    assert plan.session_config.role_name == "explorer"
+
+
 def test_no_session_is_constructed_when_a_check_fails(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

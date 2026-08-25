@@ -64,6 +64,9 @@ class AgentDefinition(BaseModel):
     restrict_to: AgentRestrictions = Field(default_factory=AgentRestrictions)
     allow_subagents: bool = False
     """Whether a subagent running as this role may itself call `CreateSubagent`."""
+    max_copies: int | None = None
+    """Maximum number of sessions running as this role allowed anywhere in one session tree at
+    once. `None` or `-1` means uncapped; `0` means the role may never be launched."""
     agent_capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)
     hooks: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     """Raw `{hookName: [handler, ...]}` entries this role grants to every subagent created as

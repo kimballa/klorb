@@ -33,9 +33,18 @@ def test_agent_definition_restrict_to_defaults_to_unrestricted() -> None:
 
     assert definition.restrict_to == AgentRestrictions()
     assert definition.allow_subagents is False
+    assert definition.max_copies is None
     assert definition.agent_capabilities == AgentCapabilities()
     assert definition.hooks == {}
     assert definition.events == {}
+
+
+def test_agent_definition_round_trips_max_copies_from_json_shaped_dict() -> None:
+    definition = AgentDefinition.model_validate({
+        "name": "operator", "default_model": "some/model", "max_copies": 1,
+    })
+
+    assert definition.max_copies == 1
 
 
 def test_agent_capabilities_default_to_false() -> None:

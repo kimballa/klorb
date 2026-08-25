@@ -7,6 +7,7 @@
     {
       "name": "operator",
       "default_model": "klorb-default/normal",
+      "max_copies": 1,
       "restrict_to": {
         "subagent_roles": [
           "explorer",
@@ -27,6 +28,7 @@
     {
       "name": "implementer",
       "default_model": "klorb-default/normal",
+      "max_copies": 1,
       "restrict_to": {
         "subagent_roles": [
           "explorer"
@@ -42,6 +44,7 @@
     {
       "name": "planner",
       "default_model": "klorb-default/normal",
+      "max_copies": 1,
       "restrict_to": {
         "tools": [
           "CreateFile",
@@ -94,6 +97,7 @@
     {
       "name": "reviewer",
       "default_model": "klorb-default/normal",
+      "max_copies": 1,
       "restrict_to": {
         "subagent_roles": [
           "explorer"
@@ -110,6 +114,7 @@
     {
       "name": "explorer",
       "default_model": "klorb-default/fast",
+      "max_copies": null,
       "restrict_to": {
         "tools": [
           "FindFile",
@@ -144,6 +149,7 @@
     {
       "name": "pair_programmer",
       "default_model": "klorb-default/normal",
+      "max_copies": 1,
       "restrict_to": {
         "subagent_roles": [
           "explorer"
