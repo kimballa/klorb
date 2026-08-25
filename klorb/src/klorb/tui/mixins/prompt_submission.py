@@ -391,6 +391,10 @@ class PromptSubmissionMixin(ReplAppBase):
                 self.call_from_thread(self._mount_tool_call_widget, rendered)
             round_index += 1
             self.call_from_thread(self._maybe_refresh_task_sidebar_after_tool_call, event)
+            # Nothing else re-arms the "still working" notice once a tool call clears it, so
+            # without this the history goes silent for however long the model takes to start
+            # its next round after this tool call's result.
+            self._turn_waiting_widget = self.call_from_thread(self._mount_turn_waiting_widget)
 
         worker_thread_id = threading.get_ident()
 

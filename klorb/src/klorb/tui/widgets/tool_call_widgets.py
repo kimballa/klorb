@@ -258,12 +258,10 @@ _TURN_WAITING_TEXTS = (
 
 
 class TurnWaitingStatic(CrawlAnimatedStatic):
-    """Animated notice mounted into history as soon as a submitted turn is dispatched, showing
-    one of `_TURN_WAITING_TEXTS` (chosen at random) under `crawl_animation_text`'s pulse
-    animation until the turn's own content starts arriving.
-    `PromptSubmissionMixin._clear_turn_waiting_widget` removes it as soon as the first
-    response/thinking chunk or the first actually-running tool call widget is mounted for the
-    turn, whichever comes first.
+    """Animated notice showing one of `_TURN_WAITING_TEXTS` under `crawl_animation_text`'s
+    pulse animation whenever a turn has no response streaming and no tool call running:
+    trailing the most recent thinking/reasoning content, or standing alone at turn start and
+    right after a tool call finishes.
     """
 
     def __init__(self) -> None:

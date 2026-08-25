@@ -446,9 +446,8 @@ class ReplApp(
         this collection."""
         self._running_tool_call_widgets: dict[str, RunningToolCallStatic] = {}
         self._turn_waiting_widget: TurnWaitingStatic | None = None
-        """The `TurnWaitingStatic` mounted by `_submit_prompt` for the in-flight turn, if it
-        hasn't been cleared yet (`_clear_turn_waiting_widget`). `None` before the first turn
-        and in between turns.
+        """The `TurnWaitingStatic` currently mounted in history, or `None` when no notice is
+        showing.
         """
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True

@@ -762,6 +762,108 @@ async def test_turn_waiting_widget_shown_before_first_chunk_and_cleared_by_it(
         assert app._turn_waiting_widget is None
 
 
+async def test_turn_waiting_widget_trails_an_opaque_reasoning_details_block(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A turn whose first content is an opaque `reasoning_details` payload (no response/thinking
+    text yet) keeps `TurnWaitingStatic` showing, repositioned after the `<Reasoning>` block: that
+    block is a static placeholder count, not a live signal, so clearing the notice outright would
+    leave the history looking finished while the turn is still running."""
+    mock_provider = MagicMock()
+    entered_send_prompt = threading.Event()
+    release_send_prompt = threading.Event()
+    reasoning_details_sent = threading.Event()
+    release_reply = threading.Event()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
+    ):
+        assert on_reasoning_details is not None
+        entered_send_prompt.set()
+        release_send_prompt.wait(timeout=5)
+        on_reasoning_details([{"opaque": True}])
+        reasoning_details_sent.set()
+        release_reply.wait(timeout=5)
+        return _reply("done")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider, make_session_config))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, entered_send_prompt.is_set)
+        release_send_prompt.set()
+        await _wait_until(pilot, reasoning_details_sent.is_set)
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(TurnWaitingStatic)) == 1
+        assert app._turn_waiting_widget is not None
+        assert list(history.children)[-1] is app._turn_waiting_widget
+
+        release_reply.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(history.query(TurnWaitingStatic)) == 0
+        assert app._turn_waiting_widget is None
+
+
+async def test_turn_waiting_widget_trails_a_thinking_block_and_clears_when_the_response_starts(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A streaming `<Thinking>` block can be folded away in the transcript, so it is not itself
+    a liveness signal: `TurnWaitingStatic` stays showing underneath it until a real response
+    chunk arrives."""
+    mock_provider = MagicMock()
+    entered_send_prompt = threading.Event()
+    release_send_prompt = threading.Event()
+    thinking_sent = threading.Event()
+    release_chunk = threading.Event()
+
+    def fake_send_prompt(
+        messages, system_prompt=None, model=None, session_id=None, reasoning=None, tools=None,
+        drop_reasoning=False, on_chunk=None, on_thinking_chunk=None, on_reasoning_details=None,
+        cache_mgmt_style="AUTOMATIC", cancel_event=None, max_tokens=None,
+    ):
+        assert on_thinking_chunk is not None
+        entered_send_prompt.set()
+        release_send_prompt.wait(timeout=5)
+        on_thinking_chunk("pondering...")
+        thinking_sent.set()
+        release_chunk.wait(timeout=5)
+        on_chunk("Hello")
+        return _reply("Hello")
+
+    mock_provider.send_prompt.side_effect = fake_send_prompt
+    app = ReplApp(session=_session(mock_provider, make_session_config))
+
+    async with app.run_test() as pilot:
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        prompt_input.text = "hi"
+        await pilot.press("enter")
+
+        await _wait_until(pilot, entered_send_prompt.is_set)
+        release_send_prompt.set()
+        await _wait_until(pilot, thinking_sent.is_set)
+
+        history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+        assert len(history.query(TurnWaitingStatic)) == 1
+        assert app._turn_waiting_widget is not None
+        assert list(history.children)[-1] is app._turn_waiting_widget
+
+        release_chunk.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(history.query(TurnWaitingStatic)) == 0
+        assert app._turn_waiting_widget is None
+
+
 async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chunk(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:
@@ -785,6 +887,41 @@ async def test_turn_waiting_widget_cleared_by_a_running_tool_call_before_any_chu
         history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
         assert len(history.query(TurnWaitingStatic)) == 0
         assert app._turn_waiting_widget is None
+
+
+async def test_turn_waiting_widget_reappears_after_a_tool_call_finishes(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`TurnWaitingStatic` remounts once a tool call's result is rendered, so the history never
+    goes silent between a finished tool call and whatever the model does next."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [
+        _tool_call_reply([("call_1", "echo", '{"message": "hi"}')]),
+        _reply("done"),
+    ]
+    session = _session_with_tools(mock_provider, make_session_config(model="some/model"))
+    app = ReplApp(session=session)
+
+    mount_count = 0
+    original = ReplApp._mount_turn_waiting_widget
+
+    def spy(self: ReplApp) -> TurnWaitingStatic:
+        nonlocal mount_count
+        mount_count += 1
+        return original(self)
+
+    with patch.object(ReplApp, "_mount_turn_waiting_widget", spy):
+        async with app.run_test() as pilot:
+            app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput).text = "please echo"
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            history = app.query_one(f"#{HISTORY_ID}", VerticalScroll)
+            assert len(history.query(TurnWaitingStatic)) == 0
+            assert app._turn_waiting_widget is None
+
+    assert mount_count == 2
 
 
 async def test_aborting_a_turn_keeps_its_completed_tool_call_widgets(

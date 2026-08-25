@@ -90,13 +90,14 @@ class RenderingMixin(ReplAppBase):
         widget for a streaming thinking block, and return `(body_widget, label_widget)`."""
         self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = self._history_pinned_to_bottom
         label_widget = Static(THINKING_LABEL, classes="thinking-label")
         history.mount(label_widget)
         widget = Static(initial_text, classes="thinking-body", markup=False)
         history.mount(widget)
-        self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
+        # A folded `<Thinking>` block hides its own liveness signal, so re-trail the waiting
+        # notice under it rather than leaving the turn looking finished.
+        self._turn_waiting_widget = self._mount_turn_waiting_widget()
         return widget, label_widget
 
     def _update_thinking_widget(self, widget: Static, text: str) -> None:
@@ -110,14 +111,16 @@ class RenderingMixin(ReplAppBase):
     def _mount_reasoning_details_widget(self, text: str) -> tuple[Static, Static]:
         """Mount a left-justified `<Reasoning>` label followed by an italicized `Static`
         widget showing `text`, and return `(body_widget, label_widget)`."""
+        self._clear_turn_waiting_widget()
         history = self.query_one(f"#{HISTORY_ID}", VerticalScroll)
-        was_pinned = self._history_pinned_to_bottom
         label_widget = Static(REASONING_DETAILS_LABEL, classes="reasoning-details-label")
         history.mount(label_widget)
         widget = Static(text, classes="reasoning-details-body", markup=False)
         history.mount(widget)
-        self._scroll_if_pinned(history, was_pinned)
         self._update_status_bar()
+        # Its content is just a static placeholder count, not a live signal, so re-trail the
+        # waiting notice under it rather than leaving the turn looking finished.
+        self._turn_waiting_widget = self._mount_turn_waiting_widget()
         return widget, label_widget
 
     def _update_reasoning_details_widget(self, widget: Static, text: str) -> None:
