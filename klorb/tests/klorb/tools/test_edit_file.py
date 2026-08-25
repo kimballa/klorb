@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -866,6 +867,23 @@ def test_edit_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
     })
 
     assert file_path.read_text() == "a\nB\nc\n"
+
+
+# --- file_accessed() reporting (see docs/specs/terminal-repl.md's "Files panel" section) ---
+
+
+def test_apply_reports_file_accessed_as_a_write(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
+    session = _session(tmp_path, make_session_config)
+
+    with patch.object(session, "file_accessed") as mock_file_accessed:
+        EditFileTool(_context(tmp_path, session=session)).apply({
+            "filename": str(file_path), "old_text": "b", "new_text": "B",
+        })
+
+    mock_file_accessed.assert_called_once_with(str(file_path.resolve()), "write")
 
 
 def test_update_args_truncates_old_and_new_text_on_success(tmp_path: Path) -> None:

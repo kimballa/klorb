@@ -2,7 +2,9 @@
 """Tests for klorb.tools.read_file."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -528,6 +530,28 @@ def test_read_file_total_lines_unaffected_by_redaction(tmp_path: Path) -> None:
 
     assert result["total_lines"] == 1
     assert result["truncated"] is False
+
+
+# --- file_accessed() reporting (see docs/specs/terminal-repl.md's "Files panel" section) ---
+
+
+def test_apply_reports_file_accessed_as_a_read(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    file_path = _write_lines(tmp_path, 3)
+    session = Session(make_session_config(workspace=Workspace(path=tmp_path)))
+
+    with patch.object(session, "file_accessed") as mock_file_accessed:
+        ReadFileTool(_context(tmp_path, session=session)).apply({"filename": str(file_path)})
+
+    mock_file_accessed.assert_called_once_with(str(file_path.resolve()), "read")
+
+
+def test_apply_does_not_report_file_accessed_without_a_session(tmp_path: Path) -> None:
+    file_path = _write_lines(tmp_path, 3)
+
+    # No exception despite `session=None` (the default) -- this is the assertion.
+    ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
 
 
 def test_update_args_leaves_args_unchanged_on_success(tmp_path: Path) -> None:

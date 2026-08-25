@@ -86,6 +86,8 @@ class EditFileTool(Tool):
             path, args, subject=filename, reread_hint=f"Use ReadFile on filename={filename}",
             create_hint="CreateFile", redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
+        if self.context.session is not None:
+            self.context.session.file_accessed(str(path), "write")
 
         logger.debug(
             "EditFile %s replaced %d line(s) at line %d of what is now a %d-line file",

@@ -104,6 +104,8 @@ class ReadFileTool(Tool):
         result = self.read_file_core.apply(
             path, args, redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
+        if self.context.session is not None:
+            self.context.session.file_accessed(str(path), "read")
         logger.debug(
             "ReadFile %s returned lines %d-%d of %d (truncated=%s)",
             filename, result["start_line"], result["end_line"], result["total_lines"],

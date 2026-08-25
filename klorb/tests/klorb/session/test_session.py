@@ -2484,6 +2484,26 @@ def test_current_turn_handlers_is_none_outside_a_turn(
     assert session.current_turn_handlers() is None
 
 
+def test_file_accessed_is_a_noop_outside_a_turn(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
+
+    session.file_accessed("/tmp/some/file.txt", "read")  # no exception is the assertion
+
+
+def test_file_accessed_fires_the_current_turns_on_file_accessed_handler(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = Session(make_session_config(), provider=MagicMock())
+    on_file_accessed = MagicMock()
+    session._current_turn_handlers = TurnEventHandlers(on_file_accessed=on_file_accessed)
+
+    session.file_accessed("/tmp/some/file.txt", "write")
+
+    on_file_accessed.assert_called_once_with("/tmp/some/file.txt", "write")
+
+
 def test_send_turn_with_resolve_mentions_false_leaves_at_mentions_literal(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

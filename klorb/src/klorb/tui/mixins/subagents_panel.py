@@ -18,6 +18,7 @@ from klorb.tui._base import ReplAppBase
 from klorb.tui.constants import (
     CHAT_HISTORY_ID,
     CHAT_ROW_ID,
+    FILES_PANEL_ID,
     HISTORY_ID,
     NEW_SESSION_LABEL,
     PROMPT_INPUT_ID,
@@ -28,6 +29,7 @@ from klorb.tui.constants import (
     TASK_SIDEBAR_ID,
 )
 from klorb.tui.formatting import pinned_to_bottom
+from klorb.tui.widgets.files_panel import FilesPanel
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.subagents_panel import (
     SUBAGENTS_LIST_ID,
@@ -62,7 +64,7 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def action_toggle_subagents_panel(self) -> None:
         """Ctrl+G: show or hide the subagents panel. Mutually exclusive with the task sidebar
-        since both dock the same right-hand slot."""
+        and the Files panel since all three dock the same right-hand slot."""
         panel = self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel)
         if self._active_sidebar == "agents":
             self._active_sidebar = None
@@ -76,10 +78,12 @@ class SubagentsPanelMixin(ReplAppBase):
             self._update_subagent_attention_status_line()
 
     def _show_subagents_panel(self, panel: SubagentsPanel) -> None:
-        """Make the subagents panel the active right-hand sidebar, closing the task sidebar
-        first if that was showing instead."""
+        """Make the subagents panel the active right-hand sidebar, closing whichever of the task
+        sidebar/Files panel was showing instead."""
         if self._active_sidebar == "tasks":
             self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display = False
+        elif self._active_sidebar == "files":
+            self.query_one(f"#{FILES_PANEL_ID}", FilesPanel).display = False
         self._active_sidebar = "agents"
         panel.display = True
 

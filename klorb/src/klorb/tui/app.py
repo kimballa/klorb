@@ -38,6 +38,7 @@ from klorb.tui.commands.thinking_commands import ThinkingCommandProvider
 from klorb.tui.commands.trust_commands import TrustWorkspaceCommandProvider
 from klorb.tui.constants import (
     CHAT_HISTORY_ID,
+    FILES_PANEL_ID,
     HISTORY_ID,
     INTERACTION_PANEL_ID,
     NEW_SESSION_LABEL,
@@ -52,7 +53,9 @@ from klorb.tui.constants import (
     SUBAGENTS_PANEL_ID,
     TASK_SIDEBAR_ID,
 )
+from klorb.tui.file_activity import FileActivityTracker
 from klorb.tui.formatting import format_workspace_path
+from klorb.tui.mixins.files_panel import FilesPanelMixin
 from klorb.tui.mixins.interactions import InteractionsMixin
 from klorb.tui.mixins.key_actions import KeyActionsMixin
 from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin, TuiSessionWake
@@ -62,6 +65,7 @@ from klorb.tui.mixins.subagents_panel import SubagentsPanelMixin
 from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
 from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
+from klorb.tui.widgets.files_panel import FilesPanel
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.skill_finder import SKILL_FINDER_ID, SkillFinderPanel, SkillMatch
@@ -121,6 +125,7 @@ class ReplApp(
     InteractionsMixin,
     TaskSidebarMixin,
     SubagentsPanelMixin,
+    FilesPanelMixin,
     ReplAppBase,
 ):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
@@ -306,6 +311,7 @@ class ReplApp(
         ("ctrl+o", "toggle_tool_call_detail", "Detail"),
         ("ctrl+t", "toggle_task_sidebar", "Tasks"),
         ("ctrl+g", "toggle_subagents_panel", "Agents"),
+        ("ctrl+f", "toggle_files_panel", "Files"),
         ("ctrl+b", "open_chat_room", "Chat"),
         ("ctrl+e", "expand_history_placeholder", "Expand"),
         Binding("shift+tab", "cycle_permission_framework", "Cycle permission", priority=True),
@@ -463,8 +469,13 @@ class ReplApp(
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
         self._active_sidebar: str | None = self._process_config.sidebar
-        """Which sidebar panel is currently visible — `None`, `"tasks"`, or `"agents"`.
+        """Which sidebar panel is currently visible — `None`, `"tasks"`, `"agents"`, or
+        `"files"`.
         """
+        self._file_activity = FileActivityTracker()
+        """Every file read or written this process has seen via `ReadFile`/`EditFile`/
+        `CreateFile`, across the root session and every subagent beneath it, backing the Files
+        panel."""
         self._selected_session: Session = self._session
         """Whichever session's transcript `#history`/`#subagent-history` currently displays, and
         whose asks `InteractionsMixin._await_session_selected` lets through immediately.
@@ -548,6 +559,7 @@ class ReplApp(
         yield Header()
         yield TaskSidebar(id=TASK_SIDEBAR_ID)
         yield SubagentsPanel(id=SUBAGENTS_PANEL_ID)
+        yield FilesPanel(id=FILES_PANEL_ID)
         yield VerticalScroll(id=HISTORY_ID)
         yield VerticalScroll(id=SUBAGENT_HISTORY_ID)
         yield VerticalScroll(id=CHAT_HISTORY_ID)

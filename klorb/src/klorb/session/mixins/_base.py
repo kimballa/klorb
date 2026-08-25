@@ -18,6 +18,7 @@ from klorb.role import Role
 from klorb.session.config import SessionConfig
 from klorb.session.constants import ThinkingEffort
 from klorb.session.events import (
+    FileAccessMode,
     PermissionDecision,
     QueuedMessage,
     ToolCallOutcome,
@@ -243,6 +244,8 @@ class SessionBase:
 
     def current_turn_handlers(self) -> TurnEventHandlers | None:
         raise NotImplementedError
+
+    def file_accessed(self, path: str, mode: FileAccessMode) -> None: ...
 
     def enqueue_queued_message(self, queued_msg: QueuedMessage) -> None: ...
 

@@ -2,6 +2,7 @@
 """Tests for klorb.tools.create_file."""
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -327,6 +328,22 @@ def test_create_file_without_a_token_behaves_normally(tmp_path: Path) -> None:
 
     assert file_path.read_text() == "a\nb\nc\n"
     assert result["total_lines"] == 3
+
+
+# --- file_accessed() reporting (see docs/specs/terminal-repl.md's "Files panel" section) ---
+
+
+def test_apply_reports_file_accessed_as_a_write(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    file_path = tmp_path / "new.txt"
+    session = _session(tmp_path, make_session_config)
+
+    with patch.object(session, "file_accessed") as mock_file_accessed:
+        CreateFileTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(file_path), "content": "a\n"})
+
+    mock_file_accessed.assert_called_once_with(str(file_path.resolve()), "write")
 
 
 def test_update_args_truncates_content_on_success(tmp_path: Path) -> None:

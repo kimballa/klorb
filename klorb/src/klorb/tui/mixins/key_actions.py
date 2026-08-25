@@ -17,12 +17,14 @@ from klorb.tui._base import ReplAppBase
 from klorb.tui.commands.init_commands import INIT_CONFIG_LABEL
 from klorb.tui.constants import (
     CHAT_HISTORY_ID,
+    FILES_PANEL_ID,
     HISTORY_ID,
     PROMPT_INPUT_ID,
     SUBAGENT_HISTORY_ID,
     TASK_SIDEBAR_ID,
 )
 from klorb.tui.formatting import capture_scroll_anchor, random_greeting, restore_scroll_anchor
+from klorb.tui.widgets.files_panel import FilesPanel
 from klorb.tui.widgets.palette import PALETTE_PREFIX
 from klorb.tui.widgets.prompt_input import PromptInput
 from klorb.tui.widgets.task_sidebar import TaskSidebar
@@ -227,6 +229,8 @@ class KeyActionsMixin(ReplAppBase):
         # Initialize sidebar visibility from config
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         sidebar.display = self._active_sidebar == "tasks"
+        files_panel = self.query_one(f"#{FILES_PANEL_ID}", FilesPanel)
+        files_panel.display = self._active_sidebar == "files"
 
         self._start_subagents_panel_timer()
 
