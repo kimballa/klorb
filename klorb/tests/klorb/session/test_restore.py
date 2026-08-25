@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from klorb.agents.chat import ChatMessage
 from klorb.message import Message, MessageFragment
 from klorb.models.registry import ModelRegistry
 from klorb.process_config import ProcessConfig
@@ -16,6 +17,7 @@ from klorb.session import SessionConfig, WorkspaceAccess
 from klorb.session.restore import try_restore_session
 from klorb.workspace import Workspace
 from klorb.workspace import input_history as input_history_module
+from klorb.workspace.chat_store import write_chat_state
 from klorb.workspace.session_store import RecentSession, write_session_image, write_session_state
 
 
@@ -60,4 +62,39 @@ def test_restore_rehydrates_a_path_backed_image_fragment(tmp_path: Path) -> None
         {"type": "text", "text": "look"},
         {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{expected_b64}"}},
     ]
+    session.close()
+
+
+def test_restore_loads_a_saved_chat_room(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    write_session_state(
+        workspace, "sess-1", SessionConfig(workspace_access=WorkspaceAccess(workspace=workspace)), [])
+    write_chat_state(
+        workspace, "sess-1",
+        [ChatMessage(
+            seq=1, sender_id="1", timestamp=datetime(2026, 7, 12, 0, 0, 0), body="hello room",
+            mentions=[], unresolved_mentions=[])],
+        hwm={"1": 1}, next_seq=1, mention_wake_count=0)
+
+    session = try_restore_session(
+        workspace, RecentSession(session_id="sess-1", subdir="sess-1"),
+        provider=MagicMock(), model_registry=ModelRegistry(), process_config=ProcessConfig())
+
+    assert session is not None
+    assert [m.body for m in session.chat_channel.history()] == ["hello room"]
+    assert session.chat_channel.unread_count("1") == 0
+    session.close()
+
+
+def test_restore_without_a_saved_chat_room_starts_with_an_empty_channel(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    write_session_state(
+        workspace, "sess-1", SessionConfig(workspace_access=WorkspaceAccess(workspace=workspace)), [])
+
+    session = try_restore_session(
+        workspace, RecentSession(session_id="sess-1", subdir="sess-1"),
+        provider=MagicMock(), model_registry=ModelRegistry(), process_config=ProcessConfig())
+
+    assert session is not None
+    assert session.chat_channel.history() == []
     session.close()

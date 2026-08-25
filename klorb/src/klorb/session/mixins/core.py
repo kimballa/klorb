@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     # assembling `Session`.
     from klorb.agents.runtime import SubagentTracker
     from klorb.agents.messaging import AgentMessageQueue
+    from klorb.agents.chat import Channel
     # `klorb.tools.tasks.common` reaches back into `klorb.session`, so importing it for real
     # here would be circular; needed only to type `ensure_chainlink_client`'s return value.
     from klorb.tools.tasks.common import ChainlinkClient
@@ -318,6 +319,11 @@ class SessionCoreMixin(SessionBase):
         threads through to a fresh `Scratchpad`: `__init__` passes its own constructor arg
         (a caller-supplied path to reuse, or `None` for a freshly provisioned one);
         `reset_session()` always passes `None`, since a reset has no path to reuse.
+
+        `chat_channel` is the one field here that isn't tree-lifetime-scoped like
+        `_agent_message_queue`: a subagent's reset re-fetches its parent's existing instance,
+        but a root session's reset rebuilds a fresh, empty `Channel`, safe since
+        `reset_session()`'s own `cascade_close_subagents` call has already run by this point.
         """
         self.cur_chainlink_task_id: int | None = None
         self.tool_state: dict[str, Any] = {}
@@ -342,8 +348,14 @@ class SessionCoreMixin(SessionBase):
         self._chained_hook_turns = 0
         self._chain_continuation_pending = False
         self.subagent_tracker = self._create_subagent_tracker()
+        self._chat_channel = (
+            self.parent.chat_channel if self.parent is not None
+            else self._create_chat_channel(self._process_config)
+        )
+        self._chat_channel.register_participant(self.id)
         self._register_agent_group_standing_interjection()
         self._register_agent_message_standing_interjection()
+        self._register_chat_unread_standing_interjection()
         self.statistics = SessionStatistics()
         for subject, teardown in list(self._teardown_callbacks.items()):
             if subject in _INFRASTRUCTURE_TEARDOWN_SUBJECTS:
@@ -419,6 +431,19 @@ class SessionCoreMixin(SessionBase):
             process_config.messaging_max_queue_size if process_config is not None
             else DEFAULT_MAX_QUEUE_SIZE)
         return AgentMessageQueue(max_size)
+
+    @staticmethod
+    def _create_chat_channel(process_config: "ProcessConfig | None") -> "Channel":
+        """Construct a `Channel` sized from `process_config.chat_max_history`/
+        `chat_max_mention_wakes`, deferring the import to avoid a circular dependency at module
+        load time."""
+        from klorb.agents.chat import DEFAULT_MAX_HISTORY, DEFAULT_MAX_MENTION_WAKES, Channel
+        max_history = (
+            process_config.chat_max_history if process_config is not None else DEFAULT_MAX_HISTORY)
+        max_mention_wakes = (
+            process_config.chat_max_mention_wakes if process_config is not None
+            else DEFAULT_MAX_MENTION_WAKES)
+        return Channel(max_history, max_mention_wakes)
 
     @staticmethod
     def _create_image_pipeline_config(
@@ -513,6 +538,13 @@ class SessionCoreMixin(SessionBase):
     def agent_message_queue(self) -> "AgentMessageQueue":
         """Return the `AgentMessageQueue` shared by this session's entire tree."""
         return self._agent_message_queue
+
+    @property
+    def chat_channel(self) -> "Channel":
+        """Return the chat-room `Channel` shared by this session's entire tree. A root
+        session's reset rebuilds this fresh; a subagent's does not, since the chat log is
+        conversation-scoped like `messages`."""
+        return self._chat_channel
 
     @property
     def thinking_token_budgets(self) -> dict[ThinkingEffort, int]:
@@ -705,6 +737,17 @@ class SessionCoreMixin(SessionBase):
             )
         self.register_standing_interjection(AGENT_MESSAGE_INTERJECTION_SUBJECT, provider)
 
+    def _register_chat_unread_standing_interjection(self) -> None:
+        """Register the `ChatUnread` standing interjection provider, which reminds this session
+        to call `ReadChat` when it has unread chat-room messages. The import is deferred to
+        avoid a circular dependency at module load time."""
+        from klorb.agents.chat import (
+            CHAT_UNREAD_INTERJECTION_SUBJECT,
+            build_chat_unread_interjection_provider,
+        )
+        provider = build_chat_unread_interjection_provider(cast("Session", self))
+        self.register_standing_interjection(CHAT_UNREAD_INTERJECTION_SUBJECT, provider)
+
     def _allocate_child_index(self) -> int:
         """Return the next `_child_index` for a subagent about to be constructed with
         `parent=self`. Called once per subagent, from that subagent's own `__init__`."""
@@ -860,6 +903,12 @@ class SessionCoreMixin(SessionBase):
         session left off rather than starting from zero.
         """
         self.statistics = statistics
+
+    def load_chat_channel(self, channel: "Channel") -> None:
+        """Replace this session's `chat_channel` with `channel`, intended to be called once
+        immediately after construction. Only meaningful on a root session; a subagent's own
+        `chat_channel` is always its parent's live instance."""
+        self._chat_channel = channel
 
     def set_permission_framework(self, value: PermissionFramework) -> None:
         """Change `config.permission_framework` to `value` and queue a system-harness

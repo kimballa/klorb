@@ -10,6 +10,7 @@ import threading
 from dataclasses import dataclass
 from typing import Literal
 
+from klorb.agents.chat import Channel
 from klorb.agents.definition import (
     AgentDefinition,
     AgentRestrictions,
@@ -549,6 +550,58 @@ def deliver_or_queue_agent_message(
     if queue.has_pending(recipient.id):
         return "busy" if was_running else "capacity"
     return "delivered"
+
+
+_CHAT_MENTION_WAKE_NUDGE = "You were @mentioned in the chat room. Call ReadChat to see the conversation."
+
+
+def _record_chat_mention_wake(process_config: ProcessConfig, channel: Channel) -> None:
+    count = channel.increment_mention_wake_count()
+    if count == process_config.chat_max_mention_wakes:
+        logger.warning(
+            "Chat @mention wake cap (%d) reached for this session tree; further @mentions will "
+            "only be seen passively via ReadChat.", process_config.chat_max_mention_wakes)
+
+
+def notify_chat_mention(
+    process_config: ProcessConfig, channel: Channel, mentioner: Session, mentioned_id: str,
+) -> None:
+    """Try to actively wake the chat participant `mentioned_id`, using the same running/
+    idle-root/dormant-subagent branches `deliver_or_queue_agent_message` uses for `SendMessage`,
+    except a busy or capacity-limited target is skipped rather than queued; the standing
+    `ChatUnread` interjection still covers it. Capped by `tools.chat.maxMentionWakesPerSession`,
+    after which further calls are a no-op for this tree's lifetime.
+    """
+    if mentioned_id == mentioner.id:
+        return
+    root = mentioner
+    while root.parent is not None:
+        root = root.parent
+    target = find_session_in_group(root, mentioned_id)
+    if target is None or target.current_turn_handlers() is not None:
+        return
+    if channel.mention_wake_count() >= process_config.chat_max_mention_wakes:
+        return
+
+    if target.parent is None:
+        try:
+            target.deliver_event_message(_CHAT_MENTION_WAKE_NUDGE)
+        except ChainedHookMessageUndeliverableError:
+            return
+        _record_chat_mention_wake(process_config, channel)
+        return
+
+    tracker = target.parent.subagent_tracker
+    with tracker.dispatch_guard():
+        handle = tracker.current_handle(target.id)
+        if handle is None or handle.state != "finished":
+            return
+        if concurrency_limits_exceeded(process_config, target.parent):
+            return
+        dispatch_subagent_turn(
+            process_config, target.parent, target, handle.role, handle.title,
+            _CHAT_MENTION_WAKE_NUDGE, parent_interested=False)
+    _record_chat_mention_wake(process_config, channel)
 
 
 def _relay_completion_to_parent(process_config: ProcessConfig, parent: Session, child: Session) -> None:

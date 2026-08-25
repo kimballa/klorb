@@ -287,6 +287,19 @@ DEFAULT_MESSAGING_MAX_QUEUE_SIZE = 100
 entries the whole session tree's agent-message queue may hold at once; `SendMessage` rejects a
 call that would exceed it. See docs/specs/subagents.md."""
 
+DEFAULT_CHAT_MAX_HISTORY = 2000
+"""Default for `ProcessConfig.chat_max_history`: the most retained chat-room messages a
+session tree's `Channel` keeps before trimming the oldest. See docs/specs/subagents.md."""
+
+DEFAULT_CHAT_MAX_READ_PER_CALL = 200
+"""Default for `ProcessConfig.chat_max_read_per_call`: the hard per-`ReadChat`-call cap on how
+many unread messages one call returns. See docs/specs/subagents.md."""
+
+DEFAULT_CHAT_MAX_MENTION_WAKES = 50
+"""Default for `ProcessConfig.chat_max_mention_wakes`: the runaway-wake-loop guard on how many
+`@mention` active-wake attempts a session tree's `Channel` allows before degrading to
+passive-only (standing-interjection) delivery."""
+
 DEFAULT_SESSION_CLASSIFIER_MODEL = "openai/gpt-5-nano"
 """Last-resort model `klorb.session_naming._default_naming_model` falls back to when
 `ProcessConfig.session_classifier_model` is unset (the normal case) and no registered model
@@ -380,6 +393,9 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.subagents.maxConcurrentPerParent": "subagents_max_concurrent_per_parent",
     "tools.subagents.maxActiveTotal": "subagents_max_active_total",
     "tools.messaging.maxQueueSize": "messaging_max_queue_size",
+    "tools.chat.maxHistory": "chat_max_history",
+    "tools.chat.maxReadPerCall": "chat_max_read_per_call",
+    "tools.chat.maxMentionWakesPerSession": "chat_max_mention_wakes",
     "models.default.fast": "default_model_fast",
     "models.default.normal": "default_model_normal",
     "models.default.heavy": "default_model_heavy",
@@ -552,6 +568,12 @@ class ProcessConfig(BaseModel):
     """See `DEFAULT_SUBAGENTS_MAX_ACTIVE_TOTAL` and `tools.subagents.maxActiveTotal`."""
     messaging_max_queue_size: int = DEFAULT_MESSAGING_MAX_QUEUE_SIZE
     """See `DEFAULT_MESSAGING_MAX_QUEUE_SIZE` and `tools.messaging.maxQueueSize`."""
+    chat_max_history: int = DEFAULT_CHAT_MAX_HISTORY
+    """See `DEFAULT_CHAT_MAX_HISTORY` and `tools.chat.maxHistory`."""
+    chat_max_read_per_call: int = DEFAULT_CHAT_MAX_READ_PER_CALL
+    """See `DEFAULT_CHAT_MAX_READ_PER_CALL` and `tools.chat.maxReadPerCall`."""
+    chat_max_mention_wakes: int = DEFAULT_CHAT_MAX_MENTION_WAKES
+    """See `DEFAULT_CHAT_MAX_MENTION_WAKES` and `tools.chat.maxMentionWakesPerSession`."""
     default_model_fast: str = DEFAULT_PLACEHOLDER_MODEL_FAST
     """Concrete model id the `"klorb-default/fast"` placeholder resolves to."""
     default_model_normal: str = DEFAULT_PLACEHOLDER_MODEL_NORMAL

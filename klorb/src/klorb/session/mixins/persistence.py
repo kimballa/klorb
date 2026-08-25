@@ -6,6 +6,7 @@ from datetime import datetime
 
 from klorb.lockfile import Lockfile, create_lockfile
 from klorb.session.mixins._base import SessionBase
+from klorb.workspace.chat_store import write_chat_state
 from klorb.workspace.session_store import session_lock_path, touch_recent_session, write_session_state
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,12 @@ class SessionPersistenceMixin(SessionBase):
             statistics=self.statistics, session_id=self.id, root_id=self.root_id,
             session_name=self._session_name, cur_chainlink_task_id=self.cur_chainlink_task_id,
             last_modified_timestamp=self._last_modified_at)
+        if self._chat_channel.is_dirty():
+            messages, hwm, next_seq, mention_wake_count = self._chat_channel.snapshot()
+            write_chat_state(
+                self.config.workspace, self._session_subdir, messages, hwm, next_seq,
+                mention_wake_count)
+            self._chat_channel.mark_persisted()
         touch_recent_session(
             self.config.workspace, self.id, self._session_subdir, self._session_name,
             last_modified_timestamp=self._last_modified_at)
