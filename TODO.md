@@ -162,7 +162,11 @@
 
 * a "files" side panel that lists all files read and written by the agents this session. Indicator
   column on the left for reads vs written/modified/created. Clicking a filename pops a modal to read
-  the whole file, and see diffs highlighted. Hotkey is ^F.
+  the whole file, and see diffs highlighted. Hotkey is ^F. This will be a narrow panel (replaces
+  agents or tasks) so it shouldn't show *full* paths. Use as much of the "right" side of the
+  workspace-relative path as fits, with a leading `...` if needed.
+  * Note: We track this thru ReadFile and EditFile/CreateFile updates rather than inotify, so we
+    only know what was read or modified that way, not thru bash.
 
 ## VSCode plugin
 
