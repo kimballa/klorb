@@ -376,6 +376,29 @@ the weak entry disappears on its own — teaching the virtualizer about a second
 collection would add an O(n) linear scan (or a second index) per collapse purely to do
 housekeeping the garbage collector already does for free.
 
+### 9. (FIXED) `_tick_subagents_panel`'s interval task races `_render_full_subagent_transcript`'s awaits
+
+**Severity: low.** Cosmetic — a duplicate "Subagent is still working…" notice, plus duplicated
+message widgets — reported directly: a subagent showed two animated spinners in `#subagent-history`
+after the user switched the panel selection away and back a couple of times.
+
+`Timer._run` (the `set_interval` backing `_tick_subagents_panel`) runs on its own `asyncio.Task` on
+thread 1, independent of the message-pump task that runs `_select_session` in response to a panel
+row highlight. `_render_full_subagent_transcript`'s `await virtualizer.seed_collapsed_prefix(...)`
+and `await container.mount(...)` each yield control back to the loop, and a due tick landing in that
+window runs `_tick_subagents_panel` → `_append_new_subagent_messages` against the same
+`#subagent-history` container and the same not-yet-updated `_subagent_history_rendered_count`/
+`_subagent_history_rendered_state` bookkeeping the in-flight render is about to overwrite. Both call
+`_mount_subagent_status_notice` unconditionally, so each mounts its own trailing notice.
+
+**Fix:** `_subagent_transcript_render_in_flight`, a bool set for the duration of
+`_render_full_subagent_transcript` (try/finally), checked by `_tick_subagents_panel` before it does
+its incremental catch-up — the tick is skipped for exactly the render's duration and the next tick,
+0.6s later, catches up once the flag clears, instead of racing the same container.
+`test_a_tick_racing_the_initial_render_does_not_mount_a_duplicate_status_notice` reproduces the
+window deterministically by calling `_tick_subagents_panel` from inside a patched
+`_render_message_range`, the same technique finding 1's regression test uses.
+
 ## Testing gaps
 
 The existing suite covers cancellation and subagent dispatch well, but has almost no coverage of

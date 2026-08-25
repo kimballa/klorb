@@ -494,6 +494,11 @@ class ReplApp(
         so the next render can remove it before mounting anything new, keeping it last. `None`
         before any subagent has ever been selected.
         """
+        self._subagent_transcript_render_in_flight: bool = False
+        """True while `_render_full_subagent_transcript` is rebuilding `#subagent-history`, so
+        `_tick_subagents_panel` skips its incremental catch-up instead of racing to mount a
+        second status notice into the same container.
+        """
         self._subagent_history_virtualizer: VirtualizedHistoryContainer | None = None
         """Bounds `#subagent-history`'s live widget count for whichever subagent is currently
         selected, rebuilt on every `_select_session` call since that fully replaces the

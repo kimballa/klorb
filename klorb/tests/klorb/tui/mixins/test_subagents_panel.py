@@ -255,6 +255,41 @@ async def test_selecting_a_subagent_does_not_lose_a_message_appended_mid_render(
             assert any(widget.source == "appended mid-render" for widget in responses)
 
 
+async def test_a_tick_racing_the_initial_render_does_not_mount_a_duplicate_status_notice(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A `_tick_subagents_panel` landing between two of `_render_full_subagent_transcript`'s
+    `await` points -- as it can, since the interval timer runs on its own asyncio task -- must
+    not mount a second trailing status notice into `#subagent-history`."""
+    session = _session(MagicMock(), make_session_config)
+    handle = _add_subagent(session, make_session_config)
+    handle.session.load_messages([_message("first")])
+    app = ReplApp(session=session)
+
+    original_render = ReplApp._render_message_range
+    triggered = False
+
+    def render_then_tick(
+        self: ReplApp, messages: list[Message], response_lookup: list[Message] | None = None,
+    ) -> list[Widget]:
+        nonlocal triggered
+        widgets = original_render(self, messages, response_lookup)
+        if not triggered:
+            triggered = True
+            self._tick_subagents_panel()
+        return widgets
+
+    with patch.object(ReplApp, "_start_subagents_panel_timer", return_value=None):
+        async with app.run_test() as pilot:
+            with patch.object(ReplApp, "_render_message_range", render_then_tick):
+                await app._select_session(handle.session.id)
+            await pilot.pause()
+
+            container = app.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+            notices = list(container.query(".notice"))
+            assert len(notices) == 1
+
+
 async def test_selecting_a_subagent_with_a_long_transcript_collapses_the_older_messages(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

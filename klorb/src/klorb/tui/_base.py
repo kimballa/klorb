@@ -90,6 +90,7 @@ class ReplAppBase(App[None]):
     _subagent_history_rendered_count: int
     _subagent_history_rendered_state: SubagentState | None
     _subagent_transcript_notice: Static | None
+    _subagent_transcript_render_in_flight: bool
     _subagent_interrupt_pending: str | None
     _replacing_session: bool
     _pending_session_replacement: bool

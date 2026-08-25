@@ -10,11 +10,6 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* Unclear if Session or TUI but we have another race condition. Observed a subagent with two
-  animated "subagent is working..." spinners in TUI. Subagent had received multiple msgs from parent
-  via SendMessage before that point; user had switched from main history to subagent view and back a
-  couple of times. User also approved a permission panel on the root agent view.
-
 ### Feature backlog
 
 * Group chat plan 026, phases 3 & 4 remaining.
@@ -147,7 +142,10 @@
 ### Feature backlog
 
 * chat room with your agents
-* a "files" side panel that lists all files read and written by the agents this session. Indicator column on the left for r vs w. Clicking a filename pops a modal to read the whole file, and see diffs highlighted.
+
+* a "files" side panel that lists all files read and written by the agents this session. Indicator
+  column on the left for reads vs written/modified/created. Clicking a filename pops a modal to read
+  the whole file, and see diffs highlighted.
 
 ## VSCode plugin
 

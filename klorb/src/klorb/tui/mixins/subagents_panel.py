@@ -142,26 +142,31 @@ class SubagentsPanelMixin(ReplAppBase):
         whatever was there before; everything except the trailing `DEFAULT_CHUNK_SIZE_MESSAGES`
         messages starts collapsed behind a placeholder. Always scrolls to the bottom and resets
         `_subagent_history_pinned_to_bottom` to `True`."""
-        container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
-        container.remove_children()
-        self._subagent_transcript_notice = None
-        # `session.messages` returns a fresh copy on every access. Reading it once here into
-        # `messages`, then reusing that copy for the mount and the rendered-count update below,
-        # keeps a message appended by the background turn thread mid-render from being silently
-        # skipped forever.
-        messages = session.messages
-        virtualizer = self._new_subagent_history_virtualizer(container, session)
-        self._subagent_history_virtualizer = virtualizer
-        trailing_start = await virtualizer.seed_collapsed_prefix(len(messages), DEFAULT_CHUNK_SIZE_MESSAGES)
-        tail_widgets = self._render_message_range(messages[trailing_start:], messages)
-        if tail_widgets:
-            await container.mount(*tail_widgets)
-        self._subagent_history_rendered_count = len(messages)
-        self._mount_subagent_status_notice(container, handle)
-        self._subagent_history_rendered_state = handle.state
-        self._subagent_history_pinned_to_bottom = True
-        virtualizer.force_layout()
-        container.scroll_end(animate=False, immediate=True)
+        self._subagent_transcript_render_in_flight = True
+        try:
+            container = self.query_one(f"#{SUBAGENT_HISTORY_ID}", VerticalScroll)
+            container.remove_children()
+            self._subagent_transcript_notice = None
+            # `session.messages` returns a fresh copy on every access. Reading it once here into
+            # `messages`, then reusing that copy for the mount and the rendered-count update below,
+            # keeps a message appended by the background turn thread mid-render from being silently
+            # skipped forever.
+            messages = session.messages
+            virtualizer = self._new_subagent_history_virtualizer(container, session)
+            self._subagent_history_virtualizer = virtualizer
+            trailing_start = await virtualizer.seed_collapsed_prefix(
+                len(messages), DEFAULT_CHUNK_SIZE_MESSAGES)
+            tail_widgets = self._render_message_range(messages[trailing_start:], messages)
+            if tail_widgets:
+                await container.mount(*tail_widgets)
+            self._subagent_history_rendered_count = len(messages)
+            self._mount_subagent_status_notice(container, handle)
+            self._subagent_history_rendered_state = handle.state
+            self._subagent_history_pinned_to_bottom = True
+            virtualizer.force_layout()
+            container.scroll_end(animate=False, immediate=True)
+        finally:
+            self._subagent_transcript_render_in_flight = False
 
     def _append_new_subagent_messages(self, session: Session, handle: SubagentHandle) -> None:
         """Catch `#subagent-history` up to `session.messages`/`handle.state` since the last
@@ -293,7 +298,10 @@ class SubagentsPanelMixin(ReplAppBase):
         transcript up to any new messages or a state change. Only refreshes the panel's own
         rows while it's actually visible."""
         self._blink_phase = not self._blink_phase
-        if self._selected_handle is not None:
+        # Skip the catch-up while `_render_full_subagent_transcript` is mid-rebuild of the same
+        # container, since this timer callback runs on its own asyncio task and can interleave
+        # between that coroutine's `await` points; the next tick catches back up once it's done.
+        if self._selected_handle is not None and not self._subagent_transcript_render_in_flight:
             # Re-resolve the handle from the tree before using it: `register()` replaces the
             # tracker's entry for this session on every resume (a direct message or
             # SendMessage), so a `_selected_handle` cached from selection time can point at
