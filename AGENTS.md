@@ -202,6 +202,18 @@ The full `klorb` test suite takes a few minutes, so within a dev loop run `make
 TEST_SUITE=<keyword> test` against the suite(s) covering the code you're touching, and save one
 unscoped `make test` for the end, before declaring the task done.
 
+### TUI timer/tick race conditions
+
+A recurring `set_interval` callback on `ReplApp` (a "tick" method, e.g.
+`SubagentsPanelMixin._tick_subagents_panel`) keeps running on its own asyncio task until the app's
+event loop actually stops, which lags behind `run_test()` starting to tear the screen down. On a
+slow CI runner that lag can exceed the tick interval, so the callback can fire mid-teardown (widget
+queries raise `textual.css.query.NoMatches`) or fire twice within a span a test assumed was one
+tick. Any App-level tick method that queries the DOM must guard its body with `if not
+self.is_running: return`, matching the same guard already used on scroll-position watch callbacks
+(`_on_history_scroll_changed` and siblings). Tests exercising tick behavior should drive it
+directly (call the `_tick_*` method) rather than waiting out the real interval with `pilot.pause()`.
+
 ### Import rules
 
 * Only use relative imports within the same feature or module.

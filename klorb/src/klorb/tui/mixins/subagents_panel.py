@@ -382,7 +382,10 @@ class SubagentsPanelMixin(ReplAppBase):
     def _tick_subagents_panel(self) -> None:
         """`set_interval` callback: flips the blink phase, catches the selected subagent's or
         chat room's transcript up to any new messages, and keeps the chat attention state
-        current."""
+        current. A no-op once the app has started shutting down, since this can still fire
+        after the screen itself is gone."""
+        if not self.is_running:
+            return
         self._blink_phase = not self._blink_phase
         if self._chat_selected:
             self._append_new_chat_messages()
