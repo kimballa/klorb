@@ -10,9 +10,11 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
+* Unclear if Session or TUI but we have another race condition. Observed a subagent with two animated "subagent is working..." spinners in TUI. Subagent had received multiple msgs from parent via SendMessage before that point; user had switched from main history to subagent view and back a couple of times. User also approved a permission panel on the root agent view. 
+
 ### Feature backlog
 
-* Add a group chatroom. Everyone has PostChat and ReadChat tools. It tracks high watermark unread for all agents. New agents have their hwm start at "now" when spawned, not the beginning. All chat reading is async. @mentioning an agent that's alive gives it a sys injection nudge to read chat. An idle agent is awoken with the chat content. The user can read the chatroom in the TUI and also write to it. It looks like IRC. (Or slack, for the newfangled thing these days.) Agents can @mention the user by referring to `@user`. You get a notification if you're on an agent history screen rather than in the chat.
+* Group chat plan 026, phases 3 & 4 remaining.
 
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
