@@ -1,5 +1,5 @@
 // © Copyright 2026 Aaron Kimball
-import { Fragment, type JSX, memo, type Ref } from 'react';
+import { Fragment, type JSX, memo, type Ref, useCallback, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   Virtuoso,
@@ -203,6 +203,34 @@ function HistoryItem({
 
 const HISTORY_VIEW_COMPONENTS: Components<HistoryEntry> = { Item: HistoryItem };
 
+/** CSS custom property carrying #history's measured scrollbar width, for the Virtuoso
+ * viewport's right-edge offset. */
+const SCROLLBAR_WIDTH_VAR = '--history-scrollbar-width';
+
+function syncScrollbarWidthVar(scroller: HTMLElement): void {
+  const width = scroller.offsetWidth - scroller.clientWidth;
+  scroller.style.setProperty(SCROLLBAR_WIDTH_VAR, `${width}px`);
+}
+
+/** Keeps `SCROLLBAR_WIDTH_VAR` on the Virtuoso scroller element in sync with its actual
+ * rendered scrollbar width, since that width varies by platform and isn't derivable from CSS
+ * alone. */
+function useScrollbarWidthSync(): (ref: HTMLElement | Window | null) => void {
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  return useCallback((ref: HTMLElement | Window | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (ref === null || ref instanceof Window) {
+      return;
+    }
+    syncScrollbarWidthVar(ref);
+    const observer = new ResizeObserver(() => syncScrollbarWidthVar(ref));
+    observer.observe(ref);
+    observerRef.current = observer;
+  }, []);
+}
+
 /** The append-only history scroll: prompts as right-aligned bubbles, responses as rendered
  * markdown, thinking as a collapsed-by-default disclosure that streams while open, and tool
  * calls as `ToolCallChip`s. Windowed via `react-virtuoso` so only entries near the viewport stay
@@ -215,10 +243,12 @@ export default function HistoryView({
   onRestartServer,
   onAtBottomStateChange,
 }: HistoryViewProps): JSX.Element {
+  const scrollerRef = useScrollbarWidthSync();
   return (
     <Virtuoso
       id="history"
       ref={historyRef}
+      scrollerRef={scrollerRef}
       data={entries}
       computeItemKey={(_index, entry) => entry.id}
       atBottomStateChange={onAtBottomStateChange}

@@ -346,7 +346,24 @@ body {
      content instead of letting its own overflow-y: auto (set by Virtuoso itself) actually
      scroll. */
   min-height: 0;
-  padding: 8px 12px;
+  --history-inline-padding: 12px;
+  padding: 8px var(--history-inline-padding);
+  /* Setting overflow-y without also constraining overflow-x makes the UA treat overflow-x as
+     auto too, so any content that's even a pixel too wide (individual entries handle their own
+     wrapping/local scrolling) would otherwise open a second, container-level scrollbar here. */
+  overflow-x: hidden;
+}
+
+/* Virtuoso's item-list viewport is absolutely positioned, so it's sized against #history's
+   padding box rather than inset by #history's own `padding`; restating that inset here on both
+   edges, plus `--history-scrollbar-width` on the right, keeps content clear of the padding and
+   of a layout-width-consuming scrollbar. `width` needs `!important` to beat Virtuoso's own
+   inline `width: 100%`; with all three of left/width/right otherwise specified, the browser
+   silently drops `right` and this rule would have no effect. */
+#history [data-viewport-type='element'] {
+  left: var(--history-inline-padding);
+  width: auto !important;
+  right: calc(var(--history-scrollbar-width, 0px) + var(--history-inline-padding) - 16px);
 }
 
 /* One windowed history item's wrapper. */
