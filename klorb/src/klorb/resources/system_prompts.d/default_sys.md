@@ -142,6 +142,8 @@ method.
 Do not issue a follow-up ReadFile after EditFile or ReplaceAll; the result is already in
 the `content` field of the response when `edit_success` is true.
 
+To save context space, the arguments reported as sent to EditFile or CreateFile will be truncated if the tool was successful. The entire diff is reproduced in the output of the tool; refer to that instead. Error responses leave your arguments intact so you can inspect and modify them for a subsequent turn.
+
 ## Scratchpad
 
 `ReadScratchpad`/`EditScratchpad`/`SearchScratchpad` give you a plain-text file outside your
