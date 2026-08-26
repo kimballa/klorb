@@ -44,17 +44,14 @@ def validate_output_style(raw: Any, *, allow_list_files: bool = True) -> str:
 
 def validate_queries(queries: Any) -> list[str]:
     """Validate a model-supplied `queries` argument, returning it as a `list[str]`, or raising
-    `ValueError` if it isn't a non-empty string or non-empty list of strings. A bare string is
-    silently accepted as a single-element list.
+    `ValueError` if it isn't a non-empty string or non-empty list. A bare string is silently
+    accepted as a single-element list, and non-string list entries are coerced with `str()`.
     """
     if isinstance(queries, str):
         queries = [queries]
     if not isinstance(queries, list) or not queries:
         raise ValueError("queries must be a non-empty array of search strings")
-    for query in queries:
-        if not isinstance(query, str):
-            raise ValueError(f"each entry in queries must be a string, got {query!r}")
-    return queries
+    return list(map(str, queries))
 
 
 def compile_queries(

@@ -173,11 +173,12 @@ def test_empty_queries_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         SearchMemoriesTool(context).apply({"queries": []})
 
 
-def test_non_string_query_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_string_query_is_stringified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     context = _context(tmp_path, monkeypatch)
 
-    with pytest.raises(ValueError, match="must be a string"):
-        SearchMemoriesTool(context).apply({"queries": [1]})
+    result = SearchMemoriesTool(context).apply({"queries": [1]})
+
+    assert result["match_count"] == 0
 
 
 def test_name_and_parameters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

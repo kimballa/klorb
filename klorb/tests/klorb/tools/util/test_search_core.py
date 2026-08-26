@@ -19,6 +19,5 @@ def test_validate_queries_rejects_an_empty_list() -> None:
         validate_queries([])
 
 
-def test_validate_queries_rejects_a_list_with_a_non_string_entry() -> None:
-    with pytest.raises(ValueError, match="queries"):
-        validate_queries(["hello", 5])
+def test_validate_queries_stringifies_a_non_string_list_entry() -> None:
+    assert validate_queries(["hello", 5]) == ["hello", "5"]
