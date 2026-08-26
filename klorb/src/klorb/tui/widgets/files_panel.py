@@ -22,9 +22,9 @@ _FOOTER_ID = "files-panel-footer"
 _HEADER_TEXT = "Files"
 _WRITE_MARKER = "M"
 _READ_MARKER = "R"
-_ROW_RESERVED_WIDTH = 2
-"""Marker character plus its trailing space, reserved out of `SIDEBAR_WIDTH` for the path's
-own width budget."""
+_ROW_RESERVED_WIDTH = 4
+"""Marker character plus its trailing space, plus `OptionList`'s default 1-column padding on
+each side, reserved out of `SIDEBAR_WIDTH` for the path's own width budget."""
 
 
 @dataclass(frozen=True)

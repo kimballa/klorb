@@ -183,12 +183,9 @@ def build_mention_insertion(query_start_column: int, cursor_column: int, rel_pat
 
 def split_finder_row(rel_path: str, available_width: int) -> tuple[str, str]:
     """Split `rel_path` into a (possibly truncated) directory part and a fixed, always-fully-
-    visible file part (with its own leading `/` whenever a directory is present), so a deeply
-    nested path reads as `".../path/to/file.txt"` instead of overflowing `available_width`.
-    Truncation (when the full path doesn't fit) drops characters off the *front* of the
-    directory part and prepends `"..."`, keeping the segment immediately before the file part;
-    `available_width <= 0` means the
-    width is unknown and no truncation is applied.
+    visible file part, so a deeply nested path reads as `"../path/to/file.txt"` instead of
+    overflowing `available_width`. `available_width <= 0` means the width is unknown, so no
+    truncation is applied.
     """
     idx = rel_path.rfind("/")
     if idx == -1:
@@ -197,7 +194,7 @@ def split_finder_row(rel_path: str, available_width: int) -> tuple[str, str]:
     file_part = rel_path[idx:]
     if available_width <= 0 or len(dir_part) + len(file_part) <= available_width:
         return dir_part, file_part
-    ellipsis = "..."
+    ellipsis = ".."
     budget = available_width - len(file_part) - len(ellipsis)
     if budget <= 0:
         return ellipsis, file_part

@@ -30,7 +30,7 @@ def test_render_row_label_truncates_a_long_nested_path() -> None:
     text = str(label)
     assert text.startswith("R ")
     assert text.endswith("/file.txt")
-    assert "..." in text
+    assert ".." in text
     # The filename itself is never truncated.
     assert "file.txt" in text
 

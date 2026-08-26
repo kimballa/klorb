@@ -256,7 +256,7 @@ class TestSplitFinderRow:
         dir_display, file_display = split_finder_row("foo/bar/baz/quux/deep/path/someFile.txt", 30)
 
         assert file_display == "/someFile.txt"
-        assert dir_display.startswith("...")
+        assert dir_display.startswith("..")
         assert dir_display.endswith("path")
         assert len(dir_display) + len(file_display) <= 30
 
@@ -264,4 +264,4 @@ class TestSplitFinderRow:
         dir_display, file_display = split_finder_row("a/b/c/d/e.txt", 3)
 
         assert file_display == "/e.txt"
-        assert dir_display == "..."
+        assert dir_display == ".."

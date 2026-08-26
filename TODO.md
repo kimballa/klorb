@@ -137,12 +137,6 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-* Rows in the files tab have the R/M indicator on one line,
-  filename starts on the next
-  and spills over the final char to a third line.
-  * Should all be one line. (The line width calcuation was forgetting 1 space of padding on each side.)
-  * Use `..` instead of `...` for lead-in ellipsis, save a char.
-
 * In the Files tab if you click a file and it was initially marked 'read' access, do a check of git anyway
   and if it actually has a `git diff` then upgrade to 'modified' and show the diff version of the file; this
   can catch files modified via sed or python script.
