@@ -51,9 +51,9 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
     "subagent_roles": ["explorer", "vision_assistant"],
     "enforce_readonly_tools": true
   },
-  "allow_subagents": false,
   "max_copies": 1,
   "agent_capabilities": {
+    "allow_subagents": false,
     "accepts_tasks": false,
     "assigns_tasks": false,
     "see_group_tasks": false
@@ -67,9 +67,6 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
 }
 ```
 
-* `allow_subagents` — whether a session running as this role may itself call `CreateSubagent`.
-  Also drives whether the three subagent-management tools are included in a subagent's own
-  computed tool set at all (see "Security model").
 * `max_copies` — the most sessions running as this role allowed anywhere in one session tree at
   once. `None` or `-1` means uncapped; `0` means the role may never be launched. `operator`,
   `implementer`, `reviewer`, `planner`, and `pair_programmer` are capped at `1`; `explorer` is
@@ -87,16 +84,18 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
   * `enforce_readonly_tools` — clamp the tool set (after `tools`/`tool_categories`) to only
     tools reporting `Tool.is_read_only() == True`.
 * `agent_capabilities` (an `AgentCapabilities`, `klorb.agents.definition`) — capabilities for
-  this role, all defaulting `False`: `accepts_tasks` (may hold a chainlink issue as its own
-  current task), `assigns_tasks` (may `TodoCreate` an issue assigned to a *different* agent),
-  `see_group_tasks` (may `TodoList` with `scope="group"`), `send_messages` (may `SendMessage`
-  another agent — see "Agent-to-agent messaging" below; any role may *receive* a message and use
-  `GetMessages` regardless of this flag). Read via `klorb.agents.registry.
-  get_agent_capabilities()`. Distinct from `restrict_to`, which narrows tool/skill/subagent-role
-  *inheritance* rather than this kind of behavior — a role can hold a tool in its effective tool
-  set yet still be refused the capability it gates, e.g. a role with `SendMessage` in its tool set
-  but `send_messages: false`. See docs/specs/chainlink-task-tracking.md's "Task assignment"
-  section.
+  this role, all defaulting `False`: `allow_subagents` (whether a session running as this role
+  may itself call `CreateSubagent`; also drives whether the two subagent-management tools are
+  included in a subagent's own computed tool set — see "Security model"),
+  `accepts_tasks` (may hold a chainlink issue as its own current task), `assigns_tasks` (may
+  `TodoCreate` an issue assigned to a *different* agent), `see_group_tasks` (may `TodoList`
+  with `scope="group"`), `send_messages` (may `SendMessage` another agent — see
+  "Agent-to-agent messaging" below; any role may *receive* a message and use `GetMessages`
+  regardless of this flag). Read via `klorb.agents.registry.get_agent_capabilities()`. Distinct
+  from `restrict_to`, which narrows tool/skill/subagent-role *inheritance* rather than this kind
+  of behavior — a role can hold a tool in its effective tool set yet still be refused the
+  capability it gates, e.g. a role with `SendMessage` in its tool set but `send_messages: false`.
+  See docs/specs/chainlink-task-tracking.md's "Task assignment" section.
 * `hooks`/`events` — the same `{name: [handler, ...]}` shape a skill's `metadata.klorb.hooks`/
   `.events` frontmatter grant carries (docs/specs/skills.md), granted onto every subagent created
   as this role. See "Role-granted hooks/events" under "Pair Programmer role" below.
@@ -144,7 +143,8 @@ name at each hop could recover privileges an ancestor deliberately stripped.
   from the creator's own `tool_registry.tools()`, intersects it via `compute_child_tool_set`,
   then strips `CreateSubagent`/`WaitForSubagent`
   (`klorb.agents.runtime.SUBAGENT_MGMT_TOOL_NAMES`) unless the *child's own role* has
-  `allow_subagents: true`. `SendMessage`/`GetMessages` are not part of that stripped set — a
+  `agent_capabilities.allow_subagents: true`. `SendMessage`/`GetMessages` are not part of that
+  stripped set — a
   child's ability to send is gated purely by its own role's `send_messages` capability (checked
   at call time), and any role may receive and read messages. The child's `ToolRegistry` is then
   built directly
@@ -212,7 +212,7 @@ session_config, role_name)` first, which:
 
 A role with no `agents.json` entry gets an unrestricted `AgentRestrictions()` (today's behavior
 for an undefined role — e.g. a typo'd `--role`) but no subagent-launch ability, since
-`allow_subagents` defaults to `False`. Because `operator`'s own `restrict_to` currently sets only
+`agent_capabilities.allow_subagents` defaults to `False`. Because `operator`'s own `restrict_to` currently sets only
 `subagent_roles` (no `tools`/`skills`), a root operator session's tool/skill sets are unaffected
 in practice — `restrict_to.tools`/`.skills` being `None` still means "inherit everything" — but
 the mechanism is the uniform one, not a root-only special case, so tightening `operator`'s entry
@@ -293,7 +293,7 @@ Its boolean sibling `concurrency_limits_exceeded()` is what `try_wake_next_queue
 message queued," not "raise" — see "Agent-to-agent messaging" below.
 
 `CreateSubagent` also rejects, before constructing any `Session`: exceeding
-`subagents_max_depth`, the calling role lacking `allow_subagents: true`, a requested role
+`subagents_max_depth`, the calling role lacking `agent_capabilities.allow_subagents: true`, a requested role
 outside the caller's own `effective_subagent_roles`, and a requested role whose `max_copies`
 is already reached by sessions elsewhere in the tree — `klorb.agents.policy._check_max_copies()`
 raises `ToolCallError(category="validation")` naming each existing session's id so the caller can
@@ -569,7 +569,7 @@ calls or reasoning. Its `agents.json` entry: `enforce_readonly_tools: true`, `sk
 `["internal:launch-explorer-subagent"]` (the one skill it may use, so it can delegate
 sub-questions to its own Explorer subagents), and a `tools` list covering `FindFile`, `Grep`, `ListDir`, `ReadFile`, `ListMemories`,
 `SearchMemories`, `ReadMemory`, `EditScratchpad`, `ReadScratchpad`, and `WebFetch`.
-`restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so an Explorer may
+`restrict_to.subagent_roles` names `["explorer"]` and `agent_capabilities.allow_subagents: true`, so an Explorer may
 itself launch further Explorer subagents (bounded by `tools.subagents.maxDepth` like any other
 nesting) — operator's own `restrict_to.subagent_roles` names `["explorer", "reviewer"]`, so
 neither role can ever launch an `operator` subagent (see "Security model" above).
@@ -588,7 +588,7 @@ tool restriction, since confirming a bug sometimes requires the same tools that 
 one. See [[grant-reviewer-full-tools-not-enforce-readonly]] for why this deliberately diverges
 from Explorer's `enforce_readonly_tools: true` pattern.
 
-`restrict_to.subagent_roles` names `["explorer"]` and `allow_subagents: true`, so a Reviewer may
+`restrict_to.subagent_roles` names `["explorer"]` and `agent_capabilities.allow_subagents: true`, so a Reviewer may
 launch Explorer subagents to read a diff and its surrounding code in parallel. Its
 `agent_capabilities` are `accepts_tasks: false` (it never holds a tracked task of its own — a
 review is a bounded request/response, not ongoing work), `assigns_tasks: true` (it may file
@@ -609,7 +609,7 @@ Like Reviewer, its `agents.json` entry sets no `restrict_to.tools`/`.skills` at 
 `enforce_readonly_tools` is left at its `false` default — it inherits its creator's full tool
 set, since carrying out a plan requires the same file-edit and `Bash` access as any other
 implementation work. `restrict_to.subagent_roles` names only `["explorer"]` and
-`allow_subagents: true`, so an Implementer may launch Explorer subagents for research but can
+`agent_capabilities.allow_subagents: true`, so an Implementer may launch Explorer subagents for research but can
 never launch a Planner, Reviewer, or another Implementer — implementation is not something it
 delegates onward. Its `agent_capabilities` are `accepts_tasks: true` (it may hold a group task,
 or one of its own, as its current tracked task), `assigns_tasks: false` (`TodoCreate` may only
@@ -623,7 +623,7 @@ collaborator an Operator spawns via the `internal:pair-programming` skill to wor
 or architecturally uncertain task together, staying in touch over `SendMessage` for the rest of
 the session. Its `agents.json` entry sets no `restrict_to.tools`/`.skills` at all (it inherits its
 creator's full tool set, the same as Reviewer/Implementer), `restrict_to.subagent_roles` names
-`["explorer"]`, and `allow_subagents: true` (it may delegate research to Explorer subagents, but
+`["explorer"]`, and `agent_capabilities.allow_subagents: true` (it may delegate research to Explorer subagents, but
 never launch another Pair Programmer or an Operator). Its `agent_capabilities` are `accepts_tasks:
 false` (it never holds a tracked task of its own), `assigns_tasks: true` and `see_group_tasks:
 true` (it may review and add to the Operator's todo list), and `send_messages: true`.

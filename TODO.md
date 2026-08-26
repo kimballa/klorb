@@ -10,8 +10,6 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* #agent `allow_subagents` in agents.json should be under `agent_capabilities`.
-
 ### Feature backlog
 
 * use inotify to invalidate agent file reads?
@@ -149,7 +147,19 @@
   `_update_subagent_attention_status_line` for a screen that's mid-teardown, or the timer needs
   to be cancelled earlier during shutdown.
 
+* Rows in the files tab have the R/M indicator on one line,
+  filename starts on the next
+  and spills over the final char to a third line.
+  * Should all be one line. (The line width calcuation was forgetting 1 space of padding on each side.)
+  * Use `..` instead of `...` for lead-in ellipsis, save a char.
+
+* In the Files tab if you click a file and it was initially marked 'read' access, do a check of git anyway
+  and if it actually has a `git diff` then upgrade to 'modified' and show the diff version of the file; this
+  can catch files modified via sed or python script.
+
 ### Feature backlog
+
+* #agent The 'Files' tab, when the accessed-files list is empty, should say "No files loaded."
 
 * Interactive chat room UI rough edges:
   * set hotkey to ^M, not ^B.

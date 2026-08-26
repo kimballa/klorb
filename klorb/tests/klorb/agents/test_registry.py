@@ -16,7 +16,7 @@ def test_get_returns_agent_definition_by_name() -> None:
 
     assert explorer is not None
     assert explorer.default_model == "test/explorer-model"
-    assert explorer.allow_subagents is True
+    assert explorer.agent_capabilities.allow_subagents is True
     assert explorer.restrict_to.tools == ["ReadFile", "Grep"]
     assert explorer.restrict_to.enforce_readonly_tools is True
 
@@ -63,8 +63,9 @@ def test_get_agent_capabilities_reads_the_packaged_operator_and_explorer_roles()
     explorer = get_agent_capabilities("explorer")
 
     assert operator == AgentCapabilities(
-        accepts_tasks=True, assigns_tasks=True, see_group_tasks=True, send_messages=True)
-    assert explorer == AgentCapabilities()
+        allow_subagents=True, accepts_tasks=True, assigns_tasks=True,
+        see_group_tasks=True, send_messages=True)
+    assert explorer == AgentCapabilities(allow_subagents=True)
 
 
 def test_get_agent_capabilities_defaults_to_all_false_for_an_undefined_role() -> None:
@@ -78,10 +79,11 @@ def test_pair_programmer_role_may_launch_only_explorer_subagents() -> None:
 
     assert pair_programmer is not None
     assert pair_programmer.default_model == "klorb-default/normal"
-    assert pair_programmer.allow_subagents is True
+    assert pair_programmer.agent_capabilities.allow_subagents is True
     assert pair_programmer.restrict_to.subagent_roles == ["explorer"]
     assert get_agent_capabilities("pair_programmer") == AgentCapabilities(
-        accepts_tasks=False, assigns_tasks=True, see_group_tasks=True, send_messages=True)
+        allow_subagents=True, accepts_tasks=False, assigns_tasks=True,
+        see_group_tasks=True, send_messages=True)
 
 
 def test_pair_programmer_role_grants_a_workspace_wide_gitignore_filtered_file_watch() -> None:

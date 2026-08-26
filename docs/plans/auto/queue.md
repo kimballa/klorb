@@ -7,8 +7,6 @@ blank lines are not tasks — only unindented `-`/`*` bullets are.
 Besides this file, any other `.md`/`.txt` file placed directly under `docs/plans/auto/` is also
 picked up, as a single whole-file task.
 
-* in agents.json, allow_subagents should be a field nested under agent_capabilities.
-
 * In the VSCode plugin, the PostChat/ReadChat tools should pretty-print nicely with a
   `<detail>` that can unfold. The tool chip should have a "chat bubble" logo (like the speech
   bubble in a comic strip). The detail for ReadChat should truncate at 4 messages or 8 lines

@@ -39,6 +39,8 @@ class AgentRestrictions(BaseModel):
 class AgentCapabilities(BaseModel):
     """Capabilities gating how a subagent role may use tools it otherwise has access to."""
 
+    allow_subagents: bool = False
+    """Whether a subagent running as this role may itself call `CreateSubagent`."""
     accepts_tasks: bool = False
     """Whether a session running as this role may hold a chainlink issue as its own current
     tracked task."""
@@ -62,8 +64,6 @@ class AgentDefinition(BaseModel):
     """Model used for this role's subagent unless the parent's `CreateSubagent` call
     overrides it."""
     restrict_to: AgentRestrictions = Field(default_factory=AgentRestrictions)
-    allow_subagents: bool = False
-    """Whether a subagent running as this role may itself call `CreateSubagent`."""
     max_copies: int | None = None
     """Maximum number of sessions running as this role allowed anywhere in one session tree at
     once. `None` or `-1` means uncapped; `0` means the role may never be launched."""

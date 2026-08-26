@@ -32,7 +32,6 @@ def test_agent_definition_restrict_to_defaults_to_unrestricted() -> None:
     definition = AgentDefinition(name="explorer", default_model="some/model")
 
     assert definition.restrict_to == AgentRestrictions()
-    assert definition.allow_subagents is False
     assert definition.max_copies is None
     assert definition.agent_capabilities == AgentCapabilities()
     assert definition.hooks == {}
@@ -82,7 +81,7 @@ def test_agent_definition_round_trips_from_json_shaped_dict() -> None:
             "subagent_roles": ["explorer"],
             "enforce_readonly_tools": True,
         },
-        "allow_subagents": True,
+        "agent_capabilities": {"allow_subagents": True},
     })
 
     assert definition.restrict_to.tools == ["ReadFile"]
@@ -90,7 +89,7 @@ def test_agent_definition_round_trips_from_json_shaped_dict() -> None:
     assert definition.restrict_to.skills == ["internal:foo"]
     assert definition.restrict_to.subagent_roles == ["explorer"]
     assert definition.restrict_to.enforce_readonly_tools is True
-    assert definition.allow_subagents is True
+    assert definition.agent_capabilities.allow_subagents is True
 
 
 def test_agent_hook_configs_parses_the_definitions_own_hooks_field() -> None:

@@ -58,8 +58,8 @@ prompts); changing what a role can do means editing the packaged file. One entry
     "subagent_roles": ["explorer"],
     "enforce_readonly_tools": true
   },
-  "allow_subagents": true,
   "agent_capabilities": {
+    "allow_subagents": true,
     "accepts_tasks": false,
     "assigns_tasks": false,
     "see_group_tasks": false,
@@ -86,9 +86,9 @@ prompts); changing what a role can do means editing the packaged file. One entry
   * `subagent_roles` — which roles a subagent of this role may itself launch.
   * `enforce_readonly_tools` — when `true`, clamps the tool set down to read-only tools only
     (what makes Explorer safe to hand a broad research question).
-* **`allow_subagents`** — whether a subagent of this role may launch subagents of its own at all.
 * **`agent_capabilities`** — separate from tool access, these gate a few specific behaviors, all
-  off by default: `accepts_tasks` (may hold a tracked task as its own), `assigns_tasks` (may
+  off by default: `allow_subagents` (whether a subagent of this role may launch subagents of its
+  own at all), `accepts_tasks` (may hold a tracked task as its own), `assigns_tasks` (may
   create a tracked task assigned to a *different* agent), `see_group_tasks` (may see every task
   the whole group is tracking, not just its own), `send_messages` (may message another agent in
   the group directly — any role may still *receive* a message regardless of this flag).

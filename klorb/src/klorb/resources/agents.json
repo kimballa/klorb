@@ -17,8 +17,8 @@
           "pair_programmer"
         ]
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": true,
         "assigns_tasks": true,
         "see_group_tasks": true,
@@ -34,8 +34,8 @@
           "explorer"
         ]
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": true,
         "assigns_tasks": false,
         "see_group_tasks": true
@@ -86,8 +86,8 @@
           "explorer"
         ]
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": false,
         "assigns_tasks": true,
         "see_group_tasks": true,
@@ -103,8 +103,8 @@
           "explorer"
         ]
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": false,
         "assigns_tasks": true,
         "see_group_tasks": true,
@@ -139,8 +139,8 @@
         ],
         "enforce_readonly_tools": true
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": false,
         "assigns_tasks": false,
         "see_group_tasks": false
@@ -155,8 +155,8 @@
           "explorer"
         ]
       },
-      "allow_subagents": true,
       "agent_capabilities": {
+        "allow_subagents": true,
         "accepts_tasks": false,
         "assigns_tasks": true,
         "see_group_tasks": true,

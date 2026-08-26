@@ -168,7 +168,7 @@ def _check_creation_limits(context: ToolSetupContext, parent: Session, role: str
             f"Creating a subagent here would exceed the maximum subagent nesting depth "
             f"({max_depth}).", category="validation")
     caller_definition = get_agent_registry().get(parent.config.role_name)
-    if caller_definition is None or not caller_definition.allow_subagents:
+    if caller_definition is None or not caller_definition.agent_capabilities.allow_subagents:
         raise ToolCallError(
             f"The {parent.config.role_name!r} role may not create subagents.",
             category="validation")
@@ -239,7 +239,7 @@ def plan_subagent_creation(
 
     assert parent.tool_registry is not None
     tool_classes = _child_tool_classes(parent.tool_registry, restrict_to,
-                                       role_definition.allow_subagents)
+                                       role_definition.agent_capabilities.allow_subagents)
     skill_rules = _child_skill_rules(
         resolve_session_skill_catalog_registry(context), parent.config, restrict_to)
     subagent_roles = compute_child_subagent_roles(parent.effective_subagent_roles, restrict_to)
@@ -296,12 +296,12 @@ def compute_root_session_grants(
     A root session has no real parent `Session` to narrow from, so this is the one place that
     intersection runs against "everything" rather than a live parent's already-narrowed sets.
     A role with no `agents.json` entry gets an unrestricted `AgentRestrictions()` but no
-    subagent-launch ability, per `AgentDefinition.allow_subagents`'s default.
+    subagent-launch ability, per `AgentCapabilities.allow_subagents`'s default.
     """
     universe = ToolRegistry.discover_tools(process_config, session_config)
     definition = get_agent_registry().get(role_name)
     restrict_to = definition.restrict_to if definition is not None else AgentRestrictions()
-    allow_subagents = definition is not None and definition.allow_subagents
+    allow_subagents = definition is not None and definition.agent_capabilities.allow_subagents
 
     tool_classes = _child_tool_classes(universe, restrict_to, allow_subagents)
     skill_catalog_registry = SkillCatalogRegistry()
