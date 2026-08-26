@@ -308,13 +308,9 @@ def _stamp_subagent_origin(origin_session_id: str | None, handle: SubagentHandle
 def build_subagent_turn_handlers(
     parent: Session, handle: SubagentHandle, cancel_event: threading.Event,
 ) -> TurnEventHandlers:
-    """Build the `TurnEventHandlers` a subagent's background-thread turn runs with: no
-    streaming/UI-progress callbacks (nothing renders a subagent's turn directly today), but
-    every ask-style callback (`on_permission_ask`/`on_ask_user_questions`/
-    `on_escalate_privileges`) forwarded to whichever callback `parent`'s own turn is *currently*
-    using, tagged with the subagent's address/role and stamped with its `origin_session_id`, and
-    `on_file_accessed` forwarded unchanged so a `ReadFile`/`EditFile`/`CreateFile` call anywhere
-    in the subagent tree reaches the root session's own handler.
+    """Build the `TurnEventHandlers` a subagent's background-thread turn runs with: every
+    ask-style and file-access callback forwards to whichever callback `parent`'s own turn is
+    currently using, ask-style ones tagged with the subagent's address/role.
 
     `cancel_event` is this subagent's own, dedicated cancellation signal.
     """

@@ -40,7 +40,8 @@ def _git_show_head(repo_root: Path, rel_path: Path) -> str | None:
 def git_diff_hunks_for(workspace_root: Path, abs_path: Path) -> list[DiffHunk] | None:
     """Recompute `abs_path`'s diff hunks by diffing its `git show HEAD:<path>` content (empty if
     the file doesn't exist at `HEAD`) against its current on-disk content, read fresh on every
-    call. Returns `None` if `workspace_root` isn't inside a git working tree."""
+    call, with unlimited context so the whole file comes back as one hunk rather than windowed
+    around each change. Returns `None` if `abs_path` isn't in a git working tree."""
     repo_root = _git_repo_root(workspace_root)
     if repo_root is None:
         return None
@@ -55,4 +56,5 @@ def git_diff_hunks_for(workspace_root: Path, abs_path: Path) -> list[DiffHunk] |
         new_text = None
     old_lines = old_text.splitlines() if old_text is not None else []
     new_lines = new_text.splitlines() if new_text is not None else []
-    return build_diff_hunks(old_lines, new_lines)
+    full_context = max(len(old_lines), len(new_lines), 1)
+    return build_diff_hunks(old_lines, new_lines, context=full_context)

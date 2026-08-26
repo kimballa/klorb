@@ -60,6 +60,7 @@ from klorb.tui.mixins.interactions import InteractionsMixin
 from klorb.tui.mixins.key_actions import KeyActionsMixin
 from klorb.tui.mixins.prompt_submission import PromptSubmissionMixin, TuiSessionWake
 from klorb.tui.mixins.rendering import RenderingMixin
+from klorb.tui.mixins.sidebar import SidebarMixin
 from klorb.tui.mixins.status_bar import StatusBarMixin
 from klorb.tui.mixins.subagents_panel import SubagentsPanelMixin
 from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
@@ -126,6 +127,7 @@ class ReplApp(
     TaskSidebarMixin,
     SubagentsPanelMixin,
     FilesPanelMixin,
+    SidebarMixin,
     ReplAppBase,
 ):
     """Interactive REPL: a scrolling history of prompts/responses, with a bottom input box."""
@@ -469,13 +471,10 @@ class ReplApp(
         self._tool_call_detail_shown: bool = False
         self._history_pinned_to_bottom: bool = True
         self._active_sidebar: str | None = self._process_config.sidebar
-        """Which sidebar panel is currently visible — `None`, `"tasks"`, `"agents"`, or
-        `"files"`.
-        """
+        """Which sidebar panel is currently visible, or `None`."""
         self._file_activity = FileActivityTracker()
-        """Every file read or written this process has seen via `ReadFile`/`EditFile`/
-        `CreateFile`, across the root session and every subagent beneath it, backing the Files
-        panel."""
+        """Every file this process has read or written, across the root session and every
+        subagent beneath it, backing the Files panel."""
         self._selected_session: Session = self._session
         """Whichever session's transcript `#history`/`#subagent-history` currently displays, and
         whose asks `InteractionsMixin._await_session_selected` lets through immediately.

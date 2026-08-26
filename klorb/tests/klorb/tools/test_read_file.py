@@ -550,7 +550,7 @@ def test_apply_reports_file_accessed_as_a_read(
 def test_apply_does_not_report_file_accessed_without_a_session(tmp_path: Path) -> None:
     file_path = _write_lines(tmp_path, 3)
 
-    # No exception despite `session=None` (the default) -- this is the assertion.
+    # The absence of an exception despite `session=None` (the default) is the assertion.
     ReadFileTool(_context(tmp_path)).apply({"filename": str(file_path)})
 
 

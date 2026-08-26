@@ -18,12 +18,8 @@ class FileActivityEntry:
 
 
 class FileActivityTracker:
-    """Records every file a `ReadFile`/`EditFile`/`CreateFile` call has touched this process,
-    across the root session and every subagent beneath it, keeping entries in first-access order
-    and never letting a path already marked `"write"` revert to `"read"`. `record()` runs on
-    whichever thread a turn is on and `entries()` runs on the app's own thread, so both are
-    guarded by a lock.
-    """
+    """Records every file a file I/O tool has touched, in first-access order, guarded by a lock
+    since `record()` and `entries()` run on different threads."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()

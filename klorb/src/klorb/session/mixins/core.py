@@ -981,8 +981,8 @@ class SessionCoreMixin(SessionBase):
         return self._current_turn_handlers
 
     def file_accessed(self, path: str, mode: FileAccessMode) -> None:
-        """Report that `path` was read or written by a `ReadFile`/`EditFile`/`CreateFile` call,
-        firing `on_file_accessed` on `current_turn_handlers()` if one is set and offers it."""
+        """Report that a file I/O tool read or wrote `path`, firing `on_file_accessed` on
+        `current_turn_handlers()` if one is set and offers it."""
         handlers = self._current_turn_handlers
         if handlers is not None and handlers.on_file_accessed is not None:
             handlers.on_file_accessed(path, mode)

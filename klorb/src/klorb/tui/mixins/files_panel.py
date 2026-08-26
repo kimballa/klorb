@@ -12,22 +12,20 @@ from klorb.process_config import persist_sidebar
 from klorb.session import FileAccessMode
 from klorb.tools.util.read_file_core import read_full_file_lines
 from klorb.tui._base import ReplAppBase
-from klorb.tui.constants import FILES_PANEL_ID, SUBAGENTS_PANEL_ID, TASK_SIDEBAR_ID
+from klorb.tui.constants import FILES_PANEL_ID
 from klorb.tui.formatting import render_diff_content, render_full_file_content
 from klorb.tui.git_diff import git_diff_hunks_for
 from klorb.tui.panels.preview_screens import DiffDetailScreen, ReadDetailScreen
 from klorb.tui.widgets.files_panel import FILES_LIST_ID, FileActivityRowData, FilesPanel, FilesPanelOption
-from klorb.tui.widgets.subagents_panel import SubagentsPanel
-from klorb.tui.widgets.task_sidebar import TaskSidebar
 
 
 class FilesPanelMixin(ReplAppBase):
-    """Ctrl+F shows or hides a docked right-hand panel listing every file this process has read
-    or written via `ReadFile`/`EditFile`/`CreateFile`, fed live by `Session.file_accessed()`."""
+    """Ctrl+F shows or hides a docked right-hand panel listing every file this process has
+    accessed, fed live by `Session.file_accessed()`."""
 
     def action_toggle_files_panel(self) -> None:
-        """Ctrl+F: show or hide the Files panel. Mutually exclusive with the task sidebar and
-        the subagents panel since all three dock the same right-hand slot."""
+        """Ctrl+F: show or hide the Files panel, mutually exclusive with the other sidebar
+        panels."""
         panel = self.query_one(f"#{FILES_PANEL_ID}", FilesPanel)
         if self._active_sidebar == "files":
             self._active_sidebar = None
@@ -39,12 +37,8 @@ class FilesPanelMixin(ReplAppBase):
         persist_sidebar(self._active_sidebar)
 
     def _show_files_panel(self, panel: FilesPanel) -> None:
-        """Make the Files panel the active right-hand sidebar, closing whichever of the task
-        sidebar/subagents panel was showing instead."""
-        if self._active_sidebar == "tasks":
-            self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar).display = False
-        elif self._active_sidebar == "agents":
-            self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display = False
+        """Make the Files panel the active right-hand sidebar."""
+        self._hide_other_sidebars("files")
         self._active_sidebar = "files"
         panel.display = True
 
@@ -79,23 +73,22 @@ class FilesPanelMixin(ReplAppBase):
 
     @work(thread=True)
     def _open_file_activity_detail(self, row: FileActivityRowData) -> None:
-        """Reopen `row`'s file: its current full content for a read-only entry, or a freshly
-        recomputed diff against its git baseline for a written one. Runs on a worker thread
-        since both a file read and `git diff` are synchronous I/O."""
-        if row.mode == "write":
-            self.call_from_thread(self.push_screen, self._build_diff_screen(row))
-        else:
-            self.call_from_thread(self.push_screen, self._build_read_screen(row))
+        """Reopen `row`'s file: a freshly recomputed diff against its git baseline, shown in the
+        context of the whole file, for a written entry with git access to diff against; its
+        current full content otherwise. Runs on a worker thread since both a file read and
+        `git diff` are synchronous I/O."""
+        screen = self._build_diff_screen(row) if row.mode == "write" else None
+        self.call_from_thread(self.push_screen, screen or self._build_read_screen(row))
 
-    def _build_diff_screen(self, row: FileActivityRowData) -> DiffDetailScreen:
+    def _build_diff_screen(self, row: FileActivityRowData) -> DiffDetailScreen | None:
+        """`None` when `row`'s file isn't in a git working tree, so the caller falls back to
+        plain full-content display instead."""
         workspace_root = self._session.config.workspace.path.resolve()
         hunks = git_diff_hunks_for(workspace_root, Path(row.abs_path))
         if hunks is None:
-            content: Content = Content("Not inside a git repository; diff unavailable.")
-        elif not hunks:
-            content = Content("No changes relative to git HEAD.")
-        else:
-            content = render_diff_content(hunks, max_lines=None)
+            return None
+        content: Content = render_diff_content(hunks, max_lines=None) if hunks else Content(
+            "No changes relative to git HEAD.")
         return DiffDetailScreen(row.rel_path, content)
 
     def _build_read_screen(self, row: FileActivityRowData) -> ReadDetailScreen:

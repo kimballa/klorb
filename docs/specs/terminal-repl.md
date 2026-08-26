@@ -79,26 +79,22 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   is not available in this workspace." instead of a list.
 * **Files panel.** `Ctrl+F` (`FilesPanelMixin.action_toggle_files_panel`, in
   `klorb.tui.mixins.files_panel`) shows or hides `klorb.tui.widgets.files_panel.FilesPanel`
-  (id `files-panel`), a `dock: right`, fixed-width panel listing every file read or written this
-  process has seen via `ReadFile`/`EditFile`/`CreateFile`, across the root session and every
-  subagent beneath it — bash-driven file changes aren't tracked, since there's no tool-call
-  hook to observe them through. `klorb.session.mixins.core.SessionCoreMixin.file_accessed()`
-  fires `TurnEventHandlers.on_file_accessed` once per successful call from those three tools;
-  `klorb.agents.policy.build_subagent_turn_handlers` forwards it unchanged up the subagent chain,
-  so a deeply nested subagent's file access still reaches the root session's own handler. The
-  app-owned `klorb.tui.file_activity.FileActivityTracker` (`ReplApp._file_activity`) records
-  each path in first-access order, keyed by absolute path, upgrading an entry from `"read"` to
-  `"write"` the first time it's edited or created but never downgrading it back. Each row shows
-  a leading `M`/`R` indicator and the file's workspace-relative path, truncated from the left
-  (`klorb.tui.widgets.file_finder.split_finder_row`) with a leading `"..."` when it doesn't fit
-  the panel's width, so the filename itself always stays visible. Selecting a row (Enter or
-  click) reopens that file on a worker thread: a `"read"` entry re-reads its current full
-  content from disk into `ReadDetailScreen`; a `"write"` entry recomputes its diff against git
-  fresh via `klorb.tui.git_diff.git_diff_hunks_for` (the file's current on-disk content against
-  `git show HEAD:<path>`, or an empty baseline for a file git doesn't know about yet) and shows
-  it in `DiffDetailScreen` — never a memo of hunks accumulated across separate `EditFile` calls.
-  Mutually exclusive with the task sidebar and the subagents panel, matching their own
-  Ctrl+T/Ctrl+G toggle behavior and sharing the same persisted `ProcessConfig.sidebar` setting.
+  (id `files-panel`), a `dock: right`, fixed-width panel listing every file a file I/O tool has
+  read or written this process, across the root session and every subagent beneath it — bash
+  changes aren't tracked, since there's no tool-call hook to observe them through.
+  `Session.file_accessed()` fires `TurnEventHandlers.on_file_accessed`, forwarded unchanged up
+  the subagent chain by `build_subagent_turn_handlers` so a subagent's own file access still
+  reaches the root session's handler. The app-owned `klorb.tui.file_activity.FileActivityTracker`
+  records each path in first-access order, upgrading an entry from `"read"` to `"write"` the
+  first time it's written but never back. Each row shows a leading `M`/`R` indicator and the
+  file's workspace-relative path, truncated from the left (`split_finder_row`) so the filename
+  itself always stays visible. Selecting a row reopens that file: a `"write"` entry with git
+  history to diff against shows its diff — recomputed fresh via `klorb.tui.git_diff.
+  git_diff_hunks_for`, in the context of the whole file rather than windowed hunks — in
+  `DiffDetailScreen`; every other entry shows its current full content in `ReadDetailScreen`.
+  `SidebarMixin._hide_other_sidebars` (`klorb.tui.mixins.sidebar`) keeps this panel mutually
+  exclusive with the task sidebar and the subagents panel, sharing their `SIDEBAR_WIDTH` and
+  persisted `ProcessConfig.sidebar` setting.
 * `PermissionBadge` (`klorb.tui.widgets.status_widgets`) shows the session's current
   `Session.config.permission_framework` value bracketed and right-justified (`[ask]`,
   `[auto]`, or `[deny]`) within a fixed-width cell (`PERMISSION_BADGE_WIDTH` — the longest

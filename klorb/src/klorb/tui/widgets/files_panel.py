@@ -12,11 +12,8 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from klorb.session import FileAccessMode
+from klorb.tui.constants import SIDEBAR_WIDTH
 from klorb.tui.widgets.file_finder import split_finder_row
-from klorb.tui.widgets.task_sidebar import TASK_SIDEBAR_WIDTH
-
-FILES_PANEL_WIDTH = TASK_SIDEBAR_WIDTH
-"""Same width as `TaskSidebar`/`SubagentsPanel`."""
 
 FILES_LIST_ID = "files-panel-list"
 _HEADER_ID = "files-panel-header"
@@ -26,7 +23,7 @@ _HEADER_TEXT = "Files"
 _WRITE_MARKER = "M"
 _READ_MARKER = "R"
 _ROW_RESERVED_WIDTH = 2
-"""Marker character plus its trailing space, reserved out of `FILES_PANEL_WIDTH` for the path's
+"""Marker character plus its trailing space, reserved out of `SIDEBAR_WIDTH` for the path's
 own width budget."""
 
 
@@ -52,14 +49,14 @@ class FilesPanelOption(Option):
 class FilesPanel(Vertical, can_focus=False):
     """Lists every file recorded by the process-wide `FileActivityTracker`, docked to the right
     edge of the screen and hidden until `Ctrl+F` (`FilesPanelMixin.action_toggle_files_panel`)
-    first shows it. Selecting a row (Enter or click) reopens that file: the full current content
-    for a read-only entry, or a diff against its git baseline for a written one.
+    first shows it. Selecting a row (Enter or click) reopens that file's current full content,
+    diff-annotated against its git baseline when one is available for a written entry.
     """
 
     DEFAULT_CSS = f"""
     FilesPanel {{
         dock: right;
-        width: {FILES_PANEL_WIDTH};
+        width: {SIDEBAR_WIDTH};
         border-left: solid $accent;
         display: none;
     }}
@@ -105,7 +102,7 @@ class FilesPanel(Vertical, can_focus=False):
     def _render_row_label(row: FileActivityRowData) -> Content:
         marker = _WRITE_MARKER if row.mode == "write" else _READ_MARKER
         marker_style = "bold green" if row.mode == "write" else "dim"
-        available_width = FILES_PANEL_WIDTH - _ROW_RESERVED_WIDTH
+        available_width = SIDEBAR_WIDTH - _ROW_RESERVED_WIDTH
         dir_part, file_part = split_finder_row(row.rel_path, available_width)
         if not dir_part:
             return Content.assemble((f"{marker} ", marker_style), file_part)

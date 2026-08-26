@@ -21,6 +21,17 @@ CHAT_HISTORY_ID = "chat-history"
 CHAT_ROW_ID = "__chat__"
 """Sentinel `SubagentPanelOption.session_id` for the panel's synthetic chat-room row."""
 
+SIDEBAR_WIDTH = 36
+"""Fixed cell width (border-box) shared by every docked right-hand sidebar panel."""
+
+SIDEBAR_PANEL_IDS: dict[str, str] = {
+    "tasks": TASK_SIDEBAR_ID,
+    "agents": SUBAGENTS_PANEL_ID,
+    "files": FILES_PANEL_ID,
+}
+"""Every `ReplApp._active_sidebar` name mapped to its panel's widget id, joined by `SidebarMixin`
+to enforce mutual exclusion among them."""
+
 PERMISSION_FRAMEWORK_CYCLE: tuple[PermissionFramework, ...] = ("ask", "auto", "deny")
 """The order Shift+Tab cycles `Session.config.permission_framework` through."""
 

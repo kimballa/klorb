@@ -835,8 +835,7 @@ def test_build_subagent_turn_handlers_forwards_on_file_accessed(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     """A subagent's own `on_file_accessed` must reach whichever callback the parent's own turn
-    is currently using, unchanged -- so the Files panel sees a subagent's ReadFile/EditFile/
-    CreateFile activity too."""
+    is currently using, unchanged."""
     provider = _FakeProvider(reply_text="reply")
     process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
     on_file_accessed = MagicMock()

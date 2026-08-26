@@ -171,7 +171,32 @@ async def test_build_diff_screen_shows_a_git_diff(
     assert "ONE" in str(screen._content)
 
 
-async def test_build_diff_screen_outside_git_repo_shows_a_message(
+async def test_build_diff_screen_shows_unchanged_lines_far_from_the_change(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """The diff is shown in the context of the whole file, not windowed hunks: a line far from
+    the one change must still appear."""
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    file_path = tmp_path / "a.txt"
+    lines = [str(i) for i in range(1, 41)]
+    file_path.write_text("\n".join(lines) + "\n")
+    _git(tmp_path, "add", "a.txt")
+    _git(tmp_path, "commit", "-q", "-m", "initial")
+    lines[0] = "CHANGED"
+    file_path.write_text("\n".join(lines) + "\n")
+    row = FileActivityRowData(abs_path=str(file_path), rel_path="a.txt", mode="write")
+
+    async with app.run_test():
+        screen = app._build_diff_screen(row)
+
+    assert isinstance(screen, DiffDetailScreen)
+    assert "40" in str(screen._content)  # far past the old fixed 8-line context window
+
+
+async def test_build_diff_screen_outside_git_repo_returns_none(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     app = ReplApp(session=_session(MagicMock(), make_session_config))
@@ -182,5 +207,21 @@ async def test_build_diff_screen_outside_git_repo_shows_a_message(
     async with app.run_test():
         screen = app._build_diff_screen(row)
 
-    assert isinstance(screen, DiffDetailScreen)
-    assert "git repository" in str(screen._content)
+    assert screen is None
+
+
+async def test_open_file_activity_detail_falls_back_to_read_view_outside_git_repo(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A written entry with no git baseline to diff against still opens, as a plain read."""
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
+    file_path = tmp_path / "a.txt"
+    file_path.write_text("one\n")
+    row = FileActivityRowData(abs_path=str(file_path), rel_path="a.txt", mode="write")
+
+    async with app.run_test() as pilot:
+        app._open_file_activity_detail(row)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ReadDetailScreen)

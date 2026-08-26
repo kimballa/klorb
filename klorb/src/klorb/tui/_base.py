@@ -228,6 +228,8 @@ class ReplAppBase(App[None]):
 
     def _on_file_accessed(self, path: str, mode: FileAccessMode) -> None: ...
 
+    def _hide_other_sidebars(self, except_name: str) -> None: ...
+
     def _render_restored_tool_call(
         self, call: ToolCallRequest, response: ChatMessage | None,
     ) -> RenderedToolCall:

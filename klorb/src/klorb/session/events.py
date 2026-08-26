@@ -131,8 +131,7 @@ class EscalatePrivilegesDecision(BaseModel):
 
 
 FileAccessMode = Literal["read", "write"]
-"""Whether a `ReadFile`/`EditFile`/`CreateFile` call reported to `TurnEventHandlers.
-on_file_accessed` read its subject or wrote it (an edit or a fresh create alike)."""
+"""How a file read or write tool accessed a file."""
 
 
 class ToolCallEvent(BaseModel):
@@ -190,21 +189,9 @@ class QueuedMessage(BaseModel):
 
 
 class TurnEventHandlers(BaseModel):
-    """Immutable bundle of the optional callbacks a caller can supply for one turn:
-    `on_chunk`/`on_thinking_chunk`/`on_reasoning_details`, `cancel_event`,
-    `on_tool_call_limit_reached`, `on_permission_ask`, `on_ask_user_questions`,
-    `on_escalate_privileges`, `on_tool_call_started`, and `on_tool_call`.
-    `on_session_name_changed` fires once, at most, on the first `send_turn()` call for a
-    `Session`. `on_skill_activated` fires with a skill's `(namespace, name)` identity when the
-    turn's prompt leads with a `/<name>` mention that unconditionally activates it, so a caller
-    can surface "Activated skill: ..." without re-parsing the interjection out of the stored
-    message content. `on_file_accessed` fires once per successful `ReadFile`/`EditFile`/
-    `CreateFile` call with the resolved absolute path and whether it was a read or a write.
-    Replaces passing these as separate keyword arguments through
-    `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and everything they call.
-    `frozen=True` since a `TurnEventHandlers` is built once per turn and never mutated;
-    `arbitrary_types_allowed=True` is needed for the `threading.Event` field.
-    """
+    """Immutable bundle of the optional callbacks a caller can supply for one turn, replacing
+    separate keyword arguments through `send_turn()`/`retry_last_turn()`/`_dispatch_turn()` and
+    everything they call."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
@@ -223,8 +210,13 @@ class TurnEventHandlers(BaseModel):
     on_tool_call_started: Callable[[ToolCallStartedEvent], None] | None = None
     on_tool_call: Callable[[ToolCallEvent], None] | None = None
     on_session_name_changed: Callable[[SessionName | None], None] | None = None
+    """Fires once, at most, on the first `send_turn()` call for a `Session`."""
     on_skill_activated: Callable[[tuple[str, str]], None] | None = None
+    """Fires with a skill's `(namespace, name)` identity when the turn's prompt unconditionally
+    activates one via a leading `/<name>` mention."""
     on_file_accessed: Callable[[str, FileAccessMode], None] | None = None
+    """Fires once per successful file access, with the resolved absolute path and how it was
+    accessed."""
     on_enqueue_message: Callable[["QueuedMessage"], None] | None = None
     on_send_queued_message: Callable[["QueuedMessage"], None] | None = None
 
