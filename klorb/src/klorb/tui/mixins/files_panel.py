@@ -73,22 +73,25 @@ class FilesPanelMixin(ReplAppBase):
 
     @work(thread=True)
     def _open_file_activity_detail(self, row: FileActivityRowData) -> None:
-        """Reopen `row`'s file: a freshly recomputed diff against its git baseline, shown in the
-        context of the whole file, for a written entry with git access to diff against; its
-        current full content otherwise. Runs on a worker thread since both a file read and
-        `git diff` are synchronous I/O."""
-        screen = self._build_diff_screen(row) if row.mode == "write" else None
+        """Reopen `row`'s file: a freshly recomputed diff against its git baseline when one is
+        available, its current full content otherwise. For `"read"` entries the diff is checked
+        anyway — if the file was modified outside klorb tools (e.g. via sed or a python script),
+        the entry is upgraded to `"write"` and the diff is shown. Runs on a worker thread since
+        both a file read and `git diff` are synchronous I/O."""
+        screen = self._build_diff_screen(row)
+        if row.mode == "read" and screen is not None:
+            self._file_activity.record(row.abs_path, "write")
+            self.call_from_thread(self._refresh_files_panel)
         self.call_from_thread(self.push_screen, screen or self._build_read_screen(row))
 
     def _build_diff_screen(self, row: FileActivityRowData) -> DiffDetailScreen | None:
-        """`None` when `row`'s file isn't in a git working tree, so the caller falls back to
-        plain full-content display instead."""
+        """`None` when `row`'s file isn't in a git working tree or has no actual changes relative
+        to git HEAD, so the caller falls back to plain full-content display instead."""
         workspace_root = self._session.config.workspace.path.resolve()
         hunks = git_diff_hunks_for(workspace_root, Path(row.abs_path))
-        if hunks is None:
+        if not hunks:
             return None
-        content: Content = render_diff_content(hunks, max_lines=None) if hunks else Content(
-            "No changes relative to git HEAD.")
+        content: Content = render_diff_content(hunks, max_lines=None)
         return DiffDetailScreen(row.rel_path, content)
 
     def _build_read_screen(self, row: FileActivityRowData) -> ReadDetailScreen:

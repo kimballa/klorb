@@ -88,10 +88,12 @@ ready for the next prompt. See [[use-textual-for-the-terminal-ui]] for why
   records each path in first-access order, upgrading an entry from `"read"` to `"write"` the
   first time it's written but never back. Each row shows a leading `M`/`R` indicator and the
   file's workspace-relative path, truncated from the left (`split_finder_row`) so the filename
-  itself always stays visible. Selecting a row reopens that file: a `"write"` entry with git
-  history to diff against shows its diff — recomputed fresh via `klorb.tui.git_diff.
-  git_diff_hunks_for`, in the context of the whole file rather than windowed hunks — in
-  `DiffDetailScreen`; every other entry shows its current full content in `ReadDetailScreen`.
+  itself always stays visible. Selecting a row reopens that file: any entry with actual changes
+  relative to git HEAD — whether originally recorded as `"write"` or `"read"` — shows its diff
+  (recomputed fresh via `klorb.tui.git_diff.git_diff_hunks_for`, in the context of the whole
+  file rather than windowed hunks) in `DiffDetailScreen`; a `"read"` entry whose diff check
+  finds changes is upgraded to `"write"` in the tracker so its row indicator updates. Every
+  other entry shows its current full content in `ReadDetailScreen`.
   `SidebarMixin._hide_other_sidebars` (`klorb.tui.mixins.sidebar`) keeps this panel mutually
   exclusive with the task sidebar and the subagents panel, sharing their `SIDEBAR_WIDTH` and
   persisted `ProcessConfig.sidebar` setting.

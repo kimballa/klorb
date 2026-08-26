@@ -10,6 +10,9 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
+* For Grep and SemanticSearch, if `queries` is just a string and not an array of strings, just
+  treat it like a singleton array: `["the query"]`.
+
 ### Feature backlog
 
 * use inotify to invalidate agent file reads?
@@ -136,10 +139,6 @@
   done by Textual's draw-over algorithm? This may not be fixable.
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
-
-* In the Files tab if you click a file and it was initially marked 'read' access, do a check of git anyway
-  and if it actually has a `git diff` then upgrade to 'modified' and show the diff version of the file; this
-  can catch files modified via sed or python script.
 
 ### Feature backlog
 

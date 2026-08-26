@@ -225,3 +225,74 @@ async def test_open_file_activity_detail_falls_back_to_read_view_outside_git_rep
         await pilot.pause()
 
         assert isinstance(app.screen, ReadDetailScreen)
+
+
+async def test_read_entry_with_git_diff_shows_diff_and_upgrades_tracker(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A 'read' entry whose file has been modified outside klorb tools (e.g. via sed or a python
+    script) shows the diff view and upgrades the tracker entry to 'write'."""
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    file_path = tmp_path / "a.txt"
+    file_path.write_text("one\n")
+    _git(tmp_path, "add", "a.txt")
+    _git(tmp_path, "commit", "-q", "-m", "initial")
+    file_path.write_text("ONE\n")  # modified outside klorb
+    row = FileActivityRowData(abs_path=str(file_path), rel_path="a.txt", mode="read")
+    app._file_activity.record(str(file_path), "read")
+
+    async with app.run_test() as pilot:
+        app._open_file_activity_detail(row)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, DiffDetailScreen)
+        assert "ONE" in str(app.screen._content)
+        assert app._file_activity.entries()[0].mode == "write"
+
+
+async def test_read_entry_without_git_diff_shows_read_view(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A 'read' entry whose file has NOT been modified shows the plain read view."""
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    file_path = tmp_path / "a.txt"
+    file_path.write_text("one\n")
+    _git(tmp_path, "add", "a.txt")
+    _git(tmp_path, "commit", "-q", "-m", "initial")
+    # file is unchanged — no external modification
+    row = FileActivityRowData(abs_path=str(file_path), rel_path="a.txt", mode="read")
+    app._file_activity.record(str(file_path), "read")
+
+    async with app.run_test() as pilot:
+        app._open_file_activity_detail(row)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ReadDetailScreen)
+        assert app._file_activity.entries()[0].mode == "read"  # not upgraded
+
+
+async def test_read_entry_outside_git_repo_shows_read_view(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A 'read' entry outside a git repo falls back to the plain read view."""
+    app = ReplApp(session=_session(MagicMock(), make_session_config))
+    file_path = tmp_path / "a.txt"
+    file_path.write_text("one\n")
+    row = FileActivityRowData(abs_path=str(file_path), rel_path="a.txt", mode="read")
+    app._file_activity.record(str(file_path), "read")
+
+    async with app.run_test() as pilot:
+        app._open_file_activity_detail(row)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ReadDetailScreen)
+        assert app._file_activity.entries()[0].mode == "read"  # not upgraded
