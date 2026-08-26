@@ -137,16 +137,6 @@
 
 * mouse-based select/copy/paste doesn't work. (ctrl-x/c/v does though, and shift-l/r does select...)
 
-* Flaky test failure (rare, unrelated to the test's own subject): `SubagentsPanelMixin.
-  _tick_subagents_panel`'s recurring timer occasionally fires `_update_subagent_attention_status_line`
-  after `app.run_test()` has started tearing the screen down, raising `textual.css.query.NoMatches:
-  No nodes match '#subagent-attention-status'` and failing whichever TUI test happened to be
-  running at the time (seen on both `test_key_actions.py::test_third_ctrl_c_quits_after_an_interrupt_then_a_warning`
-  and `test_app.py::test_error_log_record_mounted_as_a_history_error_notice`, on different runs).
-  Passes on retry every time. Needs a guard in `_tick_subagents_panel`/
-  `_update_subagent_attention_status_line` for a screen that's mid-teardown, or the timer needs
-  to be cancelled earlier during shutdown.
-
 * Rows in the files tab have the R/M indicator on one line,
   filename starts on the next
   and spills over the final char to a third line.
