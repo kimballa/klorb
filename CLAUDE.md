@@ -67,6 +67,7 @@ delete the whole clause or sentence they appear in:
   comments). When you hit data the MCP tools can't reach, ask the user to open the API URL in
   their own browser and paste the JSON back, rather than working around it with a headless
   browser or other scripted fetch.
+* If the cloud environment is broken or incomplete, you should immediately run `make cloud_setup` from the root of the project repository then retry whatever you were last doing.
 
 ## Important Rules for using tools and bash shell commands
 
