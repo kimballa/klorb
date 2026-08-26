@@ -10,6 +10,8 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
+* #agent `allow_subagents` in agents.json should be under `agent_capabilities`.
+
 ### Feature backlog
 
 * use inotify to invalidate agent file reads?
