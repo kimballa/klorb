@@ -457,6 +457,21 @@ async def test_format_title_shortens_a_long_workspace_path_to_its_last_two_parts
         assert title == ".../tree/root - gpt-5"
 
 
+async def test_format_title_shows_agent_chat_while_chat_room_is_selected(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    mock_provider = MagicMock()
+    short_path = Path("/home/user/proj")
+    config = make_session_config(model="gpt-5", workspace=Workspace(path=short_path, trusted=True))
+    session = Session(config, provider=mock_provider, session_id=TEST_SESSION_ID)
+    app = ReplApp(session=session)
+
+    async with app.run_test():
+        await app._select_chat()
+        title = app.format_title(app.title, app.sub_title).plain
+        assert title == f"{short_path} - (Agent chat)"
+
+
 async def test_initial_message_is_submitted_as_first_turn(
     make_session_config: Callable[..., SessionConfig]
 ) -> None:

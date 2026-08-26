@@ -11,6 +11,12 @@ from textual.message import Message
 from textual.types import IgnoreReturnCallbackType
 from textual.widgets import TextArea
 
+from klorb.tui.widgets.agent_finder import (
+    AGENT_FINDER_ID,
+    AgentFinderPanel,
+    AgentMatch,
+    filter_agent_mentions,
+)
 from klorb.tui.widgets.file_finder import (
     FILE_FINDER_ID,
     FileFinderPanel,
@@ -58,9 +64,11 @@ class PromptInput(TextArea):
     Whenever the text starts with `>`, up/down/enter instead drive the inline `PromptPalette`
     popup mounted just above this widget rather than history recall or submission.
 
-    Whenever the cursor sits inside an `@mention` with at least one matching workspace file,
-    up/down/enter/tab/escape instead drive the inline `FileFinderPanel` popup. Checked before
-    palette mode, so a `@mention` inside a `>`-prefixed palette query still opens the finder.
+    Whenever the cursor sits inside an `@mention` with at least one matching candidate,
+    up/down/enter/tab/escape instead drive an inline finder popup: `AgentFinderPanel` (matching
+    live chat participants) while the chat room is the active view, `FileFinderPanel` (matching
+    workspace files) otherwise. Checked before palette mode, so a `@mention` inside a
+    `>`-prefixed palette query still opens the finder.
     """
 
     NEWLINE_KEYS = ("ctrl+j", "ctrl+enter")
@@ -123,8 +131,12 @@ class PromptInput(TextArea):
         self._finder_mention: MentionQuery | None = None
         """The `@mention` (if any) the cursor currently sits inside of, recomputed on every
         text/selection change by `refresh_finder`."""
-        self._finder_matches: list[FinderMatch] = []
-        """Workspace files and directories currently matching `_finder_mention`'s query."""
+        self._finder_matches: list[FinderMatch] | list[AgentMatch] = []
+        """Workspace files/directories or, while `_in_chat_room()`, live agents currently
+        matching `_finder_mention`'s query."""
+        self._finder_is_agent_mode: bool = False
+        """Whether `_finder_matches` (and the active finder popup) are `AgentMatch`es rather
+        than `FinderMatch`es, decided by `_in_chat_room()` the last time `refresh_finder` ran."""
         self._finder_dismissed_at: tuple[int, int] | None = None
         """The `(row, start_column)` of the `@mention` Escape last dismissed the finder popup
         for."""
@@ -184,6 +196,7 @@ class PromptInput(TextArea):
         self._finder_matches = []
         self._finder_dismissed_at = None
         self._finder_widget().hide()
+        self._agent_finder_widget().hide()
         self._skill_query = None
         self._skill_matches = []
         self._skill_dismissed_at = None
@@ -207,11 +220,12 @@ class PromptInput(TextArea):
         return self.screen.query_one(f"#{PROMPT_PALETTE_ID}", PromptPalette)
 
     @property
-    def _file_finder_mode(self) -> bool:
-        """Whether up/down/enter/tab/escape should drive the `FileFinderPanel` popup rather
-        than palette mode, history recall, or submission: the cursor sits inside an `@mention`
+    def _mention_finder_mode(self) -> bool:
+        """Whether up/down/enter/tab/escape should drive the active mention finder popup
+        (`AgentFinderPanel` or `FileFinderPanel`, per `_finder_is_agent_mode`) rather than
+        palette mode, history recall, or submission: the cursor sits inside an `@mention`
         (`_finder_mention`, kept current by `refresh_finder`) that currently has at least one
-        matching workspace file. A mention with no matches (including one `_dismiss_finder` has
+        matching candidate. A mention with no matches (including one `_dismiss_finder` has
         just hidden) doesn't claim these keys.
         """
         return self._finder_mention is not None and bool(self._finder_matches)
@@ -220,10 +234,25 @@ class PromptInput(TextArea):
         """The sibling `FileFinderPanel` popup mounted just above this widget."""
         return self.screen.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
 
+    def _agent_finder_widget(self) -> AgentFinderPanel:
+        """The sibling `AgentFinderPanel` popup mounted just above this widget."""
+        return self.screen.query_one(f"#{AGENT_FINDER_ID}", AgentFinderPanel)
+
+    def _active_finder_widget(self) -> AgentFinderPanel | FileFinderPanel:
+        """Whichever mention finder popup `_finder_is_agent_mode` currently selects."""
+        return self._agent_finder_widget() if self._finder_is_agent_mode else self._finder_widget()
+
     def _current_mention(self) -> MentionQuery | None:
         """The `@mention` (if any) the cursor currently sits inside of, on its own line."""
         row, column = self.cursor_location
         return detect_mention_query(self.document[row], column)
+
+    def _in_chat_room(self) -> bool:
+        """Whether the chat room, rather than a (sub)agent transcript, is the currently
+        displayed view, so `@mention` should match live agents rather than workspace files."""
+        from klorb.tui.app import ReplApp  # breaks a circular import: ReplApp composes PromptInput
+
+        return isinstance(self.app, ReplApp) and self.app.chat_room_active()
 
     def refresh_finder(self) -> None:
         """Recompute the active `@mention` at the cursor and update the finder popup to match.
@@ -239,15 +268,23 @@ class PromptInput(TextArea):
             self._finder_matches = []
             self._finder_dismissed_at = None
             self._finder_widget().hide()
+            self._agent_finder_widget().hide()
             return
         row, _ = self.cursor_location
         if (row, mention.start_column) == self._finder_dismissed_at:
             self._finder_matches = []
             self._finder_widget().hide()
+            self._agent_finder_widget().hide()
             return
         self._finder_dismissed_at = None
-        self._finder_matches = filter_workspace_files(self._workspace_files(), mention.query)
-        finder = self._finder_widget()
+        self._finder_is_agent_mode = self._in_chat_room()
+        if self._finder_is_agent_mode:
+            self._finder_matches = filter_agent_mentions(self._chat_mention_targets(), mention.query)
+            self._finder_widget().hide()
+        else:
+            self._finder_matches = filter_workspace_files(self._workspace_files(), mention.query)
+            self._agent_finder_widget().hide()
+        finder = self._active_finder_widget()
         if self._finder_matches:
             finder.show_matches(self._finder_matches)
         else:
@@ -261,6 +298,15 @@ class PromptInput(TextArea):
         if not isinstance(self.app, ReplApp):
             return []
         return self.app.workspace_files()
+
+    def _chat_mention_targets(self) -> list[AgentMatch]:
+        """The active `ReplApp`'s live agents as `AgentMatch` objects for the chat room's
+        `@`-mention agent finder, or `[]` if this widget isn't mounted under one."""
+        from klorb.tui.app import ReplApp  # breaks a circular import: ReplApp composes PromptInput
+
+        if not isinstance(self.app, ReplApp):
+            return []
+        return self.app.chat_mention_targets()
 
     @property
     def _skill_finder_mode(self) -> bool:
@@ -346,10 +392,10 @@ class PromptInput(TextArea):
         row, _ = self.cursor_location
         self._finder_dismissed_at = (row, self._finder_mention.start_column)
         self._finder_matches = []
-        self._finder_widget().hide()
+        self._active_finder_widget().hide()
 
     def select_finder_match(self) -> None:
-        """Apply the finder's currently-highlighted match. A file match replaces the active
+        """Apply the file finder's currently-highlighted match. A file match replaces the active
         `@query` with an escaped `@mention` (per
         `klorb.tui.widgets.file_finder.escape_mention_path`) and closes the popup; a directory
         match instead narrows the query to that directory (with a trailing `/`) and leaves the
@@ -372,6 +418,23 @@ class PromptInput(TextArea):
         self._finder_dismissed_at = None
         self._finder_widget().hide()
 
+    def select_agent_match(self) -> None:
+        """Apply the agent finder's currently-highlighted match: replace the active `@query`
+        with `@<nickname> ` and close the popup. A no-op if there's no active mention or no
+        highlighted row."""
+        mention = self._finder_mention
+        match = self._agent_finder_widget().current_match
+        if mention is None or match is None:
+            return
+        assert isinstance(match, AgentMatch)
+        row, column = self.cursor_location
+        insertion = f"@{match.nickname} "
+        self.replace(insertion, (row, mention.start_column), (row, column))
+        self._finder_mention = None
+        self._finder_matches = []
+        self._finder_dismissed_at = None
+        self._agent_finder_widget().hide()
+
     def action_copy(self) -> None:
         """Copy this box's own text selection to the clipboard, same as the base `TextArea.
         action_copy`, but also records the press for `ReplApp.action_interrupt`'s Ctrl+C streak
@@ -393,8 +456,8 @@ class PromptInput(TextArea):
         up/down at the text boundaries; detach from history on any text mutation; defer
         everything else (typing, navigation, selection) to `TextArea`'s own handling; and,
         while `_palette_mode` is active, let up/down/enter/escape drive the `PromptPalette`
-        popup instead of any of the above. `_file_finder_mode` is checked first, so up/down/enter/tab/
-        escape drive the `FileFinderPanel` popup instead whenever the cursor sits inside a
+        popup instead of any of the above. `_mention_finder_mode` is checked first, so up/down/enter/tab/
+        escape drive the active mention finder popup instead whenever the cursor sits inside a
         matching `@mention`.
 
         `self._last_key` records the key currently being processed for `on_text_area_changed`
@@ -444,7 +507,7 @@ class PromptInput(TextArea):
             event.prevent_default()
             self._enter_isearch()
             return
-        if self._file_finder_mode:
+        if self._mention_finder_mode:
             if key == "escape":
                 event.stop()
                 event.prevent_default()
@@ -453,17 +516,20 @@ class PromptInput(TextArea):
             if key == "up":
                 event.stop()
                 event.prevent_default()
-                self._finder_widget().move_highlight(-1)
+                self._active_finder_widget().move_highlight(-1)
                 return
             if key == "down":
                 event.stop()
                 event.prevent_default()
-                self._finder_widget().move_highlight(1)
+                self._active_finder_widget().move_highlight(1)
                 return
             if key in ("enter", "tab"):
                 event.stop()
                 event.prevent_default()
-                self.select_finder_match()
+                if self._finder_is_agent_mode:
+                    self.select_agent_match()
+                else:
+                    self.select_finder_match()
                 return
         if self._skill_finder_mode:
             if key == "escape":

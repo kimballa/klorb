@@ -2,6 +2,7 @@
 """Tests for klorb.tui.widgets.prompt_input.PromptInput: input history recall,
 reverse-incremental search, and the inline command palette."""
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,10 +24,13 @@ from tui.conftest import (
     _wait_until,
 )
 
+from klorb.agents.chat import chat_nickname
+from klorb.agents.runtime import SubagentHandle
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tui.app import ReplApp
 from klorb.tui.constants import HISTORY_ID, PROMPT_INPUT_ID
+from klorb.tui.widgets.agent_finder import AGENT_FINDER_ID, AgentFinderPanel, AgentMatch
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel, FinderMatch
 from klorb.tui.widgets.palette import PALETTE_PREFIX, PROMPT_PALETTE_ID, PaletteOption, PromptPalette
 from klorb.tui.widgets.prompt_input import PromptInput
@@ -1026,3 +1030,65 @@ async def test_moving_cursor_out_of_the_mention_closes_the_finder(
             assert finder.display is False
         finally:
             index.close()
+
+
+# --- @-mention agent finder (chat room) ---
+
+
+def _add_subagent(
+    root: Session, make_session_config: Callable[..., SessionConfig],
+    role: str = "explorer", title: str = "find the bug",
+) -> Session:
+    child = Session(
+        make_session_config(role_name=role), provider=MagicMock(), parent=root, session_name=title)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role=role, title=title)
+    root.subagent_tracker.register(handle)
+    return child
+
+
+async def test_at_mention_in_chat_room_opens_the_agent_finder_not_the_file_finder(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    child = _add_subagent(session, make_session_config)
+    app = ReplApp(session=session)
+    async with app.run_test() as pilot:
+        index = _start_file_index(app, tmp_path / "workspace", "src/main.py")
+        try:
+            await app._select_chat()
+            await pilot.pause()
+
+            await pilot.press(*f"@{chat_nickname(child)[:4]}")
+            await pilot.pause()
+
+            agent_finder = app.query_one(f"#{AGENT_FINDER_ID}", AgentFinderPanel)
+            file_finder = app.query_one(f"#{FILE_FINDER_ID}", FileFinderPanel)
+            assert agent_finder.display is True
+            assert file_finder.display is False
+
+            prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+            expected = AgentMatch(nickname=chat_nickname(child), title="find the bug")
+            assert prompt_input._finder_matches == [expected]
+        finally:
+            index.close()
+
+
+async def test_selecting_an_agent_match_inserts_its_nickname(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(MagicMock(), make_session_config)
+    child = _add_subagent(session, make_session_config)
+    app = ReplApp(session=session)
+    async with app.run_test() as pilot:
+        await app._select_chat()
+        await pilot.pause()
+
+        await pilot.press(*f"@{chat_nickname(child)[:4]}")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        prompt_input = app.query_one(f"#{PROMPT_INPUT_ID}", PromptInput)
+        assert prompt_input.text == f"@{chat_nickname(child)} "

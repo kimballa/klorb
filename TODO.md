@@ -142,27 +142,6 @@
 
 ### Feature backlog
 
-* Interactive chat room UI rough edges:
-  * set hotkey to ^M, not ^B.
-  * Trying to `@reference` the agent, the `@` pops up the *file* fuzzy-finder, but it should be
-    popping up the agent nickname finder.
-  * A reference to `@operator-1` doesn't seem to activate it, although the agent *does* note when
-    restarted that it has a system interjection specifically saying:
-
-    ```plain
-    <SystemInterjection subject="ChatUnread">
-    You have 3 unread chat room message(s). Call ReadChat to see them. This includes 1 that @mention you directly.
-    </SystemInterjection>
-    ```
-
-    ... so it did parse a real mention from this. But the root session activation via
-    _send_agent_message isn't activating.
-  * Related, it's unclear to me whether I should address `@operator-1` or `@Operator-1`, but either
-    way the TUI should help you out and fix up the correct case in the msg so that it does mention
-    with a case-insensitive input.
-  * When in the chat room, the header which is usually `/workspace/path - model (high)`, should
-    instead read: `/workspace/path - (Agent chat)`.
-
 * a "files" side panel that lists all files read and written by the agents this session. Indicator
   column on the left for reads vs written/modified/created. Clicking a filename pops a modal to read
   the whole file, and see diffs highlighted. Hotkey is ^F. This will be a narrow panel (replaces

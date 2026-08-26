@@ -596,17 +596,22 @@ def _record_chat_mention_wake(process_config: ProcessConfig, channel: Channel) -
 
 
 def notify_chat_mention(
-    process_config: ProcessConfig, channel: Channel, mentioner: Session, mentioned_id: str,
+    process_config: ProcessConfig, channel: Channel, sender_id: str, context_session: Session,
+    mentioned_id: str,
 ) -> None:
     """Try to actively wake the chat participant `mentioned_id`, using the same running/
     idle-root/dormant-subagent branches `deliver_or_queue_agent_message` uses for `SendMessage`,
     except a busy or capacity-limited target is skipped rather than queued; the standing
     `ChatUnread` interjection still covers it. Capped by `tools.chat.maxMentionWakesPerSession`,
-    after which further calls are a no-op for this tree's lifetime.
+    after which further calls are a no-op for this tree's lifetime. `sender_id` is the chat
+    participant id that posted the message (an agent's own session id, or `CHAT_USER_ID` for the
+    human), checked separately from `context_session` (any live session in the same tree, used
+    only to locate its root) since the human posting under `CHAT_USER_ID` can never collide with
+    a live session id.
     """
-    if mentioned_id == mentioner.id:
+    if mentioned_id == sender_id:
         return
-    root = mentioner
+    root = context_session
     while root.parent is not None:
         root = root.parent
     target = find_session_in_group(root, mentioned_id)

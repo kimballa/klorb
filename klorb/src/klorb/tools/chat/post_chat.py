@@ -51,7 +51,7 @@ class PostChatTool(Tool):
         channel = session.chat_channel
         chat_message = channel.post(session.id, message, session)
         for mentioned_id in chat_message.mentions:
-            notify_chat_mention(context.process_config, channel, session, mentioned_id)
+            notify_chat_mention(context.process_config, channel, session.id, session, mentioned_id)
         return {
             "seq": chat_message.seq,
             "mentions": chat_message.mentions,

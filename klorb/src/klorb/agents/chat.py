@@ -69,21 +69,42 @@ def chat_nickname(session_or_id: "Session | str") -> str:
     return f"{session_or_id.config.role_name}-{session_or_id.address()}"
 
 
+def _casefolded_targets(resolvable: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """Index `resolvable` (token -> canonical participant id) by each key's casefolded form, to
+    `(canonical_key, resolved_id)`, so mention resolution and case correction can both match a
+    token regardless of how the user capitalized it."""
+    return {key.casefold(): (key, value) for key, value in resolvable.items()}
+
+
 def _resolve_mentions(body: str, resolvable: dict[str, str]) -> tuple[list[str], list[str]]:
-    """Extract every `@token` in `body`, resolving each against `resolvable` (token -> canonical
-    participant id). Returns `(mentions, unresolved_mentions)`, each de-duplicated in
-    first-seen order."""
+    """Extract every `@token` in `body`, resolving each case-insensitively against `resolvable`
+    (token -> canonical participant id). Returns `(mentions, unresolved_mentions)`, each
+    de-duplicated in first-seen order."""
+    casefolded = _casefolded_targets(resolvable)
     mentions: list[str] = []
     unresolved: list[str] = []
     for match in MENTION_TOKEN_RE.finditer(body):
         token = match.group(1)
-        resolved = resolvable.get(token)
-        if resolved is not None:
+        entry = casefolded.get(token.casefold())
+        if entry is not None:
+            resolved = entry[1]
             if resolved not in mentions:
                 mentions.append(resolved)
         elif token not in unresolved:
             unresolved.append(token)
     return mentions, unresolved
+
+
+def correct_mention_case(body: str, resolvable: dict[str, str]) -> str:
+    """Rewrite each `@token` in `body` to the canonically-cased form of whichever live
+    participant it case-insensitively names, leaving unresolved tokens untouched."""
+    casefolded = _casefolded_targets(resolvable)
+
+    def replace(match: "re.Match[str]") -> str:
+        entry = casefolded.get(match.group(1).casefold())
+        return f"@{entry[0]}" if entry is not None else match.group(0)
+
+    return MENTION_TOKEN_RE.sub(replace, body)
 
 
 def live_mention_targets(session: "Session") -> dict[str, str]:

@@ -62,7 +62,8 @@ canonical id map from `session`'s live tree for one resolution pass: a session's
 `role-address` nickname, and the literal `"user"`. Both forms resolve uniformly, so an agent can
 `@mention` by session id (the same identifier `SendMessage`/the `AgentGroup` interjection already
 surface) and a human can `@mention` by the more readable `@role-address` form (e.g.
-`@explorer-1.1`, `Session.address()`'s dotted-decimal string).
+`@explorer-1.1`, `Session.address()`'s dotted-decimal string). Resolution is case-insensitive
+(`klorb.agents.chat._resolve_mentions`), so `@Explorer-1.1` resolves the same as `@explorer-1.1`.
 
 `klorb.agents.chat.chat_nickname(session_or_id) -> str` maps `"user"` to itself, a live `Session`
 to `f"{role}-{address}"`, and any other string (a session no longer in the tree) to itself
@@ -106,12 +107,16 @@ interjection by calling `ReadChat`.
 
 ### `@mention` active wake
 
-`klorb.agents.policy.notify_chat_mention(process_config, channel, mentioner, mentioned_id)`, called
-once per resolved mention from `PostChatTool.apply()` (skipping self-mentions), reuses
-`SendMessage`'s own three delivery branches: a mentioned session with a turn in flight gets nothing
-further (the standing interjection covers it next poll); an idle root is woken via
-`deliver_event_message`; a dormant subagent is resumed via `dispatch_subagent_turn`, bounded by the
-usual `maxConcurrentPerParent`/`maxActiveTotal` limits and simply skipped (not queued) if exceeded.
+`klorb.agents.policy.notify_chat_mention(process_config, channel, sender_id, context_session,
+mentioned_id)`, called once per resolved mention from `PostChatTool.apply()` (skipping
+self-mentions: `mentioned_id == sender_id`) and from the TUI's own `_submit_chat_post` (`sender_id
+= CHAT_USER_ID`, which never collides with a live session id, so a human `@mention`ing the root
+agent by name is never mistaken for a self-mention). `context_session` is only used to locate the
+tree's root for `find_session_in_group`; it need not be the sender itself. Reuses `SendMessage`'s
+own three delivery branches: a mentioned session with a turn in flight gets nothing further (the
+standing interjection covers it next poll); an idle root is woken via `deliver_event_message`; a
+dormant subagent is resumed via `dispatch_subagent_turn`, bounded by the usual
+`maxConcurrentPerParent`/`maxActiveTotal` limits and simply skipped (not queued) if exceeded.
 The wake's delivered text is a fixed nudge ("You were @mentioned in the chat room. Call ReadChat to
 see the conversation."), never the message body itself — `ReadChat` is the only thing that ever
 advances a hwm, so a woken agent can't "see" content its own cursor doesn't reflect having read.
@@ -140,7 +145,8 @@ leaves `_selected_session`/`_selected_handle` pointed at whichever (sub)agent wa
 every render/routing branch that used to check `_selected_handle is not None` now checks
 `_chat_selected` first. `SubagentsPanelMixin._select_chat()`/`_select_session()` both save/restore
 unsent prompt-input draft text (`ReplApp._subagent_drafts`, keyed by `CHAT_ROW_ID` for the chat
-room) the same way switching between agents already does.
+room) the same way switching between agents already does. `ReplApp.format_title()` shows
+`"(Agent chat)"` in place of the selected session's model/effort while `_chat_selected` is `True`.
 
 A dedicated `#chat-history` `VerticalScroll` (parallel to `#history`/`#subagent-history`) holds the
 transcript; selecting the chat row hides the other two and renders a fresh snapshot from
@@ -165,10 +171,18 @@ mention is left as the original raw token, unstyled. The user's own messages get
 
 When the chat row is selected, `PromptSubmissionMixin.on_prompt_input_submitted` routes Enter
 straight to `SubagentsPanelMixin._submit_chat_post` instead of dispatching a model turn or a
-subagent message: a synchronous `Channel.post(CHAT_USER_ID, text, session)`, mirroring how direct
-user-to-subagent messaging (docs/specs/subagents.md's "Direct user messaging") is host-side
-dispatch rather than a tool call. The composer accepts `@role-address` nicknames directly, since
-`Channel`'s mention parser already resolves that form.
+subagent message: `correct_mention_case` rewrites each `@token` to its live participant's
+canonically-cased spelling, then a synchronous `Channel.post(CHAT_USER_ID, text, session)`,
+mirroring how direct user-to-subagent messaging (docs/specs/subagents.md's "Direct user
+messaging") is host-side dispatch rather than a tool call. The composer accepts `@role-address`
+nicknames directly, since `Channel`'s mention parser already resolves that form.
+
+While the chat room is the active view, typing `@` in the prompt input opens
+`klorb.tui.widgets.agent_finder.AgentFinderPanel` (fuzzy-matching live agents' `chat_nickname()`
+forms) in place of the ordinary `FileFinderPanel` workspace-file finder; `PromptInput._in_chat_room()`
+decides which finder a given `@mention` triggers, re-evaluated on every keystroke via
+`refresh_finder`. Selecting a row inserts `@<nickname>` plus a trailing space, already in its
+canonical case.
 
 ### Attention/unread indicator
 
@@ -189,7 +203,13 @@ posting to chat while the panel is closed has no other event to notify the TUI w
 `Ctrl+B` (`action_open_chat_room`) opens the panel if hidden and selects the chat row in one step.
 Not `Ctrl+R`: `PromptInput` already binds `Ctrl+R` to a readline-style reverse-incremental-search
 over prompt history, unconditionally swallowing the keystroke (`event.stop()`/`prevent_default()`)
-whenever the input has focus, so it was never actually free.
+whenever the input has focus, so it was never actually free. `Ctrl+M`, `Ctrl+K`, `Ctrl+P`, and
+`Ctrl+0` were also tried and rejected: `Ctrl+M` is indistinguishable from `Enter` at the terminal
+level (`textual.keys.KEY_ALIASES` aliases `"ctrl+m"` to `"enter"`); `Ctrl+K` is already `TextArea`'s
+delete-to-end-of-line binding, swallowed the same way as `Ctrl+R`; `Ctrl+P` is Textual's own
+`App.COMMAND_PALETTE_BINDING`, live in klorb's `ReplApp`; `Ctrl+0` never reached klorb at all in
+testing, since a Ctrl+digit combo depends on the terminal supporting extended key reporting rather
+than the classic single-byte control codes `Ctrl`+letter uses.
 
 ## Out of scope
 

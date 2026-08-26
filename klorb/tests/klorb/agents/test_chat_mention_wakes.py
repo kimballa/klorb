@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tools.subagents.conftest import _FakeProvider
 
-from klorb.agents.chat import Channel
+from klorb.agents.chat import CHAT_USER_ID, Channel
 from klorb.agents.policy import notify_chat_mention
 from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.process_config import ProcessConfig
@@ -54,9 +54,28 @@ def test_self_mention_is_a_no_op(
     root = _root(tmp_path, _FakeProvider(), make_session_config)
     channel = Channel()
 
-    notify_chat_mention(ProcessConfig(), channel, root, root.id)
+    notify_chat_mention(ProcessConfig(), channel, root.id, root, root.id)
 
     assert channel.mention_wake_count() == 0
+
+
+def test_user_mentioning_root_agent_is_woken(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A human `@mention` of the root agent itself is not a self-mention: the sender is
+    `CHAT_USER_ID`, never a live session id, so it must still get an active wake."""
+    provider = _FakeProvider()
+    process_config = ProcessConfig()
+    root = _root(tmp_path, provider, make_session_config, process_config)
+    root.register_wake_handler(lambda: None)
+    channel = Channel()
+
+    notify_chat_mention(process_config, channel, CHAT_USER_ID, root, root.id)
+
+    assert channel.mention_wake_count() == 1
+    queued_texts = root.pending_queued_message_texts
+    assert len(queued_texts) == 1
+    assert "@mentioned in the chat room" in queued_texts[0]
 
 
 def test_unknown_mention_id_is_a_no_op(
@@ -65,7 +84,7 @@ def test_unknown_mention_id_is_a_no_op(
     root = _root(tmp_path, _FakeProvider(), make_session_config)
     channel = Channel()
 
-    notify_chat_mention(ProcessConfig(), channel, root, "no-such-id")
+    notify_chat_mention(ProcessConfig(), channel, root.id, root, "no-such-id")
 
     assert channel.mention_wake_count() == 0
 
@@ -80,7 +99,7 @@ def test_running_target_gets_no_active_wake(
     child = _register_running_child(root, provider, make_session_config, never_finishes)
     channel = Channel()
     try:
-        notify_chat_mention(process_config, channel, root, child.id)
+        notify_chat_mention(process_config, channel, root.id, root, child.id)
         assert channel.mention_wake_count() == 0
     finally:
         never_finishes.set()
@@ -99,7 +118,7 @@ def test_idle_root_target_is_woken_via_deliver_event_message(
     child = _register_dormant_child(root, provider, make_session_config, role="reviewer")
     channel = Channel()
 
-    notify_chat_mention(process_config, channel, child, root.id)
+    notify_chat_mention(process_config, channel, child.id, child, root.id)
 
     assert channel.mention_wake_count() == 1
     queued_texts = root.pending_queued_message_texts
@@ -116,7 +135,7 @@ def test_dormant_subagent_target_is_resumed(
     dormant = _register_dormant_child(root, provider, make_session_config)
     channel = Channel()
 
-    notify_chat_mention(process_config, channel, root, dormant.id)
+    notify_chat_mention(process_config, channel, root.id, root, dormant.id)
 
     assert channel.mention_wake_count() == 1
     new_handle = root.subagent_tracker.current_handle(dormant.id)
@@ -138,7 +157,7 @@ def test_capacity_limited_target_is_skipped_silently(
     dormant = _register_dormant_child(root, provider, make_session_config, title="second")
     channel = Channel()
     try:
-        notify_chat_mention(process_config, channel, root, dormant.id)
+        notify_chat_mention(process_config, channel, root.id, root, dormant.id)
 
         assert channel.mention_wake_count() == 0
         handle = root.subagent_tracker.current_handle(dormant.id)
@@ -162,13 +181,13 @@ def test_wake_cap_degrades_to_passive_only(
     second = _register_dormant_child(root, provider, make_session_config, title="second")
     channel = Channel()
 
-    notify_chat_mention(process_config, channel, root, first.id)
+    notify_chat_mention(process_config, channel, root.id, root, first.id)
     assert channel.mention_wake_count() == 1
     first_handle = root.subagent_tracker.current_handle(first.id)
     assert first_handle is not None
     first_handle.thread.join(timeout=5.0)
 
-    notify_chat_mention(process_config, channel, root, second.id)
+    notify_chat_mention(process_config, channel, root.id, root, second.id)
 
     # The cap was already reached, so the second mention gets no active wake; the subagent is
     # never resumed.

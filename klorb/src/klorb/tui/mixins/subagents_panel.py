@@ -9,7 +9,14 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import OptionList, Static
 
-from klorb.agents.chat import CHAT_USER_ID, MENTION_TOKEN_RE, ChatMessage, chat_nickname, live_mention_targets
+from klorb.agents.chat import (
+    CHAT_USER_ID,
+    MENTION_TOKEN_RE,
+    ChatMessage,
+    chat_nickname,
+    correct_mention_case,
+    live_mention_targets,
+)
 from klorb.agents.policy import notify_chat_mention
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SessionTreeNode, SubagentHandle, walk_session_tree
 from klorb.process_config import persist_sidebar
@@ -508,10 +515,12 @@ class SubagentsPanelMixin(ReplAppBase):
 
     def _submit_chat_post(self, prompt_text: str) -> None:
         """Post `prompt_text` to the chat room as the user, attempting an active `@mention` wake
-        for each resolved mention."""
+        for each resolved mention. `@mention`s are case-corrected to their live participant's
+        canonical spelling before posting."""
         channel = self._session.chat_channel
+        prompt_text = correct_mention_case(prompt_text, live_mention_targets(self._session))
         message = channel.post(CHAT_USER_ID, prompt_text, self._session)
         for mentioned_id in message.mentions:
-            notify_chat_mention(self._process_config, channel, self._session, mentioned_id)
+            notify_chat_mention(self._process_config, channel, CHAT_USER_ID, self._session, mentioned_id)
         self._append_new_chat_messages()
         self._refresh_subagents_panel()

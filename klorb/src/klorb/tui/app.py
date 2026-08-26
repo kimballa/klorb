@@ -20,8 +20,9 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer, Header, Static
 
+from klorb.agents.chat import chat_nickname
 from klorb.agents.policy import compute_root_session_grants
-from klorb.agents.runtime import SubagentHandle, SubagentState
+from klorb.agents.runtime import SubagentHandle, SubagentState, walk_session_tree
 from klorb.logging_config import TuiHistoryNotice
 from klorb.models.model import Model
 from klorb.process_config import ProcessConfig, persist_session_default, persist_theme, user_config_path
@@ -65,6 +66,7 @@ from klorb.tui.mixins.status_bar import StatusBarMixin
 from klorb.tui.mixins.subagents_panel import SubagentsPanelMixin
 from klorb.tui.mixins.task_sidebar import TaskSidebarMixin
 from klorb.tui.mixins.workspace_bootstrap import WorkspaceBootstrapMixin
+from klorb.tui.widgets.agent_finder import AGENT_FINDER_ID, AgentFinderPanel, AgentMatch
 from klorb.tui.widgets.file_finder import FILE_FINDER_ID, FileFinderPanel
 from klorb.tui.widgets.files_panel import FilesPanel
 from klorb.tui.widgets.palette import PROMPT_PALETTE_ID, PromptPalette
@@ -564,6 +566,7 @@ class ReplApp(
         yield VerticalScroll(id=CHAT_HISTORY_ID)
         yield Vertical(id=INTERACTION_PANEL_ID)
         yield FileFinderPanel(id=FILE_FINDER_ID)
+        yield AgentFinderPanel(id=AGENT_FINDER_ID)
         yield SkillFinderPanel(id=SKILL_FINDER_ID)
         yield PromptPalette(id=PROMPT_PALETTE_ID)
         yield PromptInput(placeholder="Send a message...", id=PROMPT_INPUT_ID)
@@ -609,6 +612,19 @@ class ReplApp(
         fuzzy finder, or `[]` if no session is active."""
         skills = self._session.discover_skills()
         return [SkillMatch(name=s.name, namespace=s.namespace, description=s.description) for s in skills]
+
+    def chat_room_active(self) -> bool:
+        """Whether the chat room, rather than a (sub)agent transcript, is the currently
+        displayed view."""
+        return self._chat_selected
+
+    def chat_mention_targets(self) -> list[AgentMatch]:
+        """Return every live (sub)agent in the current session tree as `AgentMatch` objects for
+        the chat room's `@`-mention agent finder."""
+        return [
+            AgentMatch(nickname=chat_nickname(node.session), title=node.handle.title if node.handle else None)
+            for node in walk_session_tree(self._session)
+        ]
 
     def _start_file_finder_index(self, workspace: Workspace) -> None:
         """Start the `@`-mention file finder's background `WorkspaceFileIndex` for `workspace`,
@@ -728,10 +744,13 @@ class ReplApp(
         workspace_display = format_workspace_path(workspace.path)
         if not workspace.trusted:
             workspace_display += " (Untrusted)"
-        selected_config = self._selected_session.config
-        model_display = selected_config.model
-        if selected_config.thinking_enabled:
-            model_display += f" ({selected_config.thinking_effort.title()})"
+        if self._chat_selected:
+            model_display = "(Agent chat)"
+        else:
+            selected_config = self._selected_session.config
+            model_display = selected_config.model
+            if selected_config.thinking_enabled:
+                model_display += f" ({selected_config.thinking_effort.title()})"
         return Content.assemble(
             Content(workspace_display),
             (" - ", "dim"),
