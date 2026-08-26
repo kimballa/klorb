@@ -14,6 +14,7 @@ from tools.subagents.conftest import _FakeProvider
 
 from klorb.agents.messaging import get_agent_message_queue
 from klorb.agents.policy import (
+    build_subagent_turn_handlers,
     compute_root_session_grants,
     dispatch_direct_message,
     dispatch_subagent_turn,
@@ -825,3 +826,40 @@ def test_dispatch_subagent_turn_does_not_relay_a_human_addressed_completion(
     assert not woken.is_set()
     assert parent.pending_queued_message_texts == []
     assert handle.delivered is False
+
+
+# --- build_subagent_turn_handlers: on_file_accessed forwarding ---
+
+
+def test_build_subagent_turn_handlers_forwards_on_file_accessed(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    """A subagent's own `on_file_accessed` must reach whichever callback the parent's own turn
+    is currently using, unchanged."""
+    provider = _FakeProvider(reply_text="reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    on_file_accessed = MagicMock()
+    parent._current_turn_handlers = TurnEventHandlers(on_file_accessed=on_file_accessed)
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task")
+
+    handlers = build_subagent_turn_handlers(parent, handle, threading.Event())
+    assert handlers.on_file_accessed is not None
+    handlers.on_file_accessed("/tmp/some/file.txt", "write")
+
+    on_file_accessed.assert_called_once_with("/tmp/some/file.txt", "write")
+
+
+def test_build_subagent_turn_handlers_on_file_accessed_is_a_noop_without_a_parent_handler(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    provider = _FakeProvider(reply_text="reply")
+    process_config, parent, child = _subagent_session_pair(tmp_path, make_session_config, provider, {})
+    handle = SubagentHandle(
+        session=child, thread=threading.Thread(target=lambda: None), cancel_event=threading.Event(),
+        role="explorer", title="task")
+
+    handlers = build_subagent_turn_handlers(parent, handle, threading.Event())
+    assert handlers.on_file_accessed is not None
+    handlers.on_file_accessed("/tmp/some/file.txt", "write")  # no exception is the assertion

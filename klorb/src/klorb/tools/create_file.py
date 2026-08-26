@@ -84,6 +84,8 @@ class CreateFileTool(Tool):
             path, args, subject=filename, edit_hint="EditFile",
             redactor=self._secret_redactor, session=self.context.session)
         result["filename"] = filename
+        if self.context.session is not None:
+            self.context.session.file_accessed(str(path), "write")
 
         logger.debug("CreateFile %s created (%d lines)", filename, result["total_lines"])
         return result

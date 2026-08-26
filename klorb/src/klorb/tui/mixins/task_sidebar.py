@@ -11,8 +11,7 @@ from klorb.session import ToolCallEvent
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import TASK_TOOL_NAMES, ChainlinkClient, ChainlinkError, chainlink_available
 from klorb.tui._base import ReplAppBase
-from klorb.tui.constants import SUBAGENTS_PANEL_ID, TASK_SIDEBAR_ID
-from klorb.tui.widgets.subagents_panel import SubagentsPanel
+from klorb.tui.constants import TASK_SIDEBAR_ID
 from klorb.tui.widgets.task_sidebar import TaskSidebar
 
 logger = logging.getLogger(__name__)
@@ -23,16 +22,14 @@ class TaskSidebarMixin(ReplAppBase):
     items."""
 
     def action_toggle_task_sidebar(self) -> None:
-        """Ctrl+T: show or hide the task sidebar. Showing it triggers an immediate refresh since
-        the list may be stale. Mutually exclusive with the subagents panel since both dock the
-        same right-hand slot."""
+        """Ctrl+T: show or hide the task sidebar, mutually exclusive with the other sidebar
+        panels. Showing it triggers an immediate refresh since the list may be stale."""
         sidebar = self.query_one(f"#{TASK_SIDEBAR_ID}", TaskSidebar)
         if self._active_sidebar == "tasks":
             self._active_sidebar = None
             sidebar.display = False
         else:
-            if self._active_sidebar == "agents":
-                self.query_one(f"#{SUBAGENTS_PANEL_ID}", SubagentsPanel).display = False
+            self._hide_other_sidebars("tasks")
             self._active_sidebar = "tasks"
             sidebar.display = True
             self._refresh_task_sidebar()

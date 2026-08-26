@@ -155,6 +155,9 @@ class ReplaceAllTool(Tool):
             content, pattern, new_text)
         if num_replacements_made > 0:
             path.write_text(new_content, encoding="utf-8")
+        if self.context.session is not None:
+            self.context.session.file_accessed(
+                str(path), "write" if num_replacements_made > 0 else "read")
 
         logger.debug(
             "ReplaceAll %s made %d replacement(s) across %d line(s)",

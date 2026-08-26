@@ -12,11 +12,7 @@ from textual.containers import Vertical
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from klorb.tui.constants import CHAT_ROW_ID
-from klorb.tui.widgets.task_sidebar import TASK_SIDEBAR_WIDTH
-
-SUBAGENTS_PANEL_WIDTH = TASK_SIDEBAR_WIDTH
-"""Same width as `TaskSidebar`."""
+from klorb.tui.constants import CHAT_ROW_ID, SIDEBAR_WIDTH
 
 SUBAGENTS_LIST_ID = "subagents-panel-list"
 _HEADER_ID = "subagents-panel-header"
@@ -81,7 +77,7 @@ class SubagentsPanel(Vertical, can_focus=False):
     DEFAULT_CSS = f"""
     SubagentsPanel {{
         dock: right;
-        width: {SUBAGENTS_PANEL_WIDTH};
+        width: {SIDEBAR_WIDTH};
         border-left: solid $accent;
         display: none;
     }}

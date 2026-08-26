@@ -1,14 +1,16 @@
 # © Copyright 2026 Aaron Kimball
 """Tests for klorb.tools.replace_all."""
 
+from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.table import PermissionAskRequired
 from klorb.process_config import ProcessConfig
-from klorb.session import SessionConfig, WorkspaceAccess
+from klorb.session import Session, SessionConfig, WorkspaceAccess
 from klorb.tools.replace_all import ReplaceAllTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
@@ -17,6 +19,7 @@ from klorb.workspace import Workspace
 
 def _context(
     workspace_root: Path, *, read_dirs: DirRules | None = None, write_dirs: DirRules | None = None,
+    session: Session | None = None,
 ) -> ToolSetupContext:
     """Defaults both `readDirs`/`writeDirs` to allowing all of `workspace_root`, since
     `evaluate_write()` requires an explicit allow in *both* tables (see
@@ -28,7 +31,15 @@ def _context(
         session_config=SessionConfig(workspace_access=WorkspaceAccess(
             workspace=Workspace(path=workspace_root),
             read_dirs=read_dirs or DirRules(allow=[workspace_root]),
-            write_dirs=write_dirs or DirRules(allow=[workspace_root]))))
+            write_dirs=write_dirs or DirRules(allow=[workspace_root]))),
+        session=session)
+
+
+def _session(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> Session:
+    config = make_session_config(
+        workspace=Workspace(path=tmp_path), read_dirs=DirRules(allow=[tmp_path]),
+        write_dirs=DirRules(allow=[tmp_path]))
+    return Session(config=config)
 
 
 def _write(path: Path, name: str, content: str) -> Path:
@@ -301,3 +312,32 @@ def test_format_response_omits_body_when_nothing_matched(tmp_path: Path) -> None
         "is_regex: false\n"
         "num_replacements_made: 0\n"
         f"note: {NO_READFILE_VERIFICATION_NOTE}")
+
+
+# --- file_accessed() reporting (see docs/specs/terminal-repl.md's "Files panel" section) ---
+
+
+def test_apply_reports_file_accessed_as_a_write_when_something_changed(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    file_path = _write(tmp_path, "sample.txt", "hello world\n")
+    session = _session(tmp_path, make_session_config)
+
+    with patch.object(session, "file_accessed") as mock_file_accessed:
+        ReplaceAllTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(file_path), "search": "world", "new_text": "there"})
+
+    mock_file_accessed.assert_called_once_with(str(file_path.resolve()), "write")
+
+
+def test_apply_reports_file_accessed_as_a_read_when_nothing_matched(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig],
+) -> None:
+    file_path = _write(tmp_path, "sample.txt", "hello world\n")
+    session = _session(tmp_path, make_session_config)
+
+    with patch.object(session, "file_accessed") as mock_file_accessed:
+        ReplaceAllTool(_context(tmp_path, session=session)).apply(
+            {"filename": str(file_path), "search": "nowhere", "new_text": "x"})
+
+    mock_file_accessed.assert_called_once_with(str(file_path.resolve()), "read")

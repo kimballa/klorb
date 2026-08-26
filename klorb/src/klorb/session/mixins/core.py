@@ -27,7 +27,7 @@ from klorb.session.constants import (
     ThinkingEffort,
     generate_session_id,
 )
-from klorb.session.events import QueuedMessage, TurnEventHandlers
+from klorb.session.events import FileAccessMode, QueuedMessage, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session_naming import (
     SessionName,
@@ -979,6 +979,13 @@ class SessionCoreMixin(SessionBase):
         with the subagent's address/role -- see docs/specs/subagents.md's
         "Permissions" section."""
         return self._current_turn_handlers
+
+    def file_accessed(self, path: str, mode: FileAccessMode) -> None:
+        """Report that a file I/O tool read or wrote `path`, firing `on_file_accessed` on
+        `current_turn_handlers()` if one is set and offers it."""
+        handlers = self._current_turn_handlers
+        if handlers is not None and handlers.on_file_accessed is not None:
+            handlers.on_file_accessed(path, mode)
 
     def register_teardown(self, subject: str, teardown: Callable[[], None]) -> None:
         """Register `teardown` to be invoked once by `close()`, keyed by `subject`.

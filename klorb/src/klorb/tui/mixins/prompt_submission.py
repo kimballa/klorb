@@ -458,7 +458,8 @@ class PromptSubmissionMixin(ReplAppBase):
             on_session_name_changed=handle_session_name_changed,
             on_skill_activated=handle_skill_activated,
             on_enqueue_message=handle_enqueue_message,
-            on_send_queued_message=handle_send_queued_message)
+            on_send_queued_message=handle_send_queued_message,
+            on_file_accessed=self._on_file_accessed)
         # Stashed so `_finish_turn`'s end-of-turn `drain_queued_messages()` call has a live
         # `on_send_queued_message` hook to fire -- by the time that runs, `Session` has already
         # cleared its own `_current_turn_handlers`.

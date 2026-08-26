@@ -10,8 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-TASK_SIDEBAR_WIDTH = 36
-"""Fixed cell width (border-box) for the docked sidebar."""
+from klorb.tui.constants import SIDEBAR_WIDTH
 
 _HEADER_ID = "task-sidebar-header"
 _BODY_ID = "task-sidebar-body"
@@ -41,7 +40,7 @@ class TaskSidebar(VerticalScroll, can_focus=False):
     DEFAULT_CSS = f"""
     TaskSidebar {{
         dock: right;
-        width: {TASK_SIDEBAR_WIDTH};
+        width: {SIDEBAR_WIDTH};
         border-left: solid $accent;
         display: none;
     }}

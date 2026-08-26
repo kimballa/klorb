@@ -44,6 +44,7 @@ from klorb.session import (
     AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
     EscalatePrivilegesDecision,
+    FileAccessMode,
     PermissionAskContext,
     PermissionDecision,
     Session,
@@ -307,11 +308,9 @@ def _stamp_subagent_origin(origin_session_id: str | None, handle: SubagentHandle
 def build_subagent_turn_handlers(
     parent: Session, handle: SubagentHandle, cancel_event: threading.Event,
 ) -> TurnEventHandlers:
-    """Build the `TurnEventHandlers` a subagent's background-thread turn runs with: no
-    streaming/UI-progress callbacks (nothing renders a subagent's turn directly today), but
-    every ask-style callback (`on_permission_ask`/`on_ask_user_questions`/
-    `on_escalate_privileges`) forwarded to whichever callback `parent`'s own turn is *currently*
-    using, tagged with the subagent's address/role and stamped with its `origin_session_id`.
+    """Build the `TurnEventHandlers` a subagent's background-thread turn runs with: every
+    ask-style and file-access callback forwards to whichever callback `parent`'s own turn is
+    currently using, ask-style ones tagged with the subagent's address/role.
 
     `cancel_event` is this subagent's own, dedicated cancellation signal.
     """
@@ -344,11 +343,16 @@ def build_subagent_turn_handlers(
             "origin_session_id": _stamp_subagent_origin(ask_ctx.origin_session_id, handle)})
         return parent_handlers.on_escalate_privileges(tagged)
 
+    def on_file_accessed(path: str, mode: FileAccessMode) -> None:
+        if parent_handlers.on_file_accessed is not None:
+            parent_handlers.on_file_accessed(path, mode)
+
     return TurnEventHandlers(
         cancel_event=cancel_event,
         on_permission_ask=on_permission_ask,
         on_ask_user_questions=on_ask_user_questions,
         on_escalate_privileges=on_escalate_privileges,
+        on_file_accessed=on_file_accessed,
     )
 
 

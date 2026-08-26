@@ -618,9 +618,10 @@ class ProcessConfig(BaseModel):
     exists yet; `ReplApp` falls back to Textual's own built-in default theme in that case."""
     sidebar: str | None = None
     """Which sidebar panel is shown by default when klorb starts: ``"tasks"`` for the task
-    sidebar (Ctrl+T), ``"agents"`` for the subagents panel (Ctrl+G), or ``None`` (the default)
-    for none. Persisted to the per-user config file under `SIDEBAR_CONFIG_KEY` so it's restored
-    on the next klorb session. Toggling either panel updates this setting for future sessions."""
+    sidebar (Ctrl+T), ``"agents"`` for the subagents panel (Ctrl+G), ``"files"`` for the Files
+    panel (Ctrl+F), or ``None`` (the default) for none. Persisted to the per-user config file
+    under `SIDEBAR_CONFIG_KEY` so it's restored on the next klorb session. Toggling any panel
+    updates this setting for future sessions."""
     search_workspace_index_enabled: bool = True
     """Whether `Session` builds a local hybrid (BM25 + vector KNN) search index for the workspace.
     """
@@ -857,9 +858,10 @@ def persist_sidebar(sidebar: str | None, path: Path | None = None) -> None:
     """Write `sidebar` to the config file at `path` (defaults to `user_config_path()`) under
     `SIDEBAR_CONFIG_KEY`, preserving every other key already in that file untouched. Auto-creates
     the file and its parent directory with a minimal schema envelope if it doesn't exist yet.
-    Called by `TaskSidebarMixin.action_toggle_task_sidebar` and
-    `SubagentsPanelMixin.action_toggle_subagents_panel` so a sidebar visibility choice survives
-    to the next klorb session.
+    Called by `TaskSidebarMixin.action_toggle_task_sidebar`,
+    `SubagentsPanelMixin.action_toggle_subagents_panel`, and
+    `FilesPanelMixin.action_toggle_files_panel` so a sidebar visibility choice survives to the
+    next klorb session.
     """
     if path is None:
         path = user_config_path()

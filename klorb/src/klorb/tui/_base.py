@@ -24,12 +24,14 @@ from klorb.session import (
     AskUserQuestionsItemContext,
     EscalatePrivilegesContext,
     EscalatePrivilegesDecision,
+    FileAccessMode,
     PermissionAskContext,
     PermissionDecision,
     Session,
     ToolCallEvent,
     TurnEventHandlers,
 )
+from klorb.tui.file_activity import FileActivityTracker
 from klorb.tui.widgets.tool_call_widgets import (
     RenderedToolCall,
     RunningToolCallStatic,
@@ -80,6 +82,7 @@ class ReplAppBase(App[None]):
     _turn_waiting_widget: TurnWaitingStatic | None
     _active_sidebar: str | None
     _active_turn_callbacks: TurnEventHandlers | None
+    _file_activity: FileActivityTracker
     _file_index: WorkspaceFileIndex | None
     _selected_session: Session
     _selected_handle: SubagentHandle | None
@@ -222,6 +225,10 @@ class ReplAppBase(App[None]):
 
     @work(thread=True)
     def _refresh_task_sidebar(self) -> None: ...
+
+    def _on_file_accessed(self, path: str, mode: FileAccessMode) -> None: ...
+
+    def _hide_other_sidebars(self, except_name: str) -> None: ...
 
     def _render_restored_tool_call(
         self, call: ToolCallRequest, response: ChatMessage | None,
