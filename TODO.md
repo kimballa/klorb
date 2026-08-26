@@ -139,13 +139,7 @@
 
 ### Feature backlog
 
-* a "files" side panel that lists all files read and written by the agents this session. Indicator
-  column on the left for reads vs written/modified/created. Clicking a filename pops a modal to read
-  the whole file, and see diffs highlighted. Hotkey is ^F. This will be a narrow panel (replaces
-  agents or tasks) so it shouldn't show *full* paths. Use as much of the "right" side of the
-  workspace-relative path as fits, with a leading `...` if needed.
-  * Note: We track this thru ReadFile and EditFile/CreateFile updates rather than inotify, so we
-    only know what was read or modified that way, not thru bash.
+* ... 
 
 ## VSCode plugin
 
@@ -156,6 +150,8 @@
   the prompt itself) that says "This model does not support vision."
 
 ### Feature backlog
+
+* Add chat history view / conversation capability where user input becomes chat room input / @mention capability; list Chat in the subagents panel, all like we do in TUI.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
@@ -274,10 +270,6 @@
 
 ### Plan 023: TUI history virtualization
 
-* Empirically tune `DEFAULT_CHUNK_SIZE_MESSAGES`, the collapse-side hysteresis margin
-  (`VirtualizedHistoryContainer.refresh_visibility`'s `margin=self._container.size.height`), and
-  `ESTIMATED_LINES_PER_SEEDED_MESSAGE` against a real long session, rather than the values
-  Phase 1/2 shipped with.
 * Re-check TODO.md's "gets unusable and eventually crashes" entry above once this has run in a
   real long session: if virtualization alone resolves the degradation, drop it from that entry;
   if instability persists, it corroborates a separate non-DOM cause.
@@ -293,8 +285,6 @@
 
 * VS Code plugin / ACP rendering of the chat room — needs its own ACP extension methods/
   notifications and webview messaging design, not a reuse of the TUI panel's own mechanics.
-* Desktop/OS-level notification (terminal bell, `notify-send`) on an `@user` mention.
-* Chat message editing/deletion.
 * A `SearchChat`-style tool for scrolling back through history older than a participant's own hwm
   window, if bounded retention (`tools.chat.maxHistory`) turns out to be too aggressive in
   practice for long sessions.
