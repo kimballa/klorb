@@ -138,11 +138,15 @@ def test_empty_queries_raises(tmp_path: Path, make_session_config: Callable[...,
         SearchScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"queries": []})
 
 
-def test_non_string_query_raises(tmp_path: Path, make_session_config: Callable[..., SessionConfig]) -> None:
-    scratchpad = _write(tmp_path, "a\n")
+def test_non_string_query_is_stringified(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    scratchpad = _write(tmp_path, "line 1\n")
 
-    with pytest.raises(ValueError, match="must be a string"):
-        SearchScratchpadTool(_context(str(scratchpad), make_session_config)).apply({"queries": [1]})
+    result = SearchScratchpadTool(_context(str(scratchpad), make_session_config)).apply(
+        {"queries": [1]})
+
+    assert result["match_count"] == 1
 
 
 def test_requires_active_session() -> None:
