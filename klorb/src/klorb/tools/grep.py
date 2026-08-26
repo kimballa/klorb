@@ -16,7 +16,6 @@ from klorb.tools.interruptible_tool import InterruptibleTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.util import (
     SpillDir,
-    coerce_queries_arg,
     compile_queries,
     context_lines_for_matches,
     get_or_create_secret_redactor,
@@ -193,7 +192,7 @@ class GrepTool(InterruptibleTool):
         # None or empty-string default searches recursively from ${workspaceRoot}.
         search_path = args.get("path") or ""
         try:
-            queries = validate_queries(coerce_queries_arg(args["queries"]))
+            queries = validate_queries(args["queries"])
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")
