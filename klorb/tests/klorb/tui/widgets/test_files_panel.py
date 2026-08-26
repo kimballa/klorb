@@ -36,7 +36,7 @@ def test_render_row_label_truncates_a_long_nested_path() -> None:
 
 
 def test_render_footer_empty() -> None:
-    assert FilesPanel._render_footer([]) == "No files accessed yet."
+    assert FilesPanel._render_footer([]) == "No files loaded."
 
 
 def test_render_footer_counts_files_and_writes() -> None:

@@ -142,8 +142,6 @@
 
 ### Feature backlog
 
-* #agent The 'Files' tab, when the accessed-files list is empty, should say "No files loaded."
-
 * Interactive chat room UI rough edges:
   * set hotkey to ^M, not ^B.
   * Trying to `@reference` the agent, the `@` pops up the *file* fuzzy-finder, but it should be

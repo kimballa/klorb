@@ -113,7 +113,7 @@ class FilesPanel(Vertical, can_focus=False):
     @staticmethod
     def _render_footer(rows: list[FileActivityRowData]) -> str:
         if not rows:
-            return "No files accessed yet."
+            return "No files loaded."
         written = sum(1 for row in rows if row.mode == "write")
         noun = "file" if len(rows) == 1 else "files"
         return f"{len(rows)} {noun}, {written} written"
