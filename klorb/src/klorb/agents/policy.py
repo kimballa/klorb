@@ -32,6 +32,7 @@ from klorb.agents.runtime import (
     SubagentTurnOutcome,
     find_session_in_group,
     total_active_subagents,
+    walk_session_tree,
 )
 from klorb.api_provider import ResponseAborted
 from klorb.hooks.config import EventConfig, filter_heritable_events, filter_heritable_hooks
@@ -131,6 +132,32 @@ def check_concurrency_limits(process_config: ProcessConfig, session: Session) ->
             category="transient")
 
 
+def _existing_agents_with_role(session: Session, role: str) -> list[Session]:
+    """Every session anywhere in `session`'s own tree currently running as `role`."""
+    root = session
+    while root.parent is not None:
+        root = root.parent
+    return [node.session for node in walk_session_tree(root) if node.session.config.role_name == role]
+
+
+def _check_max_copies(parent: Session, role_definition: AgentDefinition) -> None:
+    """Raise `ToolCallError` (category `"validation"`) if `role_definition.max_copies` is set (not
+    `None`/`-1`) and the tree already holds that many sessions running as `role_definition.name`,
+    naming each existing one's id so the caller can `SendMessage` it instead."""
+    max_copies = role_definition.max_copies
+    if max_copies is None or max_copies == -1:
+        return
+    existing = _existing_agents_with_role(parent, role_definition.name)
+    if len(existing) < max_copies:
+        return
+    named = ", ".join(f"{s.id} ({s.name or 'untitled'})" for s in existing)
+    raise ToolCallError(
+        f"There {'is' if len(existing) == 1 else 'are'} already {len(existing)} "
+        f"{role_definition.name!r} agent(s) in this session tree -- the most allowed at once. "
+        f"Use SendMessage to talk to the existing one instead: {named}.",
+        category="validation")
+
+
 def _check_creation_limits(context: ToolSetupContext, parent: Session, role: str) -> AgentDefinition:
     """Run every upfront rejection check `CreateSubagent` must pass before any session is
     constructed, raising `ToolCallError` on the first one that fails. Returns the requested
@@ -146,6 +173,7 @@ def _check_creation_limits(context: ToolSetupContext, parent: Session, role: str
             f"The {parent.config.role_name!r} role may not create subagents.",
             category="validation")
     role_definition = _resolve_role_definition(parent, role)
+    _check_max_copies(parent, role_definition)
     check_concurrency_limits(context.process_config, parent)
     return role_definition
 

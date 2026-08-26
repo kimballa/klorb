@@ -12,8 +12,6 @@
 
 ### Feature backlog
 
-* #agent have a max_copies field in the agents.json dict for a role. Set Operator, Implementer, Reviewer, Planner, Pair programmer to 1. Don't allow CreateSubagent to create a subagent with role X if there are already N or more of them defined in the tree. 0 or null means uncapped. Explicitly keep Explorer as uncapped.
-
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want

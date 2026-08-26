@@ -52,6 +52,7 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
     "enforce_readonly_tools": true
   },
   "allow_subagents": false,
+  "max_copies": 1,
   "agent_capabilities": {
     "accepts_tasks": false,
     "assigns_tasks": false,
@@ -69,6 +70,10 @@ Each entry is an `AgentDefinition` (`klorb.agents.definition`):
 * `allow_subagents` — whether a session running as this role may itself call `CreateSubagent`.
   Also drives whether the three subagent-management tools are included in a subagent's own
   computed tool set at all (see "Security model").
+* `max_copies` — the most sessions running as this role allowed anywhere in one session tree at
+  once. `None` or `-1` means uncapped; `0` means the role may never be launched. `operator`,
+  `implementer`, `reviewer`, `planner`, and `pair_programmer` are capped at `1`; `explorer` is
+  explicitly uncapped.
 * `restrict_to` (an `AgentRestrictions`) narrows what a subagent of this role inherits from its
   creator — every field is optional and, left unset (`None`), means "inherit everything the
   creator has"; an explicit empty list means "inherit nothing," a deliberately different value
@@ -288,8 +293,11 @@ Its boolean sibling `concurrency_limits_exceeded()` is what `try_wake_next_queue
 message queued," not "raise" — see "Agent-to-agent messaging" below.
 
 `CreateSubagent` also rejects, before constructing any `Session`: exceeding
-`subagents_max_depth`, the calling role lacking `allow_subagents: true`, and a requested role
-outside the caller's own `effective_subagent_roles`.
+`subagents_max_depth`, the calling role lacking `allow_subagents: true`, a requested role
+outside the caller's own `effective_subagent_roles`, and a requested role whose `max_copies`
+is already reached by sessions elsewhere in the tree — `klorb.agents.policy._check_max_copies()`
+raises `ToolCallError(category="validation")` naming each existing session's id so the caller can
+`SendMessage` it instead of creating a new one.
 
 ## Tools
 
