@@ -14,7 +14,12 @@ from klorb.search_index.chunkers.base import CATALOG
 from klorb.tools.exceptions import ToolCallError
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tool import Tool
-from klorb.tools.util import SemanticSearchCore, get_or_create_secret_redactor, validate_queries
+from klorb.tools.util import (
+    SemanticSearchCore,
+    coerce_queries_arg,
+    get_or_create_secret_redactor,
+    validate_queries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +124,7 @@ class SemanticSearchTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         search_path = args.get("path") or ""
         try:
-            queries = validate_queries(args["queries"])
+            queries = validate_queries(coerce_queries_arg(args["queries"]))
         except KeyError:
             raise ValueError(
                 "Missing required argument: 'queries'. Provide a non-empty array of search strings.")

@@ -92,6 +92,24 @@ def test_returns_a_file_entry_for_a_chunk_hit(
     assert [line_number for line_number, _text, matched in parsed if matched] == [1, 2]
 
 
+def test_accepts_bare_string_queries(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    _make_tree(tmp_path)
+    chunk = _chunk("sub/nested.py", "function", 1, 2, "def hello():\n    return 'hello again'")
+    session, context = _context_with_session(tmp_path, make_session_config)
+    session._workspace_indexer = _FakeWorkspaceIndexer(  # type: ignore[assignment]
+        [(chunk, 0.5)])
+    try:
+        result = SemanticSearchTool(context).apply(
+            {"path": "", "queries": "a function that greets"})
+    finally:
+        session.close()
+
+    matches = [f for f in result["files"] if f["filename"].endswith("nested.py")]
+    assert len(matches) == 1
+
+
 def test_merges_multiple_chunks_from_the_same_file(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:

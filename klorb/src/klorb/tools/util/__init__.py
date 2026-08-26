@@ -23,6 +23,7 @@ from klorb.tools.util.read_file_core import (
 )
 from klorb.tools.util.search_core import (
     VALID_OUTPUT_STYLES,
+    coerce_queries_arg,
     compile_queries,
     context_lines_for_matches,
     format_match_line,
@@ -62,6 +63,7 @@ __all__ = [
     "VALID_OUTPUT_STYLES",
     "build_diff_hunks",
     "clear_cached_redactor",
+    "coerce_queries_arg",
     "compile_queries",
     "context_lines_for_matches",
     "diff_gutter_width",

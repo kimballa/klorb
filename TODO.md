@@ -10,9 +10,6 @@
 * If the user approves a bashDomain mid-session, a persistent bash shell doesn't seem to pick it up.
   (Do we need to kill the persistent bash session so the next command loads it fresh?)
 
-* For Grep and SemanticSearch, if `queries` is just a string and not an array of strings, just
-  treat it like a singleton array: `["the query"]`.
-
 ### Feature backlog
 
 * use inotify to invalidate agent file reads?

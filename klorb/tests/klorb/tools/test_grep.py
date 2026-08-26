@@ -96,6 +96,15 @@ def test_finds_literal_matches_across_the_tree(tmp_path: Path) -> None:
     assert result["truncated"] is False
 
 
+def test_accepts_bare_string_queries(tmp_path: Path) -> None:
+    _make_tree(tmp_path)
+
+    result = GrepTool(_context(tmp_path)).apply({"path": "", "queries": "hello"})
+
+    assert _matched_filenames(result) == {"top.py", "nested.py", "notes.txt"}
+    assert result["match_count"] == 4
+
+
 def test_binary_files_are_skipped(tmp_path: Path) -> None:
     _make_tree(tmp_path)
 
