@@ -47,7 +47,7 @@
     "tree-sitter-python >= 0.25.0, < 1.0.0",
     "tree-sitter-typescript >= 0.23.0, < 1.0.0",
     "numpy >= 2.0.0, < 3.0.0",
-    "pytz >= 2025.2, < 2026.0",
+    "pytz >= 2025.2",
   ]
 
 [project.scripts]
@@ -75,7 +75,7 @@
     "textual-dev>=1.8.0",
     "types-PyYAML >= 6.0, < 7.0",
     "types-croniter >= 6.0.0, < 7.0.0",
-    "types-pytz >= 2025.2, < 2026.0",
+    "types-pytz >= 2025.2",
   ]
 
 [tool.setuptools.package-data]

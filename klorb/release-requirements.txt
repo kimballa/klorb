@@ -136,7 +136,7 @@ python-dotenv==1.2.3
     # via
     #   klorb (pyproject.toml)
     #   magika
-pytz==2025.2
+pytz==2026.3.post1
     # via klorb (pyproject.toml)
 pyyaml==6.0.3
     # via
