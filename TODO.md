@@ -12,6 +12,8 @@
 
 ### Feature backlog
 
+* The current tool call limit just basically asks the user for permission to continue with tools or if denied, forcibly ends the turn abruptly. We should have a lower threshold (like 30) at which point we instruct the model that it must report progress in a response block. Then we should auto-respond with a system interjection to continue working, and remind it of its task mgmt tools if it doesn't have a task yet.
+
 * use inotify to invalidate agent file reads?
   * We can use inotify to know when a file was edited outside an EditFile command. That can be used
     to inform the agent that it needs to re-ReadFile before it makes further edits there if we want
@@ -68,8 +70,7 @@
 * More tools:
   * Add Evals for GrepTool, SemanticSearchTool, and FindFileTool.
   * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
-    (see "Plan 013: WebFetch" section below)
-  * BroadcastMessage -- send a msg to the whole agent team
+    (see "Plan 013: WebFetch" section below)... Or maybe use an openrouter server tool?
   * SearchTools currently only does case-insensitive literal match over tool
     name/description/parameter schema docs. Add semantic index search too (requires a
     json- or tool-specific chunker).
