@@ -15,7 +15,7 @@ from klorb.workspace import Workspace
 
 requires_chainlink = pytest.mark.skipif(
     not chainlink_available(),
-    reason="chainlink binary not found on PATH or ~/.cargo/bin")
+    reason="chainlink binary not found in vnd/, on PATH, or at ~/.cargo/bin")
 
 
 def _context(tmp_path: Path, session: Session | None) -> ToolSetupContext:
@@ -46,34 +46,77 @@ def test_construction_requires_a_session(tmp_path: Path) -> None:
         ChainlinkClient(context)
 
 
-def test_binary_discovery_prefers_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    tasks_common.reset_cached_chainlink_path()
-    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: "/usr/bin/chainlink")
-    assert tasks_common._discover_binary() == Path("/usr/bin/chainlink")
-
-
-def test_binary_discovery_prefers_virtual_env_over_cargo_bin(
+def test_binary_discovery_prefers_vnd_over_everything_else(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tasks_common.reset_cached_chainlink_path()
-    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
+    vnd_dir = tmp_path / "vnd"
+    (vnd_dir / "x86_64-unknown-linux-gnu").mkdir(parents=True)
+    vnd_chainlink = vnd_dir / "x86_64-unknown-linux-gnu" / "chainlink"
+    vnd_chainlink.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: vnd_dir)
+    monkeypatch.setattr(tasks_common, "_rust_target_triple", lambda: "x86_64-unknown-linux-gnu")
+    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: "/usr/bin/chainlink")
+
+    assert tasks_common._discover_binary() == vnd_chainlink
+
+
+def test_binary_discovery_uses_the_rust_target_triple_as_the_vnd_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks_common.reset_cached_chainlink_path()
+    vnd_dir = tmp_path / "vnd"
+    (vnd_dir / "aarch64-unknown-linux-gnu").mkdir(parents=True)
+    vnd_chainlink = vnd_dir / "aarch64-unknown-linux-gnu" / "chainlink"
+    vnd_chainlink.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: vnd_dir)
+    monkeypatch.setattr(tasks_common, "_rust_target_triple", lambda: "aarch64-unknown-linux-gnu")
+
+    assert tasks_common._discover_binary() == vnd_chainlink
+
+
+def test_rust_target_triple_uses_apple_darwin_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tasks_common.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(tasks_common.platform, "machine", lambda: "arm64")
+
+    assert tasks_common._rust_target_triple() == "aarch64-apple-darwin"
+
+
+def test_binary_discovery_prefers_virtual_env_over_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks_common.reset_cached_chainlink_path()
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: None)
+    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: "/usr/bin/chainlink")
     venv_dir = tmp_path / "venv"
     (venv_dir / "bin").mkdir(parents=True)
     venv_chainlink = venv_dir / "bin" / "chainlink"
     venv_chainlink.write_text("#!/bin/sh\n")
     monkeypatch.setenv("VIRTUAL_ENV", str(venv_dir))
+
+    assert tasks_common._discover_binary() == venv_chainlink
+
+
+def test_binary_discovery_prefers_path_over_cargo_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks_common.reset_cached_chainlink_path()
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: None)
+    monkeypatch.setattr(tasks_common.shutil, "which", lambda name: "/usr/bin/chainlink")
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     fake_home = tmp_path / "home"
     (fake_home / ".cargo" / "bin").mkdir(parents=True)
     (fake_home / ".cargo" / "bin" / "chainlink").write_text("#!/bin/sh\n")
     monkeypatch.setattr(tasks_common.Path, "home", lambda: fake_home)
 
-    assert tasks_common._discover_binary() == venv_chainlink
+    assert tasks_common._discover_binary() == Path("/usr/bin/chainlink")
 
 
 def test_binary_discovery_falls_back_to_cargo_bin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tasks_common.reset_cached_chainlink_path()
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: None)
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     fake_home = tmp_path / "home"
@@ -89,6 +132,7 @@ def test_binary_discovery_returns_none_when_not_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tasks_common.reset_cached_chainlink_path()
+    monkeypatch.setattr(tasks_common, "_vnd_dir", lambda: None)
     monkeypatch.setattr(tasks_common.shutil, "which", lambda name: None)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)
     monkeypatch.setattr(tasks_common.Path, "home", lambda: tmp_path / "empty-home")

@@ -23,7 +23,7 @@ help:
 cloud_setup:
 	# Install system dependencies
 	$(APT_GET) update -qq || true
-	$(APT_GET) -y --fix-missing install bubblewrap curl git-lfs
+	$(APT_GET) -y --fix-missing install bubblewrap curl git-lfs gcc-x86-64-linux-gnu gcc-aarch64-linux-gnu
 	./bin/install_rust.sh
 	# Ensure git-lfs is enabled, and if this is the first time it's enabled,
 	# pull files from git-lfs content server since they may not have been cloned

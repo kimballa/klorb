@@ -147,11 +147,7 @@ sync_deps: venv
 	@echo "Use 'make install_dev_deps' to install runtime and dev dependencies."
 	@echo "Use './bin/install-cuda-nvidia.sh' (from the repo root) for GPU embedding on Linux/Windows."
 
-install_chainlink:
-	# Install chainlink for task tracking
-	source "$$HOME/.cargo/env" && cargo install chainlink-tracker
-
-install_deps: venv install_chainlink
+install_deps: venv
 	# Only install release requirements.
 	@echo "Installing runtime dependencies..."
 	$(LOAD_VENV); "$(UV)" pip install -r "$(RELEASE_REQUIREMENTS)"
@@ -159,7 +155,7 @@ install_deps: venv install_chainlink
 	@echo "Runtime dependencies installed."
 	@echo "For development, run: make install_dev_deps"
 
-install_dev_deps: venv install_chainlink
+install_dev_deps: venv
 	$(LOAD_VENV); "$(UV)" pip install -r "$(LOCAL_REQUIREMENTS)"
 	@echo ""
 	@echo "Installed runtime and development dependencies."

@@ -6,6 +6,7 @@ workspace setup, and session-close cleanup. See docs/specs/chainlink-task-tracki
 import json
 import logging
 import os
+import platform
 import random
 import shutil
 import subprocess
@@ -72,21 +73,43 @@ _CHAINLINK_BIN_PATH: Path|None = None
 "Path to resolved `chainlink` binary. Cached result from _discover_binary()."
 
 
+def _vnd_dir() -> Path | None:
+    """The repo's `vnd/` vendored-binaries directory, found by walking up from this file's own
+    location. `None` outside a source checkout that has one."""
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "vnd"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _rust_target_triple() -> str:
+    """This machine's Rust target triple, matching the directory names `vnd/Makefile` builds
+    chainlink under."""
+    machine = platform.machine()
+    if platform.system() == "Darwin":
+        return f"{'aarch64' if machine == 'arm64' else machine}-apple-darwin"
+    return f"{machine}-unknown-linux-gnu"
+
+
 def _discover_binary() -> Path | None:
-    """Return the `chainlink` binary's path: `PATH` first, then `$VIRTUAL_ENV/bin/chainlink`
-    if a virtualenv is active, then `$HOME/.cargo/bin/chainlink` as a last resort. `None` if
-    none of these resolve."""
+    """Return the `chainlink` binary's path: `vnd/<target-triple>/chainlink` in this source
+    checkout first, then `$VIRTUAL_ENV/bin/chainlink` if a virtualenv is active, then `PATH`,
+    then `$HOME/.cargo/bin/chainlink` as a last resort. `None` if none of these resolve."""
 
     global _CHAINLINK_BIN_PATH
     if _CHAINLINK_BIN_PATH:
         return _CHAINLINK_BIN_PATH # Cached
 
-    on_path = shutil.which("chainlink")
-    if on_path is not None:
-        logger.debug("Found chainlink on PATH: %s", on_path)
-        _CHAINLINK_BIN_PATH = Path(on_path)
-        return _CHAINLINK_BIN_PATH
-    logger.debug("chainlink not found on PATH.")
+    vnd_dir = _vnd_dir()
+    if vnd_dir is not None:
+        triple = _rust_target_triple()
+        vnd_candidate = vnd_dir / triple / "chainlink"
+        if vnd_candidate.is_file():
+            logger.debug("Found chainlink vendored for %s: %s", triple, vnd_candidate)
+            _CHAINLINK_BIN_PATH = vnd_candidate
+            return _CHAINLINK_BIN_PATH
+        logger.debug("No vendored chainlink for %s at %s.", triple, vnd_candidate)
 
     virtual_env = os.environ.get("VIRTUAL_ENV")
     if virtual_env:
@@ -96,6 +119,13 @@ def _discover_binary() -> Path | None:
             _CHAINLINK_BIN_PATH = venv_candidate
             return _CHAINLINK_BIN_PATH
         logger.debug("chainlink not found in the active virtualenv at %s.", venv_candidate)
+
+    on_path = shutil.which("chainlink")
+    if on_path is not None:
+        logger.debug("Found chainlink on PATH: %s", on_path)
+        _CHAINLINK_BIN_PATH = Path(on_path)
+        return _CHAINLINK_BIN_PATH
+    logger.debug("chainlink not found on PATH.")
 
     cargo_candidate = Path.home() / ".cargo" / "bin" / "chainlink"
     if cargo_candidate.is_file():
@@ -179,7 +209,7 @@ class ChainlinkClient:
         binary = _discover_binary()
         if binary is None:
             raise ChainlinkError(
-                "chainlink binary not found on PATH, in the active virtualenv, or at "
+                "chainlink binary not found in vnd/, on PATH, in the active virtualenv, or at "
                 "~/.cargo/bin/chainlink")
         self._binary = binary
         self._workspace_root = context.session_config.workspace.path
