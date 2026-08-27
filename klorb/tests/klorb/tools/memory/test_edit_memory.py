@@ -43,15 +43,16 @@ def test_update_args_truncates_old_and_new_text_on_success(
 ) -> None:
     context = _context(tmp_path, monkeypatch)
     _write(context, "global", "notes.md", "Topic\nb\nc\nd\n")
-    args = {"namespace": "global", "filename": "notes.md", "old_text": "b", "new_text": "B"}
+    args = {"namespace": "global", "filename": "notes.md", "old_text": "b\nc", "new_text": "B\nC"}
 
     updated = EditMemoryTool(context).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    placeholder = "(Applied correctly; arguments truncated. See response)"
+    old_placeholder = "b… <line 1 of 2; applied -- see Applied diff in response>"
+    new_placeholder = "B… <line 1 of 2; applied -- see Applied diff in response>"
     assert updated == {
         "namespace": "global", "filename": "notes.md",
-        "old_text": placeholder, "new_text": placeholder,
+        "old_text": old_placeholder, "new_text": new_placeholder,
     }
 
 
@@ -337,7 +338,7 @@ def test_diff_preview_reflects_the_applied_change(
     assert kinds == ["context", "del", "add", "context"]
 
 
-def test_format_response_renders_headers_then_content_then_diff(
+def test_format_response_renders_headers_then_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _context(tmp_path, monkeypatch)
@@ -348,8 +349,9 @@ def test_format_response_renders_headers_then_content_then_diff(
     result = tool.apply(args)
     rendered = tool.format_response(result)
 
-    header, post_edit_content, diff_block = rendered.split("\n\n")
+    header, diff_block = rendered.split("\n\n")
     assert header.splitlines()[:2] == ["namespace: global", "filename: notes.md"]
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "Post-edit content:\n========\n2|B"
+    # post_edit_content duplicates the diff's added lines, so it isn't rendered on the wire.
+    assert "Post-edit content" not in rendered
     assert diff_block != ""

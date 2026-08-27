@@ -382,7 +382,8 @@ REPLACE_ALL_CASE_INSENSITIVE = EvalCase(
     name="replace_all_case_insensitive",
     prompt=(
         "In wildlife.txt, replace every occurrence of the word 'fox' with 'wolf', matching "
-        "regardless of capitalization — so 'fox', 'FOX', and 'Fox' should all be replaced."
+        "regardless of capitalization — so 'fox', 'FOX', and 'Fox' should all be replaced "
+        "with the exact same replacement string."
     ),
     setup_files={
         "wildlife.txt": (

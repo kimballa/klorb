@@ -843,7 +843,7 @@ def test_apply_result_carries_a_no_readfile_verification_note(tmp_path: Path) ->
     assert result["note"] == "No verification ReadFile needed."
 
 
-def test_format_response_renders_headers_then_content_then_diff(tmp_path: Path) -> None:
+def test_format_response_renders_headers_then_diff(tmp_path: Path) -> None:
     file_path = _write(tmp_path, "sample.txt", "a\nb\nc\n")
     tool = EditFileTool(_context(tmp_path))
     args = {"filename": str(file_path), "old_text": "b", "new_text": "B"}
@@ -851,10 +851,11 @@ def test_format_response_renders_headers_then_content_then_diff(tmp_path: Path) 
     result = tool.apply(args)
     rendered = tool.format_response(result)
 
-    header, post_edit_content, diff_block = rendered.split("\n\n")
+    header, diff_block = rendered.split("\n\n")
     assert header.splitlines()[0] == f"filename: {file_path}"
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "Post-edit content:\n========\n2|B"
+    # post_edit_content duplicates the diff's added lines, so it isn't rendered on the wire.
+    assert "Post-edit content" not in rendered
     assert diff_block != ""
 
 
@@ -893,5 +894,6 @@ def test_update_args_truncates_old_and_new_text_on_success(tmp_path: Path) -> No
     updated = EditFileTool(_context(tmp_path)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    placeholder = "(Applied correctly; arguments truncated. See response)"
-    assert updated == {"filename": filename, "old_text": placeholder, "new_text": placeholder}
+    # Short single-line values pass through unchanged; multi-line/long ones get first-line
+    # anchored truncation (covered in tests/klorb/tools/util/test_edit_file_core.py).
+    assert updated == args

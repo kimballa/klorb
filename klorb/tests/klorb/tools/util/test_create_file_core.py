@@ -118,7 +118,7 @@ def test_update_args_truncates_content_on_success() -> None:
 
     assert updated == {
         "filename": "f.txt",
-        "content": "(Applied correctly; arguments truncated. See response)",
+        'content': 'a… <line 1 of 3; applied -- see Applied diff in response>',
     }
 
 

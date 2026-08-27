@@ -207,6 +207,28 @@ def truncate_lines(text: str, max_lines: int) -> str:
     return "\n".join(lines[:max_lines]) + "\n..."
 
 
+_ARG_TRUNCATION_MIN_CHARS = 96
+"""A single-line tool-call argument at or under this many characters passes through
+`truncate_applied_arg()` unchanged; anything longer (or any multi-line value) collapses to its
+first line plus a synthetic truncation marker."""
+
+_ARG_PREVIEW_CHARS = 72
+"""How many characters of an applied tool call argument's first line survive truncation."""
+
+
+def truncate_applied_arg(value: str) -> str:
+    """History-replay form for one applied tool call argument: a short single-line value passes
+    through unchanged; anything longer collapses to its first line plus a visibly-synthetic
+    truncation marker naming where the full text lives. Used by `update_args()` overrides so a
+    rewritten argument still anchors the model's memory of what it sent.
+    """
+    total_lines = len(value.splitlines())
+    if total_lines <= 1 and len(value) <= _ARG_TRUNCATION_MIN_CHARS:
+        return value
+    preview = value.split("\n", 1)[0][:_ARG_PREVIEW_CHARS]
+    return f"{preview}… <line 1 of {total_lines}; applied -- see Applied diff in response>"
+
+
 class Tool(ABC):
     """Base class for a tool that a model can be offered, and asked to invoke, by name.
 

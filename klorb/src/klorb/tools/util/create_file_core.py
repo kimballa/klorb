@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from klorb.tools.response_envelope import ToolCallErrorInfo
-from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE, truncate_applied_arg
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
 
@@ -29,14 +29,12 @@ class CreateFileCore:
     """
 
     def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
-        """`tool_args.content` dropped once the call succeeded, since `apply()`'s own
-        `content` already reflects it; unchanged on error."""
+        """Replaces `tool_args.content` with its anchored truncation once the call succeeded --
+        the response's `diff` already shows the file's new state; unchanged on error."""
         if err_info.is_error:
             return tool_args
         new_args = dict(tool_args)
-        # We can't *entirely* remove the field or it confuses the agent to read it back; replace
-        # the actual lengthy contents with a short update.
-        new_args["content"] = "(Applied correctly; arguments truncated. See response)"
+        new_args["content"] = truncate_applied_arg(new_args["content"])
         return new_args
 
     def parameter_properties(self) -> dict[str, Any]:

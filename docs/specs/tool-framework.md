@@ -72,10 +72,14 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     `is_error`/`is_retryable`/`error_category`/`error_message`). Defaults to `tool_args`
     unchanged. `CreateFileCore`/`EditFileCore`/`ReadFileCore` (`klorb/src/klorb/tools/util/`)
     each implement their own `update_args(tool_args, err_info)`, and every tool built on one
-    delegates to it: `CreateFile`/`CreateMemory` drop `content` on success (the call's own
-    `diff` already reflects it); `EditFile`/`EditMemory`/`EditScratchpad` and
-    `ReadFile`/`ReadMemory`/`ReadScratchpad`/`ReadSkillFile` drop every argument on success
-    (their own `post_edit_content`/`diff` or `content` already show the result). Any override
+    delegates to it: `CreateFile`/`CreateMemory` collapse `content` to its first line plus a
+    truncation marker on success; `EditFile`/`EditMemory`/`EditScratchpad` do the same for each
+    of `old_text`/`old_text_start`/`old_text_end`/`new_text`, both via the shared
+    `truncate_applied_arg()` helper (`klorb.tools.tool`), which passes short single-line values
+    through unchanged so history still anchors the model's memory of what it sent -- the response
+    carries the full old/new text either way;
+    `ReadFile`/`ReadMemory`/`ReadScratchpad`/`ReadSkillFile` return their arguments unchanged.
+    Any override
     leaves `tool_args` unchanged when `err_info.is_error` is `True`. See [[session-and-turns]]
     for where `Session._run_tool_calls()` calls this and stores its output.
 
@@ -266,14 +270,15 @@ once per `JSONDecodeError` regardless of which message variant was produced.
   `replaced_lines` (the line count of the block that was matched and replaced — possibly
   different from `end_line - start_line + 1`, since `end_line` reflects `new_text`'s length,
   not the original match's), the file's new `new_total_lines`, `post_edit_content` — the changed
-  region in `ReadFile`'s `"N|text"` format, so the model can see the result without a follow-up
-  `ReadFile` call — and `note`, a fixed reminder of that same fact. `summary()` reports a
+  region in `ReadFile`'s `"N|text"` format, kept out of `format_response()`'s wire text since
+  every one of its lines already appears as an added line in `diff` — and `note`, a fixed
+  reminder of that same fact. `summary()` reports a
   `"+A/-R"` line-diff count computed from `replaced_lines` and `new_text`'s own line count —
   available only on success, since a failed match never resolves a location to count lines
   removed from; `detail_view()` caps `post_edit_content` to 8 lines via `truncate_lines()`, same
   as `ReadFile`. Every edit/create tool's `format_response()` renders its result as `key: value`
-  header lines followed by `post_edit_content` (edit only) and `diff` as plain-text blocks, the
-  same wire-text convention `ReadFile` uses (see
+  header lines followed by the `diff` plain-text block, the same wire-text convention
+  `ReadFile` uses (see
   docs/adrs/00207-render-tool-response-wire-text-at-send-time-not-storage.md).
 
   `EditFileCore.apply()` (`klorb/src/klorb/tools/util/edit_file_core.py` — the mechanic

@@ -50,8 +50,9 @@ def test_update_args_truncates_old_and_new_text_on_success(
     updated = EditScratchpadTool(_context(str(scratchpad), make_session_config)).update_args(
         args, None, ToolCallErrorInfo(is_error=False, is_retryable=False))
 
-    placeholder = "(Applied correctly; arguments truncated. See response)"
-    assert updated == {"old_text": placeholder, "new_text": placeholder}
+    old_placeholder = "b… <line 1 of 2; applied -- see Applied diff in response>"
+    new_placeholder = "B… <line 1 of 2; applied -- see Applied diff in response>"
+    assert updated == {"old_text": old_placeholder, "new_text": new_placeholder}
 
 
 def test_insert_by_folding_original_line_into_new_text(
@@ -242,7 +243,7 @@ def test_diff_preview_reflects_the_applied_change(
     assert kinds == ["context", "del", "add", "context"]
 
 
-def test_format_response_renders_headers_then_content_then_diff(
+def test_format_response_renders_headers_then_diff(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig],
 ) -> None:
     scratchpad = _write(tmp_path, "a\nb\nc\n")
@@ -252,8 +253,9 @@ def test_format_response_renders_headers_then_content_then_diff(
     result = tool.apply(args)
     rendered = tool.format_response(result)
 
-    header, post_edit_content, diff_block = rendered.split("\n\n")
+    header, diff_block = rendered.split("\n\n")
     assert header.splitlines()[0] == "edit_success: true"
     assert "note: No verification ReadFile needed." in header
-    assert post_edit_content == "Post-edit content:\n========\n2|B"
+    # post_edit_content duplicates the diff's added lines, so it isn't rendered on the wire.
+    assert "Post-edit content" not in rendered
     assert diff_block != ""

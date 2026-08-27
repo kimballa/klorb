@@ -60,7 +60,7 @@ def test_update_args_truncates_content_on_success(
 
     assert updated == {
         "namespace": "global", "filename": "notes.md",
-        "content": "(Applied correctly; arguments truncated. See response)",
+        'content': 'Topic… <line 1 of 2; applied -- see Applied diff in response>',
     }
 
 

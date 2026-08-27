@@ -55,9 +55,8 @@ class EditFileTool(Tool):
             "old_text (or old_text_start/old_text_end) rather than a line number.\n"
             "See your system prompt's guidance on EditFile for the empty-file/insert/delete "
             "conventions and 'Ambiguous match' errors.\n"
-            "The response includes a `post_edit_content` field showing the edited region "
-            "with line numbers, and a total line count in `new_total_lines` "
-            "— no follow-up ReadFile is needed to verify."
+            "The response includes the edited region as an `Applied diff` block plus the "
+            "file's new `new_total_lines` — no follow-up ReadFile is needed to verify."
         )
 
     def parameters(self) -> dict[str, Any]:

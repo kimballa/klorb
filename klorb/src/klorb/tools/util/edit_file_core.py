@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from klorb.tools.response_envelope import ToolCallErrorInfo
-from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE
+from klorb.tools.tool import NO_READFILE_VERIFICATION_NOTE, truncate_applied_arg
 from klorb.tools.util.diff_lines import DiffHunk, build_diff_hunks, format_diff_hunks
 from klorb.tools.util.response_headers import format_header_lines
 from klorb.tools.util.secret_redaction import SecretRedactor
@@ -93,21 +93,17 @@ class EditFileCore:
     """
 
     def update_args(self, tool_args: dict[str, Any], err_info: ToolCallErrorInfo) -> dict[str, Any]:
-        """Removes old_text / new_text once the call succeeded, since `apply()`'s own
-        `post_edit_content`/`diff` already show the file's new state; unchanged on error."""
+        """Collapses each anchor/replacement value to its first line plus a truncation marker
+        once the call succeeded -- the response's `Applied diff` carries the full old/new text;
+        unchanged on error."""
         if err_info.is_error:
             return tool_args # No change.
 
         out = dict(tool_args)
-        if out.get("old_text"):
-            out["old_text"] = "(Applied correctly; arguments truncated. See response)"
-        if out.get("old_text_start"):
-            out["old_text_start"] = "(Applied correctly; arguments truncated. See response)"
-        if out.get("old_text_end"):
-            out["old_text_end"] = "(Applied correctly; arguments truncated. See response)"
-        if out.get("new_text"):
-            out["new_text"] = "(Applied correctly; arguments truncated. See response)"
-
+        for name in ("old_text", "old_text_start", "old_text_end", "new_text"):
+            value = out.get(name)
+            if isinstance(value, str):
+                out[name] = truncate_applied_arg(value)
         return out
 
     def parameter_properties(self) -> dict[str, Any]:
@@ -264,15 +260,17 @@ class EditFileCore:
 
     def format_result(self, result: dict[str, Any]) -> str:
         """Render an `apply()`-shaped result dict as `key: value` header lines in
-        `_EDIT_RESULT_HEADER_ORDER`, followed by `post_edit_content` and `diff` as separate
-        plain-text blocks, each set off by a blank line."""
+        `_EDIT_RESULT_HEADER_ORDER`, followed by the diff as its own plain-text block.
+
+        `post_edit_content` is deliberately not rendered: it duplicates the diff's added lines
+        exactly. It stays in the result dict for UI rendering (`detail_view()`/`diff_preview()`),
+        which read the full dict rather than this wire text."""
         header_lines = format_header_lines(
             result, _EDIT_RESULT_HEADER_ORDER,
             known_elsewhere=frozenset({"post_edit_content", "diff"}))
-        post_edit_content: str = "Post-edit content:\n========\n" + result.get("post_edit_content", "")
         diff_hunks = [DiffHunk.model_validate(hunk) for hunk in result.get("diff", [])]
         diff_block = "Applied diff:\n========\n" + format_diff_hunks(diff_hunks)
-        return "\n\n".join(["\n".join(header_lines), post_edit_content, diff_block])
+        return "\n\n".join(["\n".join(header_lines), diff_block])
 
     @staticmethod
     def _detokenize_normalized_args(
