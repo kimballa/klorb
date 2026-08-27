@@ -1,0 +1,24 @@
+{
+  "schema": {
+    "name": "klorb-model",
+    "version": "1.0.0"
+  },
+  "name": "z-ai/glm-5.3-flash",
+  "family": "glm",
+  "model_version": "5.3",
+  "release_date": "2026-08-26",
+  "knowledge_cutoff": null,
+  "settings": {
+    "temperature": 0.2
+  },
+  "capabilities": {
+    "vision": true,
+    "thinking": true,
+    "thinking_budget_style": "effort",
+    "max_context_window": 1048576,
+    "max_output_tokens": 131072,
+    "function_calling": true,
+    "streaming": true
+  },
+  "cache_mgmt_style": "AUTOMATIC"
+}

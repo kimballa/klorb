@@ -51,6 +51,7 @@ identifier klorb's `name` field and the API provider argument must use.
 | `capabilities.max_context_window`   | `top_provider.context_length` (prefer this over the top-level `context_length`, which can differ slightly) |
 | `capabilities.max_output_tokens`    | `top_provider.max_completion_tokens`                                        |
 | `knowledge_cutoff`                  | the entry's own `knowledge_cutoff` field (often `null` — that's a real, verified answer, not a placeholder) |
+| `release_date`                      | `created` (integer seconds since 12-31-1969 midnight), should be converted to `'YYYY-MM-DD'` format |
 
 Two fields the API does not disclose unambiguously — resolve these by judgment, not by
 inventing a number:
@@ -68,6 +69,17 @@ Never copy `pricing.*` values into the file directly (e.g. dollar amounts) —
 see `docs/adrs/00100-fetch-model-pricing-live-not-from-json.md`. `pricing`'s presence/shape is
 still read as a *signal*, not a value — see `settings.temperature` and `cache_mgmt_style`
 below.
+
+If you can't convert from the epoch-offset `created` timestamp field to a date yourself, use the `fromts` program
+on the path to do it. e.g.:
+
+```bash
+$ fromts 1787752741000
+2026-08-26 06:59:01
+```
+
+... of which you would use the `2026-08-26` portion. Note that `fromts` expects milliseconds, so
+multiply the `created` value by 1,000 for the argv to `fromts`.
 
 ## 3. Resolve `settings.temperature` and `cache_mgmt_style` from the same API entry
 
@@ -104,7 +116,7 @@ single flag in the API response — resolve it in two steps:
    field?** Most providers with cache pricing (OpenAI, DeepSeek, Gemini, xAI/Grok,
    Moonshot/Kimi, Groq) cache automatically with no client action — those still use
    `"AUTOMATIC"` despite having cache pricing. Today, OpenRouter's prompt-caching guide
-   (https://openrouter.ai/docs/guides/best-practices/prompt-caching) names only **Anthropic**
+   (<https://openrouter.ai/docs/guides/best-practices/prompt-caching>) names only **Anthropic**
    and **Alibaba/Qwen** as requiring explicit `cache_control` from the caller — this is a
    provider fact that can change, so check that guide (or the model's own page on
    openrouter.ai) rather than assuming this list is exhaustive or permanent. Within that
@@ -138,12 +150,13 @@ Write to `klorb/src/klorb/resources/models/<slug>.json`, where `<slug>` is the l
 `ModelRegistry` discovers every `*.json` file in this directory automatically (see
 `docs/specs/model-framework.md`) — no separate registration or index file to update.
 
-## 6. Update `docs/specs/model-framework.md`
+## 6. Update `docs/specs/model-framework.md` (if warranted)
 
-The spec's "klorb ships *N* built-in models as `klorb.resources/models/*.json`" bullet
-enumerates every packaged model by name. Add the new model to that list and bump the count
-so it stays an accurate, current inventory — check the other names in the list against the
-files actually on disk while you're there, since drift here is easy to introduce silently.
+The spec's bullet about built-in models uses "such as" examples — it is **not** an
+exhaustive inventory. Do **not** add every new model to that list; only mention a model
+if it illustrates a new distinct point (a unique capability, a new provider pattern, etc.)
+that the existing examples don't cover. Prefer `find` against `klorb/src/klorb/resources/models/`
+for an accurate file-level inventory over maintaining a hand-curated prose list.
 
 ## 7. Verify
 
