@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  parseChatHistoryResult,
   parseHostMessage,
   parseSubagentTranscriptResult,
   parseSubagentTreeResult,
@@ -234,6 +235,16 @@ describe('parseHostMessage', () => {
         queuedMessages: [],
       },
       { type: 'toggleSubagentsPanel' },
+      {
+        type: 'chatHistoryUpdate',
+        messages: [
+          { seq: 1, senderId: 'root-1', timestamp: '2026-01-01T00:00:00', body: 'hi @user' },
+          { seq: 2, senderId: 'user', timestamp: '2026-01-01T00:00:01', body: 'hi back' },
+        ],
+        unreadCount: 0,
+        unreadMentionCount: 0,
+      },
+      { type: 'chatHistoryUpdate', messages: [], unreadCount: 2, unreadMentionCount: 1 },
     ];
     for (const message of messages) {
       expect(parseHostMessage(message)).toEqual(message);
@@ -432,6 +443,23 @@ describe('parseHostMessage', () => {
     ).toBeUndefined();
     expect(parseHostMessage({ type: 'subagentTreeUpdate' })).toBeUndefined();
     expect(parseHostMessage({ type: 'subagentTreeUpdate', nodes: [{ id: 'x' }] })).toBeUndefined();
+    expect(parseHostMessage({ type: 'chatHistoryUpdate', messages: [] })).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'chatHistoryUpdate',
+        messages: [{ seq: 1, senderId: 'x' }],
+        unreadCount: 0,
+        unreadMentionCount: 0,
+      })
+    ).toBeUndefined();
+    expect(
+      parseHostMessage({
+        type: 'chatHistoryUpdate',
+        messages: [],
+        unreadCount: '0',
+        unreadMentionCount: 0,
+      })
+    ).toBeUndefined();
     expect(
       parseHostMessage({
         type: 'subagentTranscriptUpdate',
@@ -530,6 +558,30 @@ describe('parseSubagentTranscriptResult', () => {
   });
 });
 
+describe('parseChatHistoryResult', () => {
+  it('accepts a valid {messages, unreadCount, unreadMentionCount} result', () => {
+    const value = {
+      messages: [{ seq: 1, senderId: 'root-1', timestamp: '2026-01-01T00:00:00', body: 'hi' }],
+      unreadCount: 1,
+      unreadMentionCount: 0,
+    };
+    expect(parseChatHistoryResult(value)).toEqual(value);
+  });
+
+  it('rejects malformed results', () => {
+    expect(parseChatHistoryResult(undefined)).toBeUndefined();
+    expect(parseChatHistoryResult({})).toBeUndefined();
+    expect(parseChatHistoryResult({ messages: 'not-an-array' })).toBeUndefined();
+    expect(
+      parseChatHistoryResult({
+        messages: [{ senderId: 'x' }],
+        unreadCount: 0,
+        unreadMentionCount: 0,
+      })
+    ).toBeUndefined();
+  });
+});
+
 describe('parseWebviewMessage', () => {
   it('round-trips every webview message shape', () => {
     const messages: WebviewMessage[] = [
@@ -573,6 +625,9 @@ describe('parseWebviewMessage', () => {
       { type: 'cancelSubagent', sessionId: 'subagent-1' },
       { type: 'renameSession', title: 'Fix auth bug' },
       { type: 'renameSession', title: null },
+      { type: 'selectChatRoom', selected: true },
+      { type: 'selectChatRoom', selected: false },
+      { type: 'submitChatMessage', text: 'hey @explorer-1.1' },
     ];
     for (const message of messages) {
       expect(parseWebviewMessage(message)).toEqual(message);
@@ -625,5 +680,9 @@ describe('parseWebviewMessage', () => {
     expect(parseWebviewMessage({ type: 'cancelSubagent', sessionId: null })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'renameSession', title: 7 })).toBeUndefined();
     expect(parseWebviewMessage({ type: 'renameSession' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'selectChatRoom' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'selectChatRoom', selected: 'yes' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'submitChatMessage' })).toBeUndefined();
+    expect(parseWebviewMessage({ type: 'submitChatMessage', text: 7 })).toBeUndefined();
   });
 });

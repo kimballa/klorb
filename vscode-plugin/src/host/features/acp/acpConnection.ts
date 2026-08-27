@@ -124,6 +124,9 @@ export class AcpConnection {
   /** Whether the connected server advertised `agentCapabilities._meta.klorb.subagents` at
    * `initialize()` -- same lifetime/threading as `_enqueueMessageCapable`. */
   private _subagentsCapable = false;
+  /** Whether the connected server advertised `agentCapabilities._meta.klorb.chat` at
+   * `initialize()`. */
+  private _chatCapable = false;
   /** Returns the minimum level a `ServerLogRecord` must reach to escalate into the history
    * scroll; called fresh per record so a live config change takes effect without reconstructing
    * the connection. */
@@ -242,6 +245,7 @@ export class AcpConnection {
     }
     this._enqueueMessageCapable = klorbAgentCapability(initResult, 'enqueueMessage');
     this._subagentsCapable = klorbAgentCapability(initResult, 'subagents');
+    this._chatCapable = klorbAgentCapability(initResult, 'chat');
     this._log(`klorb: initialized (protocol v${initResult.protocolVersion})`);
     // Fired once, up front, for either path below: a resume replaces the session just as
     // surely as newSession() does, and state keyed to whatever session the webview held before
@@ -281,7 +285,12 @@ export class AcpConnection {
     this._sessionId = session.sessionId;
     this._log(`klorb: session created: ${session.sessionId}`);
     this._listener.onSessionInfo(
-      sessionInfoFromResponse(session, this._enqueueMessageCapable, this._subagentsCapable)
+      sessionInfoFromResponse(
+        session,
+        this._enqueueMessageCapable,
+        this._subagentsCapable,
+        this._chatCapable
+      )
     );
   }
 
@@ -318,7 +327,12 @@ export class AcpConnection {
     }
     this._log(`klorb: session loaded: ${sessionId}`);
     this._listener.onSessionInfo(
-      sessionInfoFromResponse(session, this._enqueueMessageCapable, this._subagentsCapable)
+      sessionInfoFromResponse(
+        session,
+        this._enqueueMessageCapable,
+        this._subagentsCapable,
+        this._chatCapable
+      )
     );
   }
 
@@ -367,6 +381,11 @@ export class AcpConnection {
    * interval. */
   public get subagentsCapable(): boolean {
     return this._subagentsCapable;
+  }
+
+  /** Whether the connected server advertised `_klorb/chatHistory` and `_klorb/chatPost`. */
+  public get chatCapable(): boolean {
+    return this._chatCapable;
   }
 
   /** Queues `text` into the currently in-flight turn (`_klorb/enqueueMessage`) -- valid only
@@ -450,6 +469,7 @@ export class AcpConnection {
     this._sessionId = undefined;
     this._enqueueMessageCapable = false;
     this._subagentsCapable = false;
+    this._chatCapable = false;
     reject?.(new Error('klorb server restarted'));
     this._serverProcess.stop();
   }
@@ -465,6 +485,7 @@ export class AcpConnection {
     this._sessionId = undefined;
     this._enqueueMessageCapable = false;
     this._subagentsCapable = false;
+    this._chatCapable = false;
     reject?.(new Error('klorb server exited unexpectedly; run "Klorb: Restart Server"'));
     this._serverProcess.stop();
   }

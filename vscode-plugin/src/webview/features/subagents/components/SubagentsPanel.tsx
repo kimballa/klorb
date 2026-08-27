@@ -2,6 +2,7 @@
 import { type JSX, useEffect, useMemo, useState } from 'react';
 
 import type { SubagentNodeInfo } from 'shared/webviewMessages';
+import { chatRowMarker } from 'webview/features/chatRoom';
 
 import { rowMarker } from '../subagentsModel';
 
@@ -14,7 +15,17 @@ export interface SubagentsPanelProps {
    * `undefined`/`null` when nothing is waiting, or when the waiting session is already selected
    * (its ask renders directly in the interaction area, so no row marker is needed for it). */
   attentionSessionId?: string | null;
+  /** Whether the connected server advertised `_klorb/chatHistory`, hiding the "Chat Room" row
+   * entirely for an older server. */
+  chatCapable?: boolean;
+  /** Whether the "Chat Room" row is the current selection, layered independently of
+   * `selectedSessionId`. */
+  chatRoomSelected: boolean;
+  /** The user's own unread tallies, backing the "Chat Room" row's marker (`chatRowMarker`). */
+  chatUnreadCount: number;
+  chatUnreadMentionCount: number;
   onSelect(sessionId: string | null): void;
+  onSelectChatRoom(): void;
   onToggleVisibility(): void;
 }
 
@@ -47,7 +58,12 @@ export default function SubagentsPanel({
   nodes,
   selectedSessionId,
   attentionSessionId,
+  chatCapable = false,
+  chatRoomSelected,
+  chatUnreadCount,
+  chatUnreadMentionCount,
   onSelect,
+  onSelectChatRoom,
   onToggleVisibility,
 }: SubagentsPanelProps): JSX.Element | null {
   const blinkOn = useBlinkPhase();
@@ -74,6 +90,13 @@ export default function SubagentsPanel({
     return null;
   }
 
+  const chatMarker = chatRowMarker(
+    chatUnreadCount,
+    chatUnreadMentionCount,
+    chatRoomSelected,
+    blinkOn
+  );
+
   return (
     <div className="subagents-panel">
       <div className="subagents-panel-summary">
@@ -89,6 +112,17 @@ export default function SubagentsPanel({
         />
       </div>
       <div className="subagents-panel-list" role="listbox" aria-label="Subagents">
+        {chatCapable ? (
+          <button
+            type="button"
+            role="option"
+            aria-selected={chatRoomSelected}
+            className={`subagents-panel-row${chatRoomSelected ? ' subagents-panel-row-selected' : ''}`}
+            onClick={onSelectChatRoom}>
+            <span className="subagents-panel-row-marker">{chatMarker ?? ''}</span>
+            <span className="subagents-panel-row-title">💬 Chat Room</span>
+          </button>
+        ) : null}
         {nodes.map((node) => {
           const isRoot = node.parentId === null;
           const isSelected = isRoot ? selectedSessionId === null : selectedSessionId === node.id;
@@ -108,7 +142,9 @@ export default function SubagentsPanel({
           );
         })}
       </div>
-      <div className="subagents-panel-footer">Agent role: {agentNodeRole}</div>
+      <div className="subagents-panel-footer">
+        {chatRoomSelected ? 'Chat Room' : `Agent role: ${agentNodeRole}`}
+      </div>
     </div>
   );
 }

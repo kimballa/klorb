@@ -52,6 +52,8 @@ export interface StatusSnapshot {
   /** Whether the connected server advertised `_klorb/subagentTree` -- gates whether the
    * subagents panel polls/renders at all (see `AcpConnection.subagentsCapable`). */
   subagentsCapable?: boolean;
+  /** Whether the connected server advertised `_klorb/chatHistory`. */
+  chatCapable?: boolean;
 }
 
 export type StatusListener = (status: StatusSnapshot) => void;
@@ -169,6 +171,7 @@ export class SessionControls {
       sessionTitle: info.title ?? null,
       enqueueMessageCapable: info.enqueueMessageCapable,
       subagentsCapable: info.subagentsCapable,
+      chatCapable: info.chatCapable,
       usedTokens: undefined,
       maxTokens: undefined,
       outputTokens: undefined,

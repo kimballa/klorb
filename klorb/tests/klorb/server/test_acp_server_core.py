@@ -68,7 +68,7 @@ async def test_initialize_echoes_protocol_version_and_klorb_meta(
     assert response.agent_capabilities.field_meta == {"klorb": {
         "sessionConfig": True, "sessionStats": True, "trustWorkspace": True, "reloadSkills": True,
         "enqueueMessage": True, "setSessionTitle": True, "taskMeta": chainlink_available(),
-        "imageInput": True, "subagents": True,
+        "imageInput": True, "subagents": True, "chat": True,
     }}
     assert response.agent_capabilities.load_session is True
     assert response.agent_capabilities.session_capabilities is not None

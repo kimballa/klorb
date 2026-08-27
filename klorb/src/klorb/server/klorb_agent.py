@@ -35,7 +35,8 @@ from acp.schema import (
     TextContentBlock,
 )
 
-from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message
+from klorb.agents.chat import CHAT_USER_ID, correct_mention_case, live_mention_targets
+from klorb.agents.policy import compute_root_session_grants, dispatch_direct_message, notify_chat_mention
 from klorb.agents.runtime import SUBAGENT_ABORTED_MARKER, SubagentHandle, walk_session_tree
 from klorb.api_provider import ApiProvider, ResponseAborted
 from klorb.images.prepare import ImagePipelineConfig, ImageTooLargeError, prepare_image_for_model
@@ -45,6 +46,7 @@ from klorb.models.registry import ModelRegistry
 from klorb.openrouter import OpenRouterApiProvider
 from klorb.permissions.directory_access import concat_dir_rules
 from klorb.process_config import ProcessConfig, load_process_config, persist_session_default, user_config_path
+from klorb.server.chat_updates import build_chat_history_snapshot
 from klorb.server.subagent_updates import build_subagent_tree_snapshot
 from klorb.server.turn_bridge import TurnBridge
 from klorb.server.update_mapping import (
@@ -148,6 +150,7 @@ class KlorbAcpAgent(acp.Agent):
                     "taskMeta": chainlink_available(),
                     "imageInput": True,
                     "subagents": True,
+                    "chat": True,
                 }}),
         )
 
@@ -567,6 +570,31 @@ class KlorbAcpAgent(acp.Agent):
         logger.debug("_klorb/subagentPrompt %s a message for subagent %s", mode, subagent_id)
         return {"mode": mode}
 
+    def _ext_chat_history(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._require_session_id(params)
+        assert self._session is not None
+        return build_chat_history_snapshot(self._session)
+
+    def _ext_chat_post(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Posts `params["text"]` to the chat room as the human user."""
+        self._require_session_id(params)
+        text = params.get("text")
+        if not isinstance(text, str) or not text:
+            raise acp.RequestError.invalid_params({"reason": "text is required"})
+        assert self._session is not None
+        root = self._session
+        channel = root.chat_channel
+        corrected = correct_mention_case(text, live_mention_targets(root))
+        message = channel.post(CHAT_USER_ID, corrected, root)
+        for mentioned_id in message.mentions:
+            notify_chat_mention(self._process_config, channel, CHAT_USER_ID, root, mentioned_id)
+        logger.debug("klorb/chatPost posted message seq=%d for ACP session %s", message.seq, root.id)
+        return {
+            "seq": message.seq,
+            "mentions": message.mentions,
+            "unresolvedMentions": message.unresolved_mentions,
+        }
+
     def _ext_trust_workspace(self, params: dict[str, Any]) -> dict[str, Any]:
         self._require_session_id(params)
         assert self._session is not None
@@ -705,6 +733,10 @@ class KlorbAcpAgent(acp.Agent):
             return self._ext_subagent_cancel(params)
         if method == "klorb/subagentPrompt":
             return self._ext_subagent_prompt(params)
+        if method == "klorb/chatHistory":
+            return self._ext_chat_history(params)
+        if method == "klorb/chatPost":
+            return self._ext_chat_post(params)
         raise acp.RequestError.method_not_found(f"_{method}")
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:

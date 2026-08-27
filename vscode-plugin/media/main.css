@@ -340,6 +340,41 @@ body {
   cursor: default;
 }
 
+#chat-room-wrapper {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  /* Without this, the flex item's default min-height: auto would grow to fit #chat-room's full
+     content instead of letting its own overflow-y: auto actually scroll. */
+  min-height: 0;
+}
+
+#chat-room {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow-x: hidden;
+}
+
+.chat-room-item {
+  padding-bottom: 4px;
+}
+
+/* IRC-style: left-justified, no bubble chrome. */
+.chat-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-message-time {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* The user's own posts get a distinct color. */
+.chat-message-own {
+  color: var(--vscode-textLink-foreground);
+}
+
 #history {
   flex: 1 1 auto;
   /* Without this, the flex item's default min-height: auto would grow to fit its unwindowed

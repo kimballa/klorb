@@ -48,12 +48,9 @@ export type RequestErrorClass = (typeof import('@agentclientprotocol/sdk'))['Req
  * a peer ACP agent that doesn't advertise `modes` at all); `title` is additionally `null` for
  * "no title yet", distinct from `undefined` for "the response didn't say".
  *
- * `enqueueMessageCapable`/`subagentsCapable` are not part of `session/new`'s own response --
- * they're the connection's `initialize()`-negotiated `agentCapabilities._meta.klorb.
- * enqueueMessage`/`.subagents` flags, threaded through here by `AcpConnection` (which keeps them
- * for the connection's whole lifetime, since capabilities don't change per session) so
- * `SessionControls`/`StatusRow` learn them the same way they learn everything else about the
- * session's starting state. */
+ * `enqueueMessageCapable`/`subagentsCapable`/`chatCapable` are not part of `session/new`'s own
+ * response; `AcpConnection` threads through its own `initialize()`-negotiated
+ * `agentCapabilities._meta.klorb.enqueueMessage`/`.subagents`/`.chat` flags instead. */
 export interface SessionInfo {
   modeId: string | undefined;
   workspacePath: string | undefined;
@@ -61,6 +58,7 @@ export interface SessionInfo {
   title: string | null | undefined;
   enqueueMessageCapable: boolean;
   subagentsCapable: boolean;
+  chatCapable: boolean;
 }
 
 /** Receives the streamed text, tool-call activity, and control-plane state the agent produces
@@ -137,7 +135,8 @@ export interface SessionUpdateListener {
 export function sessionInfoFromResponse(
   session: NewSessionResponse | LoadSessionResponse,
   enqueueMessageCapable: boolean,
-  subagentsCapable: boolean
+  subagentsCapable: boolean,
+  chatCapable: boolean
 ): SessionInfo {
   const meta = klorbMetaOf(session._meta);
   const workspace =
@@ -152,6 +151,7 @@ export function sessionInfoFromResponse(
     title: title === null ? null : typeof title === 'string' ? title : undefined,
     enqueueMessageCapable,
     subagentsCapable,
+    chatCapable,
   };
 }
 

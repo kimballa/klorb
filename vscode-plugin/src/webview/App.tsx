@@ -19,6 +19,11 @@ import ToolCallLimitPanel, {
 } from 'webview/components/ToolCallLimitPanel';
 import VsCodeApiProvider, { type VsCodeApi } from 'webview/components/VsCodeApiProvider';
 import {
+  applyChatHistoryUpdate,
+  ChatRoomView,
+  type ChatRoomSnapshot,
+} from 'webview/features/chatRoom';
+import {
   HistoryView,
   appendInteraction,
   appendPrompt,
@@ -58,6 +63,7 @@ interface AppProps {
   initialTaskPanelVisible?: boolean;
   initialSubagentsPanelVisible?: boolean;
   initialSelectedSubagentId?: string | null;
+  initialChatRoomSelected?: boolean;
 }
 
 /**
@@ -78,6 +84,7 @@ export default function App({
   initialTaskPanelVisible,
   initialSubagentsPanelVisible,
   initialSelectedSubagentId,
+  initialChatRoomSelected,
 }: AppProps): JSX.Element {
   const [entries, setEntries] = useState<HistoryEntry[]>(initialEntries);
   const [inFlight, setInFlight] = useState(false);
@@ -115,6 +122,9 @@ export default function App({
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(
     initialSelectedSubagentId ?? null
   );
+  const [chatRoomSelected, setChatRoomSelected] = useState(initialChatRoomSelected ?? false);
+  // Not persisted; a fresh chatHistoryUpdate poll refreshes it shortly after App re-mounts.
+  const [chatRoom, setChatRoom] = useState<ChatRoomSnapshot | undefined>(undefined);
   /** True if all thinking blocks should be auto-expanded. */
   const [allThinkingExpanded, setAllThinkingExpanded] = useState<boolean>(false);
   const promptInputRef = useRef<PromptInputHandle>(null);
@@ -153,9 +163,20 @@ export default function App({
       setSubagentTranscript(undefined);
       setSubagentInterruptPending(undefined);
       vscode.postMessage({ type: 'selectSubagent', sessionId });
+      if (chatRoomSelected) {
+        setChatRoomSelected(false);
+        vscode.postMessage({ type: 'selectChatRoom', selected: false });
+      }
     },
-    [vscode]
+    [vscode, chatRoomSelected]
   );
+
+  /** Selects the subagents panel's "Chat Room" row, deliberately leaving `selectedSubagentId`
+   * untouched. */
+  const selectChatRoom = useCallback((): void => {
+    setChatRoomSelected(true);
+    vscode.postMessage({ type: 'selectChatRoom', selected: true });
+  }, [vscode]);
 
   /** Opens the subagents panel if it isn't already shown -- called when a `CreateSubagent` tool
    * call starts, so a session's first subagent surfaces the panel automatically instead of
@@ -180,6 +201,7 @@ export default function App({
       taskPanelVisible,
       subagentsPanelVisible,
       selectedSubagentId,
+      chatRoomSelected,
     });
   }, [
     entries,
@@ -189,6 +211,7 @@ export default function App({
     taskPanelVisible,
     subagentsPanelVisible,
     selectedSubagentId,
+    chatRoomSelected,
     vscode,
   ]);
 
@@ -230,10 +253,13 @@ export default function App({
         sessionId: initialSelectedSubagentId ?? null,
       });
     }
+    if (initialChatRoomSelected ?? false) {
+      vscode.postMessage({ type: 'selectChatRoom', selected: true });
+    }
     // Pulls the current prompt history from the host -- the host also pushes it on view resolve,
     // but that push may arrive before this listener is registered; this pull is the reliable path.
     vscode.postMessage({ type: 'requestPromptHistory' });
-  }, [initialSubagentsPanelVisible, initialSelectedSubagentId, vscode]);
+  }, [initialSubagentsPanelVisible, initialSelectedSubagentId, initialChatRoomSelected, vscode]);
 
   useEffect(() => {
     // Reclaims focus for the prompt input once a turn is no longer running -- mirrors the
@@ -265,6 +291,7 @@ export default function App({
       setTaskList((prev) => applyTaskListUpdate(prev, message));
       setSubagentNodes((prev) => applySubagentTreeUpdate(prev, message));
       setSubagentTranscript((prev) => applySubagentTranscriptUpdate(prev, message));
+      setChatRoom((prev) => applyChatHistoryUpdate(prev, message));
       if (message.type === 'subagentTranscriptUpdate' && message.state === 'finished') {
         // Clears the optimistic "Sending interrupt…" notice once a poll confirms the
         // interrupted subagent has actually finished -- mirrors the TUI's own
@@ -394,6 +421,11 @@ export default function App({
   }
 
   function submit(text: string, images?: ImageAttachment[]): void {
+    if (chatRoomSelected) {
+      // A synchronous log append; the next chatHistoryUpdate poll shows it.
+      vscode.postMessage({ type: 'submitChatMessage', text });
+      return;
+    }
     if (selectedSubagentId !== null) {
       // Addresses the selected subagent directly (`_klorb/subagentPrompt`), bypassing the root
       // session entirely -- the server decides direct-send-vs-enqueue from the subagent's own
@@ -529,14 +561,17 @@ export default function App({
       ? subagentTranscript
       : undefined;
   const rootTitleDisplay = sessionTitleDisplay(status);
-  const headerTitle = isSubagentSelected
-    ? `${selectedSubagentNode?.address ?? '?'} ${selectedSubagentNode?.title ?? 'New session…'}`
-    : rootTitleDisplay.text;
+  const headerTitle = chatRoomSelected
+    ? '💬 Chat Room'
+    : isSubagentSelected
+      ? `${selectedSubagentNode?.address ?? '?'} ${selectedSubagentNode?.title ?? 'New session…'}`
+      : rootTitleDisplay.text;
   // Editing (and thus the rename-on-empty placeholder) only applies to the root session -- a
   // subagent's title comes from its own tree node, not `status.sessionTitle`, and
   // `status.sessionTitle === undefined` means the host hasn't reported a live session yet (see
   // `StatusUpdateMessage.sessionTitle`'s own null-vs-undefined convention).
-  const titleEditable = !isSubagentSelected && status.sessionTitle !== undefined;
+  const titleEditable =
+    !chatRoomSelected && !isSubagentSelected && status.sessionTitle !== undefined;
   // Shown only while the subagents panel itself is hidden -- once it's open, the panel's own
   // blinking "!" row marker already surfaces the same fact, mirroring the TUI's
   // `#subagent-attention-status` fallback (`_update_subagent_attention_status_line`).
@@ -563,14 +598,27 @@ export default function App({
           nodes={subagentNodes}
           selectedSessionId={selectedSubagentId}
           attentionSessionId={attentionSessionId}
+          chatCapable={status.chatCapable}
+          chatRoomSelected={chatRoomSelected}
+          chatUnreadCount={chatRoom?.unreadCount ?? 0}
+          chatUnreadMentionCount={chatRoom?.unreadMentionCount ?? 0}
           onSelect={selectSubagentRow}
+          onSelectChatRoom={selectChatRoom}
           onToggleVisibility={toggleSubagentsPanelVisible}
         />
       ) : null}
       {taskPanelVisible ? (
         <TaskPanel taskList={taskList} onToggleVisibility={toggleTaskPanelVisible} />
       ) : null}
-      {isSubagentSelected ? (
+      {chatRoomSelected ? (
+        <ChatRoomView
+          messages={chatRoom?.messages ?? []}
+          nodes={subagentNodes}
+          onSelectParticipant={(sessionId) =>
+            selectSubagentRow(sessionId === rootNode?.id ? null : sessionId)
+          }
+        />
+      ) : isSubagentSelected ? (
         <SubagentTranscriptView
           key={selectedSubagentId}
           entries={subagentTranscriptEntries(activeSubagentTranscript, subagentExpandedCallIds)}
@@ -606,14 +654,22 @@ export default function App({
       ) : null}
       <PromptInput
         ref={promptInputRef}
-        inFlight={isSubagentSelected ? activeSubagentTranscript?.state === 'running' : inFlight}
+        inFlight={
+          chatRoomSelected
+            ? false
+            : isSubagentSelected
+              ? activeSubagentTranscript?.state === 'running'
+              : inFlight
+        }
         muted={interactionVisible}
         // While a subagent is selected, `_klorb/subagentPrompt` decides direct-send-vs-enqueue
         // itself from the subagent's own live state (see `submit()`), so the input must stay
         // enabled regardless of that subagent's `inFlight` value above -- forcing
         // `enqueueMessageCapable` true here is what keeps it enabled either way.
         enqueueMessageCapable={isSubagentSelected ? true : status.enqueueMessageCapable}
-        sessionKey={selectedSubagentId ?? 'root'}
+        sessionKey={chatRoomSelected ? 'chat' : (selectedSubagentId ?? 'root')}
+        chatMode={chatRoomSelected}
+        chatMentionTargets={subagentNodes}
         workspaceFiles={workspaceFiles}
         skills={skills}
         promptHistory={promptHistory}
@@ -627,7 +683,7 @@ export default function App({
         taskPanelVisible={taskPanelVisible}
         subagentsPanelVisible={subagentsPanelVisible}
         allThinkingExpanded={allThinkingExpanded}
-        interactive={!isSubagentSelected}
+        interactive={!chatRoomSelected && !isSubagentSelected}
         onPickModel={pickModel}
         onPickThinking={pickThinking}
         onCyclePermissionMode={cyclePermissionMode}

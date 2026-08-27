@@ -30,6 +30,7 @@ function main(): void {
         initialTaskPanelVisible={state.taskPanelVisible}
         initialSubagentsPanelVisible={state.subagentsPanelVisible}
         initialSelectedSubagentId={state.selectedSubagentId}
+        initialChatRoomSelected={state.chatRoomSelected}
       />
     </ErrorBoundary>
   );

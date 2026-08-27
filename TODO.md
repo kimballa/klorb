@@ -73,6 +73,9 @@
   * SearchTools currently only does case-insensitive literal match over tool
     name/description/parameter schema docs. Add semantic index search too (requires a
     json- or tool-specific chunker).
+  * SearchChat to search through the chat history, especially messages created before a given
+    subagent was spawned. (Its high-water mark will be initialized to the end of the conversation
+    at that point, not the beginning.)
 
 * Improvements to Skills:
   * Add general skills/know-how for writing docs/specs and docs/adrs/ files.
@@ -139,7 +142,7 @@
 
 ### Feature backlog
 
-* ... 
+* ...
 
 ## VSCode plugin
 
@@ -150,8 +153,6 @@
   the prompt itself) that says "This model does not support vision."
 
 ### Feature backlog
-
-* Add chat history view / conversation capability where user input becomes chat room input / @mention capability; list Chat in the subagents panel, all like we do in TUI.
 
 * VSCode should show a custom icon for the plugin in the 'installed plugins' list.
 
@@ -280,13 +281,5 @@
   (`command_rules`, `skill_rules`, `read_dirs`/`write_dirs`/`read_files`/`write_files`), so a
   subagent's creation can filter those the same way it now filters hooks/events, instead of a
   subagent always inheriting every one of its parent's bash/skill/directory grants unconditionally.
-
-### Plan 026: Group chat room
-
-* VS Code plugin / ACP rendering of the chat room — needs its own ACP extension methods/
-  notifications and webview messaging design, not a reuse of the TUI panel's own mechanics.
-* A `SearchChat`-style tool for scrolling back through history older than a participant's own hwm
-  window, if bounded retention (`tools.chat.maxHistory`) turns out to be too aggressive in
-  practice for long sessions.
 
 ## Meta / dev environment

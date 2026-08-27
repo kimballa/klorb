@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SubagentNodeInfo } from 'shared/webviewMessages';
-import { SubagentsPanel } from 'webview/features/subagents';
+import { SubagentsPanel, type SubagentsPanelProps } from 'webview/features/subagents';
 
 afterEach(cleanup);
 
@@ -40,6 +40,20 @@ const CHILD_NODE: SubagentNodeInfo = {
   outputTokens: 50,
 };
 
+/** Fills in the chat-room props every test doesn't specifically exercise, so each test only
+ * spells out what it actually varies. */
+function chatRoomDefaults(): Pick<
+  SubagentsPanelProps,
+  'chatRoomSelected' | 'chatUnreadCount' | 'chatUnreadMentionCount' | 'onSelectChatRoom'
+> {
+  return {
+    chatRoomSelected: false,
+    chatUnreadCount: 0,
+    chatUnreadMentionCount: 0,
+    onSelectChatRoom: () => undefined,
+  };
+}
+
 describe('SubagentsPanel', () => {
   it('renders nothing until a subagentTreeUpdate has arrived', () => {
     const { container } = render(
@@ -48,6 +62,7 @@ describe('SubagentsPanel', () => {
         selectedSessionId={null}
         onSelect={() => undefined}
         onToggleVisibility={() => undefined}
+        {...chatRoomDefaults()}
       />
     );
 
@@ -61,6 +76,7 @@ describe('SubagentsPanel', () => {
         selectedSessionId={null}
         onSelect={() => undefined}
         onToggleVisibility={() => undefined}
+        {...chatRoomDefaults()}
       />
     );
 
@@ -78,6 +94,7 @@ describe('SubagentsPanel', () => {
         selectedSessionId="subagent-1"
         onSelect={onSelect}
         onToggleVisibility={() => undefined}
+        {...chatRoomDefaults()}
       />
     );
 
@@ -93,6 +110,7 @@ describe('SubagentsPanel', () => {
         selectedSessionId={null}
         onSelect={onSelect}
         onToggleVisibility={() => undefined}
+        {...chatRoomDefaults()}
       />
     );
 
@@ -107,6 +125,7 @@ describe('SubagentsPanel', () => {
         selectedSessionId="subagent-1"
         onSelect={() => undefined}
         onToggleVisibility={() => undefined}
+        {...chatRoomDefaults()}
       />
     );
 
@@ -121,10 +140,86 @@ describe('SubagentsPanel', () => {
         selectedSessionId={null}
         onSelect={() => undefined}
         onToggleVisibility={onToggleVisibility}
+        {...chatRoomDefaults()}
       />
     );
 
     fireEvent.click(screen.getByTitle('Unpin subagents panel'));
     expect(onToggleVisibility).toHaveBeenCalledOnce();
+  });
+
+  it('does not render the Chat Room row when the server is not chat-capable', () => {
+    render(
+      <SubagentsPanel
+        nodes={[ROOT_NODE]}
+        selectedSessionId={null}
+        onSelect={() => undefined}
+        onToggleVisibility={() => undefined}
+        chatCapable={false}
+        {...chatRoomDefaults()}
+      />
+    );
+
+    expect(screen.queryByText('💬 Chat Room')).toBeNull();
+  });
+
+  it('renders the Chat Room row first when chat-capable, and selecting it calls onSelectChatRoom', () => {
+    const onSelectChatRoom = vi.fn();
+    render(
+      <SubagentsPanel
+        nodes={[ROOT_NODE, CHILD_NODE]}
+        selectedSessionId={null}
+        onSelect={() => undefined}
+        onToggleVisibility={() => undefined}
+        chatCapable
+        {...chatRoomDefaults()}
+        onSelectChatRoom={onSelectChatRoom}
+      />
+    );
+
+    const rows = screen.getAllByRole('option');
+    expect(rows[0]?.textContent).toContain('💬 Chat Room');
+
+    fireEvent.click(screen.getByText('💬 Chat Room'));
+    expect(onSelectChatRoom).toHaveBeenCalledOnce();
+  });
+
+  it('shows a steady marker for unread chat messages while it is not selected', () => {
+    render(
+      <SubagentsPanel
+        nodes={[ROOT_NODE]}
+        selectedSessionId={null}
+        onSelect={() => undefined}
+        onToggleVisibility={() => undefined}
+        chatCapable
+        chatRoomSelected={false}
+        chatUnreadCount={3}
+        chatUnreadMentionCount={0}
+        onSelectChatRoom={() => undefined}
+      />
+    );
+
+    const chatRow = screen.getByRole('option', { name: /Chat Room/ });
+    expect(chatRow.textContent).toContain('!');
+  });
+
+  it('shows "Chat Room" in the footer, and no marker, once the row is selected', () => {
+    render(
+      <SubagentsPanel
+        nodes={[ROOT_NODE]}
+        selectedSessionId={null}
+        onSelect={() => undefined}
+        onToggleVisibility={() => undefined}
+        chatCapable
+        chatRoomSelected
+        chatUnreadCount={3}
+        chatUnreadMentionCount={0}
+        onSelectChatRoom={() => undefined}
+      />
+    );
+
+    expect(screen.getByText('Chat Room')).toBeTruthy();
+    const chatRow = screen.getByRole('option', { name: /Chat Room/ });
+    expect(chatRow.textContent).not.toContain('!');
   });
 });

@@ -211,11 +211,48 @@ delete-to-end-of-line binding, swallowed the same way as `Ctrl+R`; `Ctrl+P` is T
 testing, since a Ctrl+digit combo depends on the terminal supporting extended key reporting rather
 than the classic single-byte control codes `Ctrl`+letter uses.
 
+## VS Code plugin integration
+
+### ACP surface
+
+Two request/response ext methods on `KlorbAcpAgent` (`klorb/src/klorb/server/klorb_agent.py`),
+following the same shape as the subagents panel's own `_klorb/subagentTree`/`_klorb/subagentPrompt`
+(docs/specs/subagents.md's "Subagents panel (VSCode)" section):
+
+* **`_klorb/chatHistory`** — `_ext_chat_history` returns
+  `klorb.server.chat_updates.build_chat_history_snapshot(root)`'s
+  `{"messages": [{"seq", "senderId", "timestamp", "body"}, ...], "unreadCount", "unreadMentionCount"}`,
+  where the counts are `CHAT_USER_ID`'s own tallies. Calling `Channel.register_participant
+  (CHAT_USER_ID)` on every build is a safe no-op once a hwm already exists, so the very first poll
+  a client ever makes is what seeds the user's hwm at "now" — the VS Code analogue of the TUI
+  seeding it the first time the chat row is opened.
+* **`_klorb/chatPost`** — `_ext_chat_post` posts `params["text"]` as `CHAT_USER_ID`, after
+  `correct_mention_case`, then attempts an `@mention` active wake per resolved mention
+  (`notify_chat_mention`) — a direct port of `SubagentsPanelMixin._submit_chat_post`. Returns
+  `{"seq", "mentions", "unresolvedMentions"}`.
+
+`initialize()`'s `field_meta["klorb"]` gains a `"chat": True` flag, mirroring `"subagents"`.
+
+### Webview
+
+`vscode-plugin/src/host/features/chat/ChatPoller` polls `_klorb/chatHistory` once per second while
+the chat room is selected (mirroring `SubagentPoller`'s transcript-poll cadence), gated on
+`AcpConnection.chatCapable`; `postMessage()` calls `_klorb/chatPost` then polls immediately.
+`webview/features/chatRoom` renders the subagents panel's synthetic "💬 Chat Room" row (always
+first, hidden entirely when `!chatCapable`) and, once selected, an IRC-style transcript
+(`ChatRoomView`, its own small `Virtuoso` list rather than a reuse of `HistoryView`) in place of
+the root/subagent history — `App`'s `chatRoomSelected` boolean is layered independently of
+`selectedSubagentId`, mirroring the TUI's `ReplApp._chat_selected`. Participant identity (nicknames,
+the `@`-mention finder's candidate list) is derived client-side from `App`'s own `subagentNodes`
+(already polled whenever the panel is visible) rather than a second fetch, since a `SubagentNodeInfo`
+already carries everything `chat_nickname()` needs (`role`, `address`). `@mention` resolution and
+substitution happen fresh at render time against that same list, mirroring
+`_build_chat_message_content`'s render-time (not post-time) resolution; an `@user`/`@User` mention
+renders as a `@You` chip with no click handler (a no-op), while a resolved agent chip's click
+selects that agent's own row.
+
 ## Out of scope
 
-* **VS Code plugin / ACP rendering of the chat room.** The tools work identically over ACP the
-  moment they exist (any client can call them), but a chat view in the webview needs its own ACP
-  extension methods/notifications and webview messaging — see `TODO.md`.
 * **Desktop/OS-level notification** (terminal bell, `notify-send`) on an `@user` mention.
 * **Chat message editing/deletion.**
 * **Scrolling back past a participant's hwm window** once `chat_max_history` trims it away — no

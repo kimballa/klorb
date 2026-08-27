@@ -460,9 +460,9 @@ export function applyHostMessage(entries: HistoryEntry[], message: HostMessage):
     case 'subagentTreeUpdate':
     case 'subagentTranscriptUpdate':
     case 'toggleSubagentsPanel':
+    case 'chatHistoryUpdate':
       // Tracked separately by `App`'s own `subagentNodes`/`subagentTranscript`/
-      // `subagentsPanelVisible` state, not as a history entry -- the subagents panel/transcript
-      // view render from that state instead (see `webview/features/subagents`).
+      // `subagentsPanelVisible`/`chatRoom` state, not as a history entry.
       return entries;
     case 'sessionReplay':
       return applySessionReplay(message.entries);

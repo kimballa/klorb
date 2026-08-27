@@ -851,5 +851,29 @@ describe('App', () => {
 
       expect(posted).toContainEqual({ type: 'selectSubagent', sessionId: null });
     });
+
+    it('clicking a chat mention chip that resolves to the root session selects the root, not its own id', () => {
+      // Regression test: a mention chip's resolved id is the root session's real id, but the
+      // app's own selection model uses null for "root selected".
+      const { vscode, posted } = makeVsCode();
+      render(<App vscode={vscode} initialEntries={[]} initialStatus={{ chatCapable: true }} />);
+      postHostMessage({ type: 'subagentTreeUpdate', nodes: [TREE_NODES[0]] });
+      postHostMessage({ type: 'toggleSubagentsPanel' });
+      fireEvent.click(screen.getByText('💬 Chat Room'));
+      postHostMessage({
+        type: 'chatHistoryUpdate',
+        messages: [
+          { seq: 1, senderId: 'user', timestamp: '2026-01-01T00:00:00', body: 'hi @operator-1' },
+        ],
+        unreadCount: 0,
+        unreadMentionCount: 0,
+      });
+      posted.length = 0;
+
+      fireEvent.click(screen.getByText('@operator-1'));
+
+      expect(posted).toContainEqual({ type: 'selectSubagent', sessionId: null });
+      expect(posted).not.toContainEqual({ type: 'selectSubagent', sessionId: 'root-1' });
+    });
   });
 });

@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { ApiKeyManager, type ApiKeyVsCode } from 'host/apiKeyStorage';
 import { EditorIntegration, type EditorIntegrationVsCode } from 'host/editorIntegration';
 import { AcpConnection, errorMessage, type RecentSessionEntry } from 'host/features/acp';
+import { ChatPoller } from 'host/features/chat';
 import { FileSearch, type FileSearchVsCode } from 'host/features/fileSearch';
 import {
   SessionControls,
@@ -208,9 +209,15 @@ export function activate(context: vscode.ExtensionContext): void {
     (update) => provider.postHostMessage({ type: 'subagentTranscriptUpdate', ...update }),
     log
   );
+  const chatPoller = new ChatPoller(
+    connection,
+    (update) => provider.postHostMessage({ type: 'chatHistoryUpdate', ...update }),
+    log
+  );
   provider.setConnection(connection);
   provider.setSessionControls(sessionControls);
   provider.setSubagentPoller(subagentPoller);
+  provider.setChatPoller(chatPoller);
   const cwd = sessionCwd();
   const promptHistory = new PromptHistory(
     realPromptHistoryVsCode(context),
@@ -226,6 +233,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push({ dispose: () => workspaceTrustBridge.dispose() });
   context.subscriptions.push({ dispose: () => connection.stop() });
   context.subscriptions.push({ dispose: () => subagentPoller.dispose() });
+  context.subscriptions.push({ dispose: () => chatPoller.dispose() });
   context.subscriptions.push(fileSearch.watch((files) => provider.setWorkspaceFiles(files)));
 
   const startConnection = async (): Promise<void> => {
@@ -245,6 +253,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // in flight -- re-check the poller's timers now that `subagentsCapable` is known, so a
       // reload with the panel previously open doesn't leave it silently unpolled.
       subagentPoller.resync();
+      chatPoller.resync();
       await rememberLastSessionId(context, cwd, connection.sessionId);
       log(
         `klorb: startConnection: connected sessionId=${connection.sessionId} ` +

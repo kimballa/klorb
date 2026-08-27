@@ -23,6 +23,9 @@ export interface SessionState {
   taskPanelVisible?: boolean;
   subagentsPanelVisible?: boolean;
   selectedSubagentId?: string | null;
+  /** Whether the subagents panel's "Chat Room" row is selected, layered independently of
+   * `selectedSubagentId`. */
+  chatRoomSelected?: boolean;
 }
 
 /**

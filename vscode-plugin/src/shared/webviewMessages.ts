@@ -284,6 +284,9 @@ export interface StatusUpdateMessage {
    * older server that predates `_klorb/subagentTree` doesn't leave the panel permanently empty
    * with no explanation. */
   subagentsCapable?: boolean;
+  /** Whether the connected server advertised the `chat` capability at `initialize()`, gating the
+   * subagents panel's "Chat Room" row. */
+  chatCapable?: boolean;
 }
 
 /** An ordered label -> numeric-value map, rendered as a right-aligned two-column table row per
@@ -443,6 +446,37 @@ export interface CancelSubagentMessage {
   sessionId: string;
 }
 
+/** One posted chat-room message: `senderId` is a live/dead session id or `"user"` for the human,
+ * and `body` is the raw text exactly as posted. */
+export interface ChatMessageInfo {
+  seq: number;
+  senderId: string;
+  timestamp: string;
+  body: string;
+}
+
+/** A fresh snapshot of the whole chat room, replacing the transcript wholesale.
+ * `unreadCount`/`unreadMentionCount` are the human user's own tallies. */
+export interface ChatHistoryUpdateMessage {
+  type: 'chatHistoryUpdate';
+  messages: ChatMessageInfo[];
+  unreadCount: number;
+  unreadMentionCount: number;
+}
+
+/** The user selected (or deselected) the subagents panel's "Chat Room" row, a boolean since
+ * there's only one chat room per tree to select. */
+export interface SelectChatRoomMessage {
+  type: 'selectChatRoom';
+  selected: boolean;
+}
+
+/** The user submitted a message from the chat room's composer, a synchronous log append. */
+export interface SubmitChatMessageMessage {
+  type: 'submitChatMessage';
+  text: string;
+}
+
 /** One text entry replayed from a previously saved session (see `SessionReplayMessage`) --
  * matches `webview/features/history/historyModel.ts`'s own `TextHistoryEntry` shape
  * field-for-field, but is defined independently here (not imported from that webview-only
@@ -562,6 +596,7 @@ export type HostMessage =
   | ToggleTaskPanelMessage
   | SubagentTreeUpdateMessage
   | SubagentTranscriptUpdateMessage
+  | ChatHistoryUpdateMessage
   | ToggleSubagentsPanelMessage
   | SessionReplayMessage
   | WorkspaceFilesMessage
@@ -770,6 +805,8 @@ export type WebviewMessage =
   | SetSubagentsPanelVisibleMessage
   | SelectSubagentMessage
   | CancelSubagentMessage
+  | SelectChatRoomMessage
+  | SubmitChatMessageMessage
   | RequestPromptHistoryMessage
   | WebviewErrorMessage;
 
@@ -1035,7 +1072,8 @@ function parseStatusUpdate(record: Record<string, unknown>): StatusUpdateMessage
     (record.enqueueMessageCapable !== undefined &&
       typeof record.enqueueMessageCapable !== 'boolean') ||
     (record.activeModelVision !== undefined && typeof record.activeModelVision !== 'boolean') ||
-    (record.subagentsCapable !== undefined && typeof record.subagentsCapable !== 'boolean')
+    (record.subagentsCapable !== undefined && typeof record.subagentsCapable !== 'boolean') ||
+    (record.chatCapable !== undefined && typeof record.chatCapable !== 'boolean')
   ) {
     return undefined;
   }
@@ -1216,6 +1254,78 @@ export function parseSubagentTranscriptResult(value: unknown):
     aborted: v.aborted,
     queuedMessages: v.queuedMessages,
   };
+}
+
+function isChatMessageInfo(value: unknown): value is ChatMessageInfo {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.seq === 'number' &&
+    typeof v.senderId === 'string' &&
+    typeof v.timestamp === 'string' &&
+    typeof v.body === 'string'
+  );
+}
+
+function parseChatHistoryUpdate(
+  record: Record<string, unknown>
+): ChatHistoryUpdateMessage | undefined {
+  if (
+    !Array.isArray(record.messages) ||
+    !record.messages.every(isChatMessageInfo) ||
+    typeof record.unreadCount !== 'number' ||
+    typeof record.unreadMentionCount !== 'number'
+  ) {
+    return undefined;
+  }
+  return {
+    type: 'chatHistoryUpdate',
+    messages: record.messages,
+    unreadCount: record.unreadCount,
+    unreadMentionCount: record.unreadMentionCount,
+  };
+}
+
+/** Validates a raw `_klorb/chatHistory` ext-method result (`{messages, unreadCount,
+ * unreadMentionCount}`, no message envelope), or `undefined` if malformed. */
+export function parseChatHistoryResult(
+  value: unknown
+): Omit<ChatHistoryUpdateMessage, 'type'> | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const v = value as Record<string, unknown>;
+  if (
+    !Array.isArray(v.messages) ||
+    !v.messages.every(isChatMessageInfo) ||
+    typeof v.unreadCount !== 'number' ||
+    typeof v.unreadMentionCount !== 'number'
+  ) {
+    return undefined;
+  }
+  return {
+    messages: v.messages,
+    unreadCount: v.unreadCount,
+    unreadMentionCount: v.unreadMentionCount,
+  };
+}
+
+function parseSelectChatRoom(record: Record<string, unknown>): SelectChatRoomMessage | undefined {
+  if (typeof record.selected !== 'boolean') {
+    return undefined;
+  }
+  return { type: 'selectChatRoom', selected: record.selected };
+}
+
+function parseSubmitChatMessage(
+  record: Record<string, unknown>
+): SubmitChatMessageMessage | undefined {
+  if (typeof record.text !== 'string') {
+    return undefined;
+  }
+  return { type: 'submitChatMessage', text: record.text };
 }
 
 function parseSetSubagentsPanelVisible(
@@ -1453,6 +1563,8 @@ export function parseHostMessage(data: unknown): HostMessage | undefined {
       return parseSubagentTreeUpdate(record);
     case 'subagentTranscriptUpdate':
       return parseSubagentTranscriptUpdate(record);
+    case 'chatHistoryUpdate':
+      return parseChatHistoryUpdate(record);
     case 'sessionReplay':
       return parseSessionReplay(record);
     case 'workspaceFiles':
@@ -1514,6 +1626,10 @@ export function parseWebviewMessage(data: unknown): WebviewMessage | undefined {
       return parseSelectSubagent(record);
     case 'cancelSubagent':
       return parseCancelSubagent(record);
+    case 'selectChatRoom':
+      return parseSelectChatRoom(record);
+    case 'submitChatMessage':
+      return parseSubmitChatMessage(record);
     case 'renameSession':
       return parseRenameSession(record);
     case 'webviewError':

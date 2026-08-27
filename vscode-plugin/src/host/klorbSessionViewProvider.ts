@@ -11,6 +11,7 @@ import {
   type SessionInfo,
   type SessionUpdateListener,
 } from 'host/features/acp';
+import type { ChatPoller } from 'host/features/chat';
 import type { SessionControls } from 'host/features/sessionControls';
 import type { SubagentPoller } from 'host/features/subagents';
 import type { PromptHistory } from 'host/promptHistory';
@@ -57,6 +58,7 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
   private _connection: AcpConnection | undefined;
   private _sessionControls: SessionControls | undefined;
   private _subagentPoller: SubagentPoller | undefined;
+  private _chatPoller: ChatPoller | undefined;
   // The last workspace file list `setWorkspaceFiles()` received from `extension.ts`'s
   // `FileSearch.watch()` callback -- re-posted (not re-scanned) on `resolveWebviewView()`, the
   // same "repost cached state to a freshly resolved view" pattern `postSnapshot()` uses.
@@ -93,6 +95,12 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
    * construction-order reason as `setConnection()`/`setSessionControls()`. */
   public setSubagentPoller(subagentPoller: SubagentPoller): void {
     this._subagentPoller = subagentPoller;
+  }
+
+  /** Wires the `ChatPoller` this provider routes `selectChatRoom`/`submitChatMessage` webview
+   * messages into. */
+  public setChatPoller(chatPoller: ChatPoller): void {
+    this._chatPoller = chatPoller;
   }
 
   /** Wires the `PromptHistory` this provider appends submitted prompts into and pushes to the
@@ -365,6 +373,16 @@ export class KlorbSessionViewProvider implements vscode.WebviewViewProvider, Ses
           await this._subagentPoller?.cancelSubagent(parsed.sessionId);
         } catch (err) {
           this._log(`klorb: cancelSubagent failed: ${errorMessage(err)}`);
+        }
+        break;
+      case 'selectChatRoom':
+        this._chatPoller?.setSelected(parsed.selected);
+        break;
+      case 'submitChatMessage':
+        try {
+          await this._chatPoller?.postMessage(parsed.text);
+        } catch (err) {
+          this._log(`klorb: submitChatMessage failed: ${errorMessage(err)}`);
         }
         break;
       case 'requestPromptHistory':

@@ -16,9 +16,10 @@ import {
 
 import { readImageDimensions } from 'shared/imageDimensions';
 import { IMAGE_FILE_MIME_TYPES } from 'shared/imageFileTypes';
-import type { ImageAttachment, SkillEntry } from 'shared/webviewMessages';
+import type { ImageAttachment, SkillEntry, SubagentNodeInfo } from 'shared/webviewMessages';
 import AttachmentThumbnail from 'webview/components/AttachmentThumbnail';
 import { StopMediaIcon } from 'webview/components/klorbIcons';
+import { ChatFinderPanel, useChatMentionFinder } from 'webview/features/chatRoom';
 import { FileFinderPanel, type Finder, useFileFinder } from 'webview/features/fileFinder';
 import { SkillFinderPanel, useSkillFinder } from 'webview/features/skillFinder';
 import { classifyEnterKey } from 'webview/keyHandling';
@@ -84,8 +85,14 @@ interface PromptInputProps {
   enqueueMessageCapable?: boolean;
   /** The workspace's file list (see `App`'s `workspaceFiles` state), backing the `@`-mention
    * file finder (`webview/features/fileFinder`). Empty until the host's `workspaceFiles`
-   * message arrives, or when no workspace folder is open. */
+   * message arrives, or when no workspace folder is open. Ignored while `chatMode` is true. */
   workspaceFiles?: string[];
+  /** True while the subagents panel's "Chat Room" row is selected: `@` opens the chat room's own
+   * participant finder in place of the ordinary `@file` finder. */
+  chatMode?: boolean;
+  /** The live subagent tree (`App`'s own `subagentNodes`), backing the chat room's `@`-mention
+   * participant finder while `chatMode` is true. */
+  chatMentionTargets?: SubagentNodeInfo[];
   /** The discoverable skill catalog (see `App`'s `skills` state), backing the `/`-mention
    * skill finder (`webview/features/skillFinder`). Empty when no skills are discoverable. */
   skills?: SkillEntry[];
@@ -144,7 +151,8 @@ const CARET_MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
  * in which case the textarea stays enabled (with both Send and Stop available) so a mid-turn
  * submit queues into the running turn instead. Exposes an imperative `focus()` via `ref` (see
  * `PromptInputHandle`) so `App` can reclaim focus after a turn ends or an interaction resolves.
- * Also drives the `@`-mention file finder (`useFileFinder`/`FileFinderPanel`): while it's open,
+ * Also drives the `@`-mention finder (`useFileFinder`/`FileFinderPanel`, or
+ * `useChatMentionFinder`/`ChatFinderPanel` while `chatMode` is true): while it's open,
  * ArrowUp/ArrowDown/Enter/Tab/Escape are claimed for finder navigation instead of their usual
  * textarea behavior.
  */
@@ -154,6 +162,8 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     muted = false,
     enqueueMessageCapable = false,
     workspaceFiles = [],
+    chatMode = false,
+    chatMentionTargets = [],
     skills = [],
     promptHistory = [],
     imagesCapable = false,
@@ -180,7 +190,9 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   const trailingNewlinesRef = useRef(0);
   const metricsRef = useRef<{ font: string; lineHeight: number } | null>(null);
   const disabled = inFlight && !enqueueMessageCapable;
-  const finder = useFileFinder(workspaceFiles);
+  const fileFinder = useFileFinder(workspaceFiles);
+  const chatFinder = useChatMentionFinder(chatMentionTargets);
+  const finder = chatMode ? chatFinder : fileFinder;
   const skillFinder = useSkillFinder(skills);
   // Per-session draft persistence: swaps `draft` when `sessionKey` changes, stashing the
   // outgoing session's current text first -- so switching the subagents-panel selection away and
@@ -552,11 +564,18 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         </div>
       ) : null}
       <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
-        {finder.isOpen ? (
+        {finder.isOpen && chatMode ? (
+          <ChatFinderPanel
+            matches={chatFinder.matches}
+            activeIndex={chatFinder.activeIndex}
+            onHover={chatFinder.setActiveIndex}
+            onSelect={(index) => applyFinderSelection(finder, index)}
+          />
+        ) : finder.isOpen ? (
           <FileFinderPanel
-            matches={finder.matches}
-            activeIndex={finder.activeIndex}
-            onHover={finder.setActiveIndex}
+            matches={fileFinder.matches}
+            activeIndex={fileFinder.activeIndex}
+            onHover={fileFinder.setActiveIndex}
             onSelect={(index) => applyFinderSelection(finder, index)}
           />
         ) : null}
@@ -573,7 +592,11 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
           id="prompt-input"
           rows={rows}
           resize="none"
-          placeholder="Message Klorb... (Enter to send, Shift+Enter for a newline)"
+          placeholder={
+            chatMode
+              ? 'Message the chat room... (@ to mention an agent)'
+              : 'Message Klorb... (Enter to send, Shift+Enter for a newline)'
+          }
           disabled={disabled}
           onInput={(event: SyntheticEvent) => {
             const value = targetValue(event);
