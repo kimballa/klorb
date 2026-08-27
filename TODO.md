@@ -204,10 +204,6 @@
   relaying -- a plain-`http://` target (as opposed to `https://`) gets no reply at all instead of
   a domain-gated refusal. Narrow in practice (registry/API traffic is HTTPS-only today), but
   worth closing if it ever bites a real workflow. See `klorb.sandbox.network`'s module docstring.
-* `bashDomains.allow`'s packaged defaults cover `pip`/`uv`/`npm` (PyPI, npm registry) but not
-  Maven Central (`cargo`/`go`'s registries are also unlisted) -- add `repo.maven.apache.org` (and
-  reconsider `crates.io`/`proxy.golang.org`) once real usage shows they're worth defaulting to
-  rather than an ordinary first-use `ask`.
 
 ### Plan 020: Vision / image input
 
