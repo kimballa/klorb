@@ -2,7 +2,7 @@
 """DateTime tool: reports the current date and time in ISO 8601 format."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import pytz
 from pydantic import BaseModel, Field
@@ -14,12 +14,7 @@ class DateTimeArgs(BaseModel):
     """Arguments for the DateTime tool."""
 
     time_zone: str | None = Field(
-        default=None,
-        description=(
-            "IANA time zone name (e.g. 'America/New_York', 'UTC') to format the current time "
-            "in. Omit to use local system time."
-        ),
-    )
+        default=None, description="Optional time zone. Omit for local time.")
 
 
 class DateTimeTool(Tool):
@@ -35,10 +30,7 @@ class DateTimeTool(Tool):
         return True
 
     def description(self) -> str:
-        return (
-            "Returns the current date and time as ISO 8601 text. Accepts an optional "
-            "time_zone (any name pytz recognizes); without it, returns local system time."
-        )
+        return "Returns the current date and time."
 
     def parameters(self) -> type[BaseModel]:
         return DateTimeArgs
@@ -46,7 +38,7 @@ class DateTimeTool(Tool):
     def apply(self, args: dict[str, Any]) -> Any:
         validated = DateTimeArgs.model_validate(args)
 
-        if validated.time_zone is not None:
+        if validated.time_zone:
             try:
                 tz = pytz.timezone(validated.time_zone)
             except pytz.exceptions.UnknownTimeZoneError:
@@ -56,3 +48,11 @@ class DateTimeTool(Tool):
             now = datetime.now().astimezone()
 
         return {"datetime": now.isoformat()}
+
+    def format_response(self, apply_output: Any) -> str:
+        return cast(str, cast(dict, apply_output)["datetime"])
+
+    def summary(self, args: dict[str, Any], result: Any = None, error: str | None = None) -> str:
+        if error is not None:
+            return f"DateTime failed: {error}"
+        return self.format_response(result)

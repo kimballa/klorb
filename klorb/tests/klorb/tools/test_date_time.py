@@ -46,6 +46,38 @@ def test_apply_rejects_unknown_time_zone(
         _tool(make_session_config).apply({"time_zone": "Not/A_Zone"})
 
 
+def test_apply_treats_empty_time_zone_as_local_time(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    result = _tool(make_session_config).apply({"time_zone": ""})
+
+    parsed = datetime.fromisoformat(result["datetime"])
+    assert abs((datetime.now().astimezone() - parsed).total_seconds()) < 60
+
+
+def test_format_response_returns_plain_datetime_text(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    tool = _tool(make_session_config)
+    result = tool.apply({})
+
+    assert tool.format_response(result) == result["datetime"]
+
+
+def test_summary_returns_plain_datetime_text_on_success(
+    make_session_config: Callable[..., SessionConfig],
+) -> None:
+    tool = _tool(make_session_config)
+    result = tool.apply({})
+
+    assert tool.summary({}, result=result) == result["datetime"]
+
+
+def test_summary_reports_failure(make_session_config: Callable[..., SessionConfig]) -> None:
+    tool = _tool(make_session_config)
+    assert tool.summary({}, error="boom") == "DateTime failed: boom"
+
+
 def test_tool_metadata(make_session_config: Callable[..., SessionConfig]) -> None:
     tool = _tool(make_session_config)
     assert tool.name() == "DateTime"
