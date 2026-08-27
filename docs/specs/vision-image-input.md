@@ -164,13 +164,16 @@ before an attachment is ever added to a tray.
 * `onDragOver`/`onDrop` on the input row's wrapper, and `onPaste` on the textarea, each filtered
   to `ACCEPTED_IMAGE_MIME_TYPES` (the union of every packaged vision model's own supported MIME
   types, not any one vendor's list -- the server re-validates and transcodes for the actual
-  active model regardless) and gated on the `imagesCapable` prop (`activeModelVision`); `false`
-  or not-yet-known both suppress the handlers entirely.
+  active model regardless). When `imagesCapable` (`activeModelVision`) is false or not yet known,
+  an image drop/paste is rejected with an auto-dismissing `.attachment-error` toast ("This model
+  does not support vision."), rendered inside `.input-row` so it floats above the prompt exactly
+  like the `@mention` finder panel rather than displacing or obscuring the textarea; non-image
+  drops and text-only pastes are unaffected.
 * Each accepted `Blob` is read via `FileReader.readAsDataURL` (for the base64 payload) and
   `Blob.arrayBuffer()` (fed to `readImageDimensions`) in parallel, and the result added to local
   `attachments` state, rendered via the shared `AttachmentThumbnail` component (`webview/
   components/AttachmentThumbnail.tsx`) above the textarea.
-* `MAX_ATTACHMENT_RAW_BYTES` (25MB) rejects an oversized attachment with an inline error before
+* `MAX_ATTACHMENT_RAW_BYTES` (25MB) rejects an oversized attachment with an error toast before
   it's ever base64-encoded and posted through `vscode.postMessage` -- independent of the
   server-side `tools.images.maxBytesRaw` ceiling.
 * An imperative `addAttachment()` (alongside the existing `focus()`) on `PromptInputHandle` lets

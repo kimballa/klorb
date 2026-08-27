@@ -27,6 +27,13 @@ import { classifyEnterKey } from 'webview/keyHandling';
 const MIN_ROWS = 1;
 const MAX_ROWS = 10;
 
+/** Shown in the attachment-error toast when an image is dropped or pasted against a model
+ * without vision -- rejecting it outright would otherwise leave the gesture unexplained. */
+export const NO_VISION_ERROR_MESSAGE = 'This model does not support vision.';
+
+/** How long the attachment-error toast stays visible before dismissing itself. */
+export const ATTACH_ERROR_TOAST_MS = 6000;
+
 /** MIME types offered for drag-drop/paste/file-picker attachment -- the union of every
  * packaged vision model's `vision_details.supported_mime_types` (see docs/specs/vision-image-
  * input.md), not any one vendor's own list; the server re-validates and transcodes for the
@@ -100,9 +107,10 @@ interface PromptInputProps {
    * resolve and after each submitted prompt. Empty when no prompts have been submitted yet. */
   promptHistory?: string[];
   /** Whether the currently active model supports image input (`StatusSnapshot.
-   * activeModelVision`) -- gates the drag/paste/file-picker attach affordance entirely; `false`
-   * or not-yet-known both hide it, since attaching against a non-vision model can only fail
-   * server-side. */
+   * activeModelVision`). Gates the attach affordance end to end: `false` or not-yet-known
+   * withholds the status-row "Attach Image…" picker entirely, while an image that is dropped
+   * or pasted anyway shows an error toast rather than attaching (which could only fail
+   * server-side). */
   imagesCapable?: boolean;
   /** Identifies which session `draft`/`attachments` belong to -- `'root'` for the root session,
    * a subagent's own session id otherwise. Switching this value swaps the visible draft text for
@@ -214,13 +222,21 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey]);
 
+  // Auto-dismisses the attachment-error toast; the cleanup cancels the pending timer whenever a
+  // new error replaces this one, so repeated failed attaches each get their full visibility.
+  useEffect(() => {
+    if (attachError === undefined) return undefined;
+    const timer = window.setTimeout(() => setAttachError(undefined), ATTACH_ERROR_TOAST_MS);
+    return () => window.clearTimeout(timer);
+  }, [attachError]);
+
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
     addAttachment: (image: ImageAttachment) => setAttachments((prev) => [...prev, image]),
   }));
 
-  /** Reads `blob` and adds it to the pending attachment tray, rejecting it (with an inline
-   * error instead of a silent drop) if it's over `MAX_ATTACHMENT_RAW_BYTES` or not a
+  /** Reads `blob` and adds it to the pending attachment tray, rejecting it (with an error
+   * toast instead of a silent drop) if it's over `MAX_ATTACHMENT_RAW_BYTES` or not a
    * recognized image type. Shared by the drop/paste handlers below. */
   async function addAttachmentFromBlob(blob: Blob, name?: string): Promise<void> {
     if (!ACCEPTED_IMAGE_MIME_TYPES.includes(blob.type)) {
@@ -250,32 +266,39 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
   }
 
   function handleDragOver(event: DragEvent<HTMLElement>): void {
-    if (!imagesCapable || !event.dataTransfer.types.includes('Files')) {
+    if (!event.dataTransfer.types.includes('Files')) {
       return;
     }
+    // Cancelling dragover even while !imagesCapable lets the subsequent drop event fire, so it
+    // can surface the no-vision toast instead of the gesture dying here.
     event.preventDefault();
   }
 
   function handleDrop(event: DragEvent<HTMLElement>): void {
-    if (!imagesCapable) {
+    if (!event.dataTransfer.types.includes('Files')) {
       return;
     }
+    // A file reached us; suppress the browser's default navigate-to-file response whether or
+    // not we accept it.
+    event.preventDefault();
     const files = Array.from(event.dataTransfer.files).filter((file) =>
       ACCEPTED_IMAGE_MIME_TYPES.includes(file.type)
     );
+    if (!imagesCapable) {
+      if (files.length > 0) {
+        setAttachError(NO_VISION_ERROR_MESSAGE);
+      }
+      return;
+    }
     if (files.length === 0) {
       return;
     }
-    event.preventDefault();
     for (const file of files) {
       void addAttachmentFromBlob(file, file.name);
     }
   }
 
   function handlePaste(event: ClipboardEvent<HTMLElement>): void {
-    if (!imagesCapable) {
-      return;
-    }
     const items = Array.from(event.clipboardData.items).filter((item) => item.kind === 'file');
     const imageFiles = items
       .map((item) => item.getAsFile())
@@ -283,6 +306,12 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         (file): file is File => file !== null && ACCEPTED_IMAGE_MIME_TYPES.includes(file.type)
       );
     if (imageFiles.length === 0) {
+      // Text-only clipboard content falls through to the textarea's normal paste handling.
+      return;
+    }
+    if (!imagesCapable) {
+      event.preventDefault();
+      setAttachError(NO_VISION_ERROR_MESSAGE);
       return;
     }
     event.preventDefault();
@@ -551,7 +580,6 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
 
   return (
     <div className="prompt-input-wrapper" onDragOver={handleDragOver} onDrop={handleDrop}>
-      {attachError !== undefined ? <div className="attachment-error">{attachError}</div> : null}
       {attachments.length > 0 ? (
         <div className="attachment-tray">
           {attachments.map((attachment, index) => (
@@ -564,6 +592,11 @@ const PromptInput = forwardRef<PromptInputHandle, PromptInputProps>(function Pro
         </div>
       ) : null}
       <div className={`input-row${muted ? ' input-row-muted' : ''}`} onKeyDown={handleKeyDown}>
+        {attachError !== undefined ? (
+          // Rendered inside `.input-row` (its positioning ancestor) rather than the wrapper, so
+          // it floats above the prompt like the finder panels instead of displacing the layout.
+          <div className="attachment-error">{attachError}</div>
+        ) : null}
         {finder.isOpen && chatMode ? (
           <ChatFinderPanel
             matches={chatFinder.matches}

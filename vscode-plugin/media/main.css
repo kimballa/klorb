@@ -875,8 +875,19 @@ button.bash-tool-call-command {
   background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
 }
 
+/* PromptInput's attachment-rejection toast: floats above the prompt like .file-finder-panel
+   (positioned against .input-row), so it neither displaces nor obscures the textarea itself. */
 .attachment-error {
-  padding: 4px 12px 0;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 100%;
+  margin-bottom: 4px;
+  z-index: 10;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--vscode-sideBar-background) 92%, white 8%);
   color: var(--vscode-errorForeground);
   font-size: 0.9em;
 }

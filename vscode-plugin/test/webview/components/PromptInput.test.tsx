@@ -5,7 +5,11 @@ import type { VscodeButton, VscodeTextarea } from '@vscode-elements/elements';
 import { act, createRef } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import PromptInput, { type PromptInputHandle } from 'webview/components/PromptInput';
+import PromptInput, {
+  ATTACH_ERROR_TOAST_MS,
+  NO_VISION_ERROR_MESSAGE,
+  type PromptInputHandle,
+} from 'webview/components/PromptInput';
 
 beforeAll(() => {
   // jsdom doesn't implement scrollIntoView, which FileFinderPanel calls to keep its active row
@@ -310,7 +314,7 @@ describe('PromptInput image attachments', () => {
     ]);
   });
 
-  it('ignores a drop when imagesCapable is false', () => {
+  it('shows the no-vision toast on a dropped image when imagesCapable is false', () => {
     const { container } = render(
       <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
     );
@@ -321,6 +325,63 @@ describe('PromptInput image attachments', () => {
     fireEvent.drop(wrapper, { dataTransfer: { files: [file], types: ['Files'] } });
 
     expect(screen.queryByAltText('shot.png')).toBeNull();
+    expect(screen.getByText(NO_VISION_ERROR_MESSAGE)).toBeTruthy();
+  });
+
+  it('shows the no-vision toast on a pasted image when imagesCapable is false', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+    );
+    const file = pngFile('clipboard.png');
+
+    fireEvent.paste(promptTextarea(container), {
+      clipboardData: { items: [{ kind: 'file', getAsFile: () => file }] },
+    });
+
+    expect(screen.getByText(NO_VISION_ERROR_MESSAGE)).toBeTruthy();
+    expect(screen.queryByAltText('(clipboard)')).toBeNull();
+  });
+
+  it('does not show the no-vision toast for a non-image paste when imagesCapable is false', () => {
+    const { container } = render(
+      <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+    );
+
+    fireEvent.paste(promptTextarea(container), {
+      clipboardData: {
+        items: [
+          { kind: 'string', type: 'text/plain' },
+          {
+            kind: 'file',
+            getAsFile: () => new File([new Uint8Array(4)], 'notes.txt', { type: 'text/plain' }),
+          },
+        ],
+      },
+    });
+
+    expect(screen.queryByText(NO_VISION_ERROR_MESSAGE)).toBeNull();
+  });
+
+  it('auto-dismisses the no-vision toast after ATTACH_ERROR_TOAST_MS', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <PromptInput inFlight={false} onSubmit={() => undefined} {...NOOP} />
+      );
+      const file = pngFile('shot.png');
+
+      // eslint-disable-next-line testing-library/no-container, testing-library/no-node-access
+      const wrapper = container.querySelector('.prompt-input-wrapper')!;
+      fireEvent.drop(wrapper, { dataTransfer: { files: [file], types: ['Files'] } });
+      expect(screen.getByText(NO_VISION_ERROR_MESSAGE)).toBeTruthy();
+
+      act(() => {
+        vi.advanceTimersByTime(ATTACH_ERROR_TOAST_MS);
+      });
+      expect(screen.queryByText(NO_VISION_ERROR_MESSAGE)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('adds a pasted image (no filename) to the tray', async () => {
@@ -336,7 +397,7 @@ describe('PromptInput image attachments', () => {
     await screen.findByAltText('(clipboard)');
   });
 
-  it('rejects an oversized attachment with an inline error instead of adding it', () => {
+  it('rejects an oversized attachment with an error toast instead of adding it', () => {
     const { container } = render(
       <PromptInput inFlight={false} imagesCapable onSubmit={() => undefined} {...NOOP} />
     );

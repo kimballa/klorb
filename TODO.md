@@ -148,10 +148,7 @@
 
 ### Bugs
 
-* If you are using a model that does not support image vision, drag/drop of an image or paste of
-  image data into the prompt should display a quick error toast (a small "pop-up panel" right above
-  the prompt itself, like the `@mention` popup panel, rather than an actual floating "toast" that
-  would obscure the prompt input textarea) that says "This model does not support vision."
+* ...
 
 ### Feature backlog
 

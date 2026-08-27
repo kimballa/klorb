@@ -248,11 +248,15 @@ class CrawlAnimatedStatic(Static):
 
 
 _TURN_WAITING_TEXTS = (
-    "Working...",
+    "Dreaming...",
+    "Flying...",
+    "Here we go...",
     "Klorbing...",
     "Please hold...",
-    "Here we go...",
-    "Preparing for takeoff...",
+    "Thinking...",
+    "Soaring...",
+    "Working...",
+    "Zooming...",
 )
 """Phrases `TurnWaitingStatic` picks randomly from."""
 
