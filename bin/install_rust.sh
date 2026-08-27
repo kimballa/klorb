@@ -22,5 +22,6 @@ if [ -f "$HOME/.cargo/env" ]; then
 fi
 
 if which rustup >/dev/null 2>&1; then
-  rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+  rustup target add x86_64-unknown-linux-gnu
+  rustup target add aarch64-unknown-linux-gnu
 fi

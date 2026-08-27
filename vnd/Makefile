@@ -14,7 +14,7 @@ commands=all help clean distclean
 ARCH ?= $(shell uname -m)
 
 CHAINLINK_REPO_DIR=../../chainlink
-CARGO=source $$HOME/.cargo/env && cargo
+CARGO_ENV=source $$HOME/.cargo/env
 
 # Rust target triple and cross-linker for each ARCH this Makefile knows how to vendor
 # chainlink for. `x86_64-linux-gnu-gcc`/`aarch64-linux-gnu-gcc` come from the
@@ -39,7 +39,7 @@ CARGO_TARGET_EXPORTS=export CC_$(subst -,_,$(RUST_TARGET))=$(RUST_CC) \
 
 $(RUST_TARGET)/chainlink:
 	mkdir -p $(RUST_TARGET)
-	cd $(CHAINLINK_REPO_DIR)/chainlink && $(CARGO_TARGET_EXPORTS) $(CARGO) build --release --target $(RUST_TARGET)
+	cd $(CHAINLINK_REPO_DIR)/chainlink && $(CARGO_ENV) && rustup target add $(RUST_TARGET) && $(CARGO_TARGET_EXPORTS) cargo build --release --target $(RUST_TARGET)
 	cp $(CHAINLINK_REPO_DIR)/chainlink/target/$(RUST_TARGET)/release/chainlink $(RUST_TARGET)/chainlink
 
 
@@ -52,7 +52,7 @@ help:
 	@echo "Targets: $(commands)"
 
 clean:
-	cd $(CHAINLINK_REPO_DIR)/chainlink && $(CARGO) clean --release --target $(RUST_TARGET)
+	cd $(CHAINLINK_REPO_DIR)/chainlink && $(CARGO_ENV) && cargo clean --release --target $(RUST_TARGET)
 
 distclean: clean
 
