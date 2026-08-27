@@ -22,7 +22,7 @@ charset-normalizer==3.5.1
     # via
     #   markitdown
     #   requests
-click==8.4.2
+click==8.5.0
     # via
     #   huggingface-hub
     #   magika
@@ -38,7 +38,7 @@ distro==1.9.0
     # via openai
 fastembed==0.8.0
     # via klorb (pyproject.toml)
-filelock==3.32.3
+filelock==3.32.4
     # via huggingface-hub
 filetype==1.2.0
     # via klorb (pyproject.toml)
@@ -57,18 +57,18 @@ httpx==0.28.1
     #   klorb (pyproject.toml)
     #   huggingface-hub
     #   openai
-huggingface-hub==1.27.0
+huggingface-hub==1.28.0
     # via
     #   fastembed
     #   tokenizers
-idna==3.18
+idna==3.19
     # via
     #   anyio
     #   httpx
     #   requests
 jiter==0.16.0
     # via openai
-linkify-it-py==2.1.0
+linkify-it-py==2.1.1
     # via markdown-it-py
 loguru==0.7.3
     # via fastembed
@@ -87,7 +87,7 @@ mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
-mmh3==5.2.1
+mmh3==5.3.0
     # via fastembed
 numpy==2.5.2
     # via
@@ -95,7 +95,7 @@ numpy==2.5.2
     #   fastembed
     #   magika
     #   onnxruntime
-onnxruntime==1.28.0
+onnxruntime==1.29.0
     # via
     #   fastembed
     #   magika
@@ -111,9 +111,9 @@ pillow==11.3.0
     # via
     #   klorb (pyproject.toml)
     #   fastembed
-platformdirs==4.11.3
+platformdirs==4.11.4
     # via textual
-protobuf==7.35.1
+protobuf==7.36.0
     # via onnxruntime
 py-rust-stemmers==0.1.8
     # via fastembed
@@ -124,7 +124,7 @@ pydantic==2.13.4
     #   openai
 pydantic-core==2.46.4
     # via pydantic
-pygments==2.20.0
+pygments==2.21.0
     # via
     #   rich
     #   textual
@@ -165,7 +165,7 @@ sqlite-vec==0.1.9
     # via klorb (pyproject.toml)
 textual==8.2.8
     # via klorb (pyproject.toml)
-tiktoken==0.13.0
+tiktoken==0.14.0
     # via klorb (pyproject.toml)
 tokenizers==0.23.1
     # via fastembed

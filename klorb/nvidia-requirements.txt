@@ -20,9 +20,9 @@ nvidia-curand==10.4.3.29
     # via onnxruntime-gpu
 nvidia-nvjitlink==13.3.33
     # via nvidia-cufft
-onnxruntime-gpu==1.28.0
+onnxruntime-gpu==1.29.0
     # via -r nvidia-requirements.in
 packaging==26.3
     # via onnxruntime-gpu
-protobuf==7.35.1
+protobuf==7.36.0
     # via onnxruntime-gpu
