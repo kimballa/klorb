@@ -57,7 +57,7 @@ httpx==0.28.1
     #   klorb (pyproject.toml)
     #   huggingface-hub
     #   openai
-huggingface-hub==1.28.0
+huggingface-hub==1.29.0
     # via
     #   fastembed
     #   tokenizers
@@ -136,6 +136,8 @@ python-dotenv==1.2.3
     # via
     #   klorb (pyproject.toml)
     #   magika
+pytz==2025.2
+    # via klorb (pyproject.toml)
 pyyaml==6.0.3
     # via
     #   klorb (pyproject.toml)
