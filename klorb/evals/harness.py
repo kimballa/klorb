@@ -8,6 +8,7 @@ for why this drives `klorb.session.Session` directly instead of a bespoke chat/t
 import json
 import logging
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,11 +24,29 @@ from klorb.message import Message
 from klorb.permissions.directory_access import DirRules
 from klorb.permissions.skill_access import SkillRules
 from klorb.process_config import ProcessConfig
-from klorb.session import Session, SessionConfig, WorkspaceAccess
+from klorb.session import Session, SessionConfig, TurnEventHandlers, WorkspaceAccess
 from klorb.tools.registry import ToolRegistry
 from klorb.workspace import Workspace
 
 logger = logging.getLogger(__name__)
+
+_EVAL_CASE_TIMEOUT_SECONDS = 120.0
+"""Wall-clock cap on one case's `send_turn()` call, enforced by setting a `cancel_event`
+from a background timer so a stuck case fails instead of hanging the whole suite."""
+
+_DEFAULT_MAX_TOOL_CALLS_PER_CASE = 20
+"""Default `SessionConfig.max_tool_calls_per_turn` for an eval case, overridden by
+`_max_tool_calls_for_case` for a case whose `expected_tool_calls` is unusually high."""
+
+_EXPECTED_TOOL_CALLS_OVERRIDE_THRESHOLD = 12
+"""`EvalCase.expected_tool_calls` above which `_max_tool_calls_for_case` doubles it instead
+of using `_DEFAULT_MAX_TOOL_CALLS_PER_CASE`."""
+
+_DISABLED_EVAL_TOOL_NAMES = frozenset({"CreateSubagent", "WakeUpTimer"})
+"""Tool names withheld from every eval case's `ToolRegistry` by default, since both can leave
+background work (a subagent process, a `threading.Timer`) running past a case's own
+`Session.close()` teardown and corrupt the next case's isolation; a case that genuinely
+exercises one lists it in `EvalCase.allow_tool_names`."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +92,9 @@ class EvalCase:
     """Bare filename to initial content, written into the `global` memory namespace before
     `prompt` is sent. `run_case()` always points the `global` namespace at a case-private temp
     directory, never the real `KLORB_DATA_DIR`."""
+    allow_tool_names: frozenset[str] = frozenset()
+    """Tool names to re-enable for this case out of `_DISABLED_EVAL_TOOL_NAMES` -- e.g.
+    `subagent_cases.py`'s case, whose whole point is exercising `CreateSubagent`."""
 
 
 @dataclass(frozen=True)
@@ -206,6 +228,31 @@ def _print_message_trace(session: Session) -> None:
         print()
 
 
+def _max_tool_calls_for_case(case: EvalCase) -> int:
+    """The `SessionConfig.max_tool_calls_per_turn` cap for `case`: `_DEFAULT_MAX_TOOL_CALLS_PER_CASE`,
+    or twice `case.expected_tool_calls` when that exceeds `_EXPECTED_TOOL_CALLS_OVERRIDE_THRESHOLD`."""
+    if (
+        case.expected_tool_calls is not None
+        and case.expected_tool_calls > _EXPECTED_TOOL_CALLS_OVERRIDE_THRESHOLD
+    ):
+        return case.expected_tool_calls * 2
+    return _DEFAULT_MAX_TOOL_CALLS_PER_CASE
+
+
+def _eval_tool_registry(
+    registry: ToolRegistry, case: EvalCase, *,
+    process_config: ProcessConfig, session_config: SessionConfig,
+) -> ToolRegistry:
+    """A copy of `registry` with `_DISABLED_EVAL_TOOL_NAMES` removed, except any name
+    `case.allow_tool_names` re-enables."""
+    excluded = _DISABLED_EVAL_TOOL_NAMES - case.allow_tool_names
+    tool_classes = {
+        name: tool_cls for name, tool_cls in registry.tool_classes().items()
+        if name not in excluded
+    }
+    return ToolRegistry(process_config, session_config, tool_classes)
+
+
 def run_case(
     case: EvalCase, *, model: str, provider: ApiProvider,
     on_start: Callable[[str], None] | None = None,
@@ -256,6 +303,7 @@ def run_case(
         try:
             session_config = SessionConfig(
                 model=model, interactive=False, thinking_enabled=False,
+                max_tool_calls_per_turn=_max_tool_calls_for_case(case),
                 workspace_access=WorkspaceAccess(
                     workspace=Workspace(path=workspace_root, trusted=case.workspace_trusted),
                     read_dirs=DirRules(allow=[workspace_root]),
@@ -264,57 +312,72 @@ def run_case(
             process_config = ProcessConfig()
             grants = compute_root_session_grants(
                 process_config, session_config, session_config.role_name)
+            tool_registry = _eval_tool_registry(
+                grants.tool_registry, case, process_config=process_config, session_config=session_config)
             if case.extra_tool_names:
-                grants.tool_registry.extra_visible_tools = case.extra_tool_names
+                tool_registry.extra_visible_tools = case.extra_tool_names
             session_config.skill_rules = grants.skill_rules
             session = Session(
                 session_config, provider=provider, process_config=process_config,
-                tool_registry=grants.tool_registry,
+                tool_registry=tool_registry,
                 effective_subagent_roles=grants.effective_subagent_roles)
 
-            start = time.monotonic()
-            final_response = ""
-            error: str | None = None
             try:
-                final_response = session.send_turn(case.prompt)
-            except Exception as exc:
-                logger.warning("Eval case %r raised while running: %s", case.name, exc)
-                error = f"{type(exc).__name__}: {exc}"
-            duration_s = time.monotonic() - start
-            if trace:
-                _print_message_trace(session)
+                start = time.monotonic()
+                final_response = ""
+                error: str | None = None
+                timeout_event = threading.Event()
+                timeout_timer = threading.Timer(_EVAL_CASE_TIMEOUT_SECONDS, timeout_event.set)
+                timeout_timer.daemon = True
+                timeout_timer.start()
+                try:
+                    try:
+                        final_response = session.send_turn(
+                            case.prompt, TurnEventHandlers(cancel_event=timeout_event))
+                    except Exception as exc:
+                        logger.warning("Eval case %r raised while running: %s", case.name, exc)
+                        error = f"{type(exc).__name__}: {exc}"
+                finally:
+                    timeout_timer.cancel()
+                duration_s = time.monotonic() - start
+                if error is None and timeout_event.is_set():
+                    error = f"Case exceeded {_EVAL_CASE_TIMEOUT_SECONDS:g}s timeout."
+                if trace:
+                    _print_message_trace(session)
 
-            tool_call_log = _tool_call_log(session)
-            tool_call_counts: dict[str, int] = {}
-            for entry in tool_call_log:
-                tool_call_counts[entry.name] = tool_call_counts.get(entry.name, 0) + 1
+                tool_call_log = _tool_call_log(session)
+                tool_call_counts: dict[str, int] = {}
+                for entry in tool_call_log:
+                    tool_call_counts[entry.name] = tool_call_counts.get(entry.name, 0) + 1
 
-            failure_reason: str | None = None
-            soft_failure_reason: str | None = None
-            if error is None:
-                failure_reason = case.check(workspace_root, session)
-                if failure_reason is None and case.soft_check is not None:
-                    soft_failure_reason = case.soft_check(workspace_root, session)
+                failure_reason: str | None = None
+                soft_failure_reason: str | None = None
+                if error is None:
+                    failure_reason = case.check(workspace_root, session)
+                    if failure_reason is None and case.soft_check is not None:
+                        soft_failure_reason = case.soft_check(workspace_root, session)
 
-            encoding = _encoding_for_model(model)
-            generated_tokens = len(encoding.encode(final_response))
-            for entry in tool_call_log:
-                generated_tokens += len(encoding.encode(entry.arguments))
+                encoding = _encoding_for_model(model)
+                generated_tokens = len(encoding.encode(final_response))
+                for entry in tool_call_log:
+                    generated_tokens += len(encoding.encode(entry.arguments))
 
-            result = CaseResult(
-                name=case.name,
-                passed=error is None and failure_reason is None,
-                duration_s=duration_s,
-                num_tool_calls=len(tool_call_log),
-                tool_call_counts=tool_call_counts,
-                tool_call_log=tool_call_log,
-                final_response=final_response,
-                failure_reason=failure_reason,
-                error=error,
-                expected_tool_calls=case.expected_tool_calls,
-                soft_failure_reason=soft_failure_reason,
-                generated_tokens=generated_tokens,
-            )
+                result = CaseResult(
+                    name=case.name,
+                    passed=error is None and failure_reason is None,
+                    duration_s=duration_s,
+                    num_tool_calls=len(tool_call_log),
+                    tool_call_counts=tool_call_counts,
+                    tool_call_log=tool_call_log,
+                    final_response=final_response,
+                    failure_reason=failure_reason,
+                    error=error,
+                    expected_tool_calls=case.expected_tool_calls,
+                    soft_failure_reason=soft_failure_reason,
+                    generated_tokens=generated_tokens,
+                )
+            finally:
+                session.close()
         finally:
             memory_common_module.get_klorb_data_dir = original_get_klorb_data_dir
         if on_complete is not None:

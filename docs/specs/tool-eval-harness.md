@@ -56,7 +56,10 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
     `EditFile` call used `old_text_start`/`old_text_end` rather than a token-wasteful `old_text`
     (see docs/specs/tool-framework.md). A non-`None` `soft_check` return also flags the
     result `CaseResult.conditional`, via `CaseResult.soft_failure_reason`, without flipping
-    `passed` to `False`.
+    `passed` to `False` — and `allow_tool_names` (`frozenset[str]`, default empty): tool names to
+    re-enable for this case out of the harness's default-disabled set
+    (`CreateSubagent`/`WakeUpTimer`), for a case whose whole point is exercising one of them — see
+    [[eval-cases-close-session-cap-tool-calls-and-timeout]].
   * `CaseResult` — the outcome of running one `EvalCase`: `passed`, `duration_s`,
     `num_tool_calls`, `tool_call_counts` (`dict[str, int]`, per tool name), `tool_call_log`
     (`list[ToolCallLogEntry]` — the ordered, raw request/response transcript: each entry's
@@ -77,25 +80,34 @@ make evals EVALARGS='--model openai/gpt-oss-120b:nitro --self-review --suite ris
   * `run_case(case, *, model, provider) -> CaseResult` — the per-case runner. For each case it:
     1. Creates a fresh temp directory and writes `setup_files` into it.
     2. Builds a `SessionConfig(model=model, interactive=False, thinking_enabled=False,
-       workspace=Workspace(path=<temp dir>), read_dirs=DirRules(allow=[<temp dir>]),
-       write_dirs=DirRules(allow=[<temp dir>]))` — explicit `allow` rules for the temp
-       workspace in both tables, since an unmatched `writeDirs` table normalizes to `"ask"`
-       rather than `"allow"` (see
+       max_tool_calls_per_turn=<see below>, workspace=Workspace(path=<temp dir>),
+       read_dirs=DirRules(allow=[<temp dir>]), write_dirs=DirRules(allow=[<temp dir>]))` —
+       explicit `allow` rules for the temp workspace in both tables, since an unmatched
+       `writeDirs` table normalizes to `"ask"` rather than `"allow"` (see
        docs/adrs/00030-write-verdict-is-stricter-of-read-and-write-tables.md) and this harness runs
        non-interactively, where `"ask"` has no prompting flow to resolve and fails closed.
-    3. Builds a `ToolRegistry(ProcessConfig(), session_config, package=klorb.tools)` — the real
-       tools package, so exactly the tools a live session would offer (`ReadFile`, `CreateFile`,
-       `EditFile`, `ReplaceAll`; see docs/specs/tool-framework.md) are offered here too.
-    4. Constructs a `Session` from those and calls `session.send_turn(case.prompt)` — see
+    3. Builds a `ToolRegistry` via `compute_root_session_grants()` (the real tools package, so
+       exactly the tools a live session would offer are offered here too), then strips
+       `CreateSubagent`/`WakeUpTimer` from it unless `case.allow_tool_names` re-enables one —
+       see [[eval-cases-close-session-cap-tool-calls-and-timeout]].
+    4. Constructs a `Session` from those and calls `session.send_turn(case.prompt, ...)` with a
+       `cancel_event` armed by a 120-second `threading.Timer`, so a case that never returns fails
+       with a timeout instead of hanging the suite — see
        [[reuse-session-for-tool-eval-agent-loop]] for why this drives the real turn loop instead
-       of a bespoke one.
+       of a bespoke one. `max_tool_calls_per_turn` (step 2) is `_DEFAULT_MAX_TOOL_CALLS_PER_CASE`
+       (20), or twice `case.expected_tool_calls` when that exceeds
+       `_EXPECTED_TOOL_CALLS_OVERRIDE_THRESHOLD` (12) — a model stuck retrying fails fast rather
+       than burning the full timeout.
     5. Reads tool-call metrics back off `session.messages` (every `role="tool_use"` message's
        `tool_calls`), then runs `case.check(workspace_root, session)` (skipped, and `error` set
-       instead, if `send_turn()` raised); if `check` passed and `case.soft_check` is set, runs
-       that too.
+       instead, if `send_turn()` raised or the case timed out); if `check` passed and
+       `case.soft_check` is set, runs that too.
     6. Estimates `generated_tokens` from `final_response` plus every tool call's raw `arguments`
        string, under `model`'s `tiktoken` encoding (the same one `tool_token_counts()` below
        uses).
+    7. Calls `session.close()` in a `finally`, so any per-session resource the turn registered
+       (e.g. a `TimerScheduler`) is torn down before the next case builds its own `Session` — see
+       [[eval-cases-close-session-cap-tool-calls-and-timeout]].
   * `run_evaluation(cases, *, model, provider) -> list[CaseResult]` — runs every case in
     sequence (cases are cheap, and sequential order keeps a failing case's model output easy to
     correlate with its position in the printed report) and returns their results.

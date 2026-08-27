@@ -63,6 +63,7 @@ CREATE_SUBAGENT_AND_WAIT_FOR_ANSWER = EvalCase(
     skill_rules=SkillRules(allow=[("internal", "launch-explorer-subagent")]),
     check=_check_create_subagent_and_wait_for_answer,
     expected_tool_calls=4,  # ActivateSkill, CreateSubagent, WaitForSubagent, CreateFile
+    allow_tool_names=frozenset({"CreateSubagent"}),
 )
 
 SUBAGENT_CASES: list[EvalCase] = [
