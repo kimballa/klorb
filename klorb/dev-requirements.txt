@@ -93,7 +93,7 @@ httpx==0.28.1
     #   klorb (pyproject.toml)
     #   huggingface-hub
     #   openai
-huggingface-hub==1.28.0
+huggingface-hub==1.29.0
     # via
     #   fastembed
     #   tokenizers
@@ -142,7 +142,7 @@ mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.3.0
     # via fastembed
-msgpack==1.2.1
+msgpack==1.2.2
     # via textual-dev
 multidict==6.7.1
     # via
@@ -231,6 +231,8 @@ python-dotenv==1.2.3
     # via
     #   klorb (pyproject.toml)
     #   magika
+pytz==2026.3.post1
+    # via klorb (pyproject.toml)
 pyyaml==6.0.3
     # via
     #   klorb (pyproject.toml)
@@ -285,6 +287,8 @@ tree-sitter-python==0.25.0
 tree-sitter-typescript==0.23.2
     # via klorb (pyproject.toml)
 types-croniter==6.2.4.20260711
+    # via klorb (pyproject.toml)
+types-pytz==2026.3.1.20260727
     # via klorb (pyproject.toml)
 types-pyyaml==6.0.12.20260815
     # via klorb (pyproject.toml)
