@@ -100,11 +100,11 @@ class TodoListTool(Tool):
         if len(ids) == 1:
             issues = [client.show_issue(ids[0])]
         else:
-            issues = client.fetch_and_sort_issues(include_closed=include_closed)
+            extra_label = None
             if scope == "self":
                 assert session is not None  # ChainlinkClient() above already requires one
-                own_label = agent_label(session.id)
-                issues = [issue for issue in issues if own_label in issue.get("labels", [])]
+                extra_label = agent_label(session.id)
+            issues = client.fetch_and_sort_issues(include_closed=include_closed, extra_label=extra_label)
             if ids:
                 wanted = set(ids)
                 issues = list(filter(lambda issue: issue["id"] in wanted, issues))

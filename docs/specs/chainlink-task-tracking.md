@@ -54,43 +54,28 @@ mutation return no payload `ChainlinkClient` needs, so their stdout is discarded
 code confirms success.
 
 `issue show <id>`'s `blocked_by` list is **not** pruned as a blocker closes — a closed blocker
-still appears in it. `open_blocker_count()` computes "blockers still in the way" by intersecting
-`blocked_by` against the set of ids `fetch_and_sort_issues()` already knows are open for this
-label, rather than trusting `blocked_by`'s raw length. `chainlink issue ready`/`blocked`/`next`
-do track this correctly on their own, but none of them accept `--label` or support `--json`
-(confirmed against the installed binary's own `--help` and output), so they're unusable for
-klorb's per-session label scoping and are not used at all; `TodoList`/`TodoNext` compute
-readiness and sort order themselves instead (`klorb.tools.tasks.common.issue_sort_key`).
+still appears in it — but the same response's `blocked_by_open` field already reflects only the
+still-open ones. `open_blocker_count()` just returns its length. `chainlink issue ready`/
+`blocked`/`next` do track this correctly on their own, but none of them accept `--label` or
+support `--json` (confirmed against the installed binary's own `--help` and output), so they're
+unusable for klorb's per-session label scoping and are not used at all; `TodoList`/`TodoNext`
+compute readiness and sort order themselves instead (`klorb.tools.tasks.common.issue_sort_key`).
 
 ## Setup
 
 `ChainlinkClient.__init__` runs `_ensure_setup()` on every construction, which is a cheap
 `(workspace_root / ".chainlink" / "issues.db").exists()` check that does nothing once that file
-exists. The first time it doesn't, it runs `chainlink --json init` and then:
-
-* **Prunes chainlink's own Claude-Code-hooks/MCP scaffold.** In addition to `.chainlink/`
-  itself, `chainlink init` unconditionally plants `.claude/settings.json`, `.claude/hooks/*.py`,
-  `.claude/mcp/safe-fetch-server.py`, and `.mcp.json` at the workspace root — a full
-  PreToolUse/PostToolUse/UserPromptSubmit/SessionStart hooks harness and MCP server registration
-  built for a *real* Claude Code session, unrelated to klorb's own use of chainlink purely as a
-  task-tracking backend. (`chainlink init` does skip `.claude/settings.json` specifically if one
-  already exists — verified against the installed binary — but plants everything else
-  regardless, and a workspace with no pre-existing Claude Code setup, the common case for a
-  klorb user, gets the full scaffold with no way to opt out via a flag.) `_ensure_setup()`
-  snapshots which of `.claude/settings.json`, `.claude/hooks/`, `.claude/mcp/`, and `.mcp.json`
-  already existed *before* calling `init`, then deletes only the ones that didn't — never a path
-  that was already there — and removes `.claude/` itself too if `init` created it and pruning
-  left it empty.
-* **Ensures `.chainlink/` is gitignored.** Appends a `.chainlink/` line to the workspace's
-  top-level `.gitignore` (creating the file if it doesn't exist) unless the existing rules
-  already cover it — checked with `pathspec.GitIgnoreSpec` (the same gitignore-matching library
-  `klorb.tools.util.gitignore` uses), so a broader existing rule (e.g. a wildcard dotdir pattern)
-  is correctly recognized rather than only an exact-line match. `issues.db` has no merge-conflict
-  resolution story — ids are sequential integers chainlink assigns itself, with nothing to
-  reconcile across branches — so it must never be committed. (chainlink's own `init` already
-  writes a `.chainlink/.gitignore` covering machine-local sub-files like `rules.local/`/`.cache/`/
-  `agent.json` *within* `.chainlink/`, but that file does not cover `.chainlink/` itself or
-  `issues.db`, so the workspace's own top-level `.gitignore` still needs the entry.)
+exists. The first time it doesn't, it runs `chainlink --json init --db-only`, which sets up just
+the `.chainlink/issues.db` database and skips the hooks/rules/`.claude` scaffold `init` otherwise
+plants, then ensures `.chainlink/` is gitignored: appends a `.chainlink/` line to the workspace's
+top-level `.gitignore` (creating the file if it doesn't exist) unless the existing rules already
+cover it — checked with `pathspec.GitIgnoreSpec` (the same gitignore-matching library
+`klorb.tools.util.gitignore` uses), so a broader existing rule (e.g. a wildcard dotdir pattern) is
+correctly recognized rather than only an exact-line match. `issues.db` has no merge-conflict
+resolution story — ids are sequential integers chainlink assigns itself, with nothing to
+reconcile across branches — so it must never be committed. `--db-only` skips even `.chainlink`'s
+own internal `.gitignore` (covering machine-local sub-files like `rules.local/`/`.cache/`/
+`agent.json`), so this step is still needed regardless.
 
 There is otherwise no separate "run this before the first user message" hook wired into
 `cli.py`/the TUI's several `Session`-construction call sites: every `Tool` in the `TASKS`
@@ -172,16 +157,16 @@ completely outside klorb's own permission-gated write tools (`EditFile`/`CreateF
 All four tools live in `klorb.tools.tasks`, category `"TASKS"`:
 
 * **`TodoList`** (read-only) — lists issues under this session's group label via
-  `ChainlinkClient.fetch_and_sort_issues()`: `chainlink issue list --label <group-label> --status
-  <open|all>` for the candidate id set, enriched per-id with `chainlink issue show <id>` (needed
-  for `blocked_by`/`labels`, which `list` doesn't return), sorted by `issue_sort_key()` — open
-  before closed, fewest open blockers first, highest priority first, then lowest id first. `ids`,
-  if given as a single id, short-circuits straight to `issue show` (not subject to `scope`, since
-  a caller already knows the specific id it wants); given as several, narrows the sorted result
-  down to just those. `include_closed` includes closed issues (`--status all`), still sorted
-  after every open one. `scope` (default `"self"`) further filters the full-list path to just
-  this agent's own labeled issues; `scope="group"` returns every issue in the group instead — see
-  "Task assignment", below.
+  `ChainlinkClient.fetch_and_sort_issues()`: `chainlink issue list --label <group-label>
+  [--label <assignment-label>] --status <open|all>` for the candidate id set, enriched per-id
+  with `chainlink issue show <id>` (needed for `blocked_by`/`labels`, which `list` doesn't
+  return), sorted by `issue_sort_key()` — open before closed, fewest open blockers first, highest
+  priority first, then lowest id first. `ids`, if given as a single id, short-circuits straight to
+  `issue show` (not subject to `scope`, since a caller already knows the specific id it wants);
+  given as several, narrows the sorted result down to just those. `include_closed` includes closed
+  issues (`--status all`), still sorted after every open one. `scope` (default `"self"`) passes
+  this agent's own assignment label as that second `--label`; `scope="group"` omits it, returning
+  every issue in the group instead — see "Task assignment", below.
 * **`TodoNext`** — raises `ToolCallError` (category `"validation"`) up front if this session's
   role lacks the `accepts_tasks` capability (see "Task assignment", below). Otherwise first
   checks whether a current task is already tracked (`Session.cur_chainlink_task_id`) and, if that
@@ -271,11 +256,11 @@ Every issue in a group carries exactly one *assignment* label alongside its grou
 owns it, or `ALL_LABEL` (`"all"`), meaning it's unclaimed and any eligible agent in the group may
 claim it. This is what keeps several agents sharing one group (a root session and its subagents,
 if subagent roles are ever granted `TASKS` tools) from seeing an intermingled task pool: each
-agent only ever picks from issues labeled for it, or from `"all"`. `chainlink issue list` only
-accepts one `--label` filter at a time, so this second label is never used to filter at the
-chainlink CLI level — every `Todo*` tool still fetches the *whole* group via the group label
-(`ChainlinkClient.fetch_and_sort_issues()`, which enriches every issue with its full `labels`
-list via `issue show`) and filters by assignment label in Python.
+agent only ever picks from issues labeled for it, or from `"all"`. `chainlink issue list --label`
+is repeatable with AND logic, so `TodoList`'s `scope="self"` path passes both the group label and
+`agent_label(own_id)` as two `--label` flags on the same `issue list` call
+(`ChainlinkClient.list_issues()`/`fetch_and_sort_issues()`'s `extra_label` argument) rather than
+fetching the whole group and filtering by assignment label in Python.
 
 Three `AgentCapabilities` fields (`klorb.agents.definition.AgentCapabilities`, part of each
 `agents.json` role's `AgentDefinition.agent_capabilities`, read via `klorb.agents.registry.

@@ -103,8 +103,7 @@ class TodoNextTool(Tool):
             logger.debug("TodoNext: no open issues under label %r", session.get_chainlink_label())
             return {"work_exists": False, "project_complete": True, "task": None}
 
-        open_ids = {issue["id"] for issue in issues}
-        ready = [issue for issue in issues if open_blocker_count(issue, open_ids) == 0]
+        ready = list(filter(lambda issue: open_blocker_count(issue) == 0, issues))
         task = claim_next_ready_task(client, ready, session.id)
         set_current_task(session, self.context, task["id"] if task is not None else None)
 

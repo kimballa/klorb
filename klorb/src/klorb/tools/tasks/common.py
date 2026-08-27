@@ -11,7 +11,6 @@ import random
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -54,15 +53,6 @@ tracked task."""
 
 _CHAINLINK_DB_RELPATH = Path(".chainlink") / "issues.db"
 _GITIGNORE_ENTRY = ".chainlink/"
-
-_INIT_MANAGED_PATHS: tuple[Path, ...] = (
-    Path(".claude") / "settings.json",
-    Path(".claude") / "hooks",
-    Path(".claude") / "mcp",
-    Path(".mcp.json"),
-)
-"""Paths `chainlink init` plants alongside the `.chainlink/` database: a Claude-Code scaffold
-that klorb prunes after init. Each path is relative to the workspace root."""
 
 _LOCK_ERROR_MARKER = "database is locked"
 _LOCK_RETRY_ATTEMPTS = 4
@@ -180,24 +170,20 @@ def validate_priority(priority: str) -> None:
         raise ValueError(f"priority must be one of {sorted(PRIORITY_ORDER)}, got {priority!r}")
 
 
-def open_blocker_count(issue: dict[str, Any], open_ids: set[int]) -> int:
-    """How many of `issue`'s `blocked_by` ids are currently open, per `open_ids`."""
-    return len(list(filter(lambda blocker: blocker in open_ids, issue.get("blocked_by", []))))
+def open_blocker_count(issue: dict[str, Any]) -> int:
+    """How many of `issue`'s blockers are still open, per chainlink's `blocked_by_open` field."""
+    return len(issue.get("blocked_by_open", []))
 
 
-def issue_sort_key(open_ids: set[int]) -> Callable[[dict[str, Any]], tuple[int, int, int, int]]:
-    """Curried: return the sort-key function for the task tools' shared sort order, closed over
-    `open_ids`."""
-
-    def key(issue: dict[str, Any]) -> tuple[int, int, int, int]:
-        return (
-            0 if issue.get("status") == "open" else 1,
-            open_blocker_count(issue, open_ids),
-            PRIORITY_ORDER.get(issue.get("priority", "medium"), PRIORITY_ORDER["medium"]),
-            issue.get("id", 0),
-        )
-
-    return key
+def issue_sort_key(issue: dict[str, Any]) -> tuple[int, int, int, int]:
+    """The task tools' shared sort order: open before closed, fewest open blockers first, highest
+    priority first, then lowest id first."""
+    return (
+        0 if issue.get("status") == "open" else 1,
+        open_blocker_count(issue),
+        PRIORITY_ORDER.get(issue.get("priority", "medium"), PRIORITY_ORDER["medium"]),
+        issue.get("id", 0),
+    )
 
 
 class ChainlinkClient:
@@ -230,44 +216,15 @@ class ChainlinkClient:
             session.register_teardown("ChainlinkClient", self._close_all_on_teardown)
 
     def _ensure_setup(self) -> None:
-        """Run `chainlink init` and ensure `.chainlink/` is gitignored, but only when no
-        `.chainlink/issues.db` exists yet."""
+        """Run `chainlink init --db-only` and ensure `.chainlink/` is gitignored, but only when
+        no `.chainlink/issues.db` exists yet."""
         if (self._workspace_root / _CHAINLINK_DB_RELPATH).exists():
             return
         logger.debug(
-            "No chainlink issue database in %s yet; running 'chainlink init'.",
+            "No chainlink issue database in %s yet; running 'chainlink init --db-only'.",
             self._workspace_root)
-        claude_dir = self._workspace_root / ".claude"
-        claude_dir_preexisted = claude_dir.is_dir()
-        preexisting = set(filter(
-            lambda managed: (self._workspace_root / managed).exists(), _INIT_MANAGED_PATHS))
-
-        self._run(["init"])
-
-        self._prune_unrelated_init_scaffold(preexisting, claude_dir, claude_dir_preexisted)
+        self._run(["init", "--db-only"])
         self._ensure_gitignore_entry()
-
-    def _prune_unrelated_init_scaffold(
-        self, preexisting: set[Path], claude_dir: Path, claude_dir_preexisted: bool,
-    ) -> None:
-        """Delete the scaffold `chainlink init` planted, keeping only what was already there.
-        Also removes `.claude/` if init created it and pruning left it empty."""
-        for managed in _INIT_MANAGED_PATHS:
-            if managed in preexisting:
-                continue
-            planted = self._workspace_root / managed
-            if not planted.exists():
-                continue
-            logger.debug("Removing chainlink-init-planted path unrelated to task tracking: %s", planted)
-            if planted.is_dir():
-                shutil.rmtree(planted)
-            else:
-                planted.unlink()
-        if not claude_dir_preexisted and claude_dir.is_dir() and not any(claude_dir.iterdir()):
-            logger.debug(
-                "Removing now-empty %s (created by chainlink init, nothing else populated it).",
-                claude_dir)
-            claude_dir.rmdir()
 
     def _ensure_gitignore_entry(self) -> None:
         """Add `.chainlink/` to the workspace's top-level `.gitignore`, creating the file if it
@@ -324,10 +281,15 @@ class ChainlinkClient:
             f"chainlink command failed: {command} (cwd={self._workspace_root}, "
             f"exit code {last_result.returncode}): {_first_nonblank_line(last_result.stderr)}")
 
-    def list_issues(self, *, status: str = "open") -> list[dict[str, Any]]:
-        """Return every issue under this client's label, in chainlink's own `list --json`
+    def list_issues(self, *, status: str = "open", extra_label: str | None = None) -> list[dict[str, Any]]:
+        """Return every issue under this client's label, additionally ANDed with `extra_label`
+        (chainlink's repeatable `--label` filter) when given, in chainlink's own `list --json`
         shape."""
-        result = self._run(["issue", "list", "--label", self._label, "--status", status])
+        args = ["issue", "list", "--label", self._label]
+        if extra_label is not None:
+            args.extend(["--label", extra_label])
+        args.extend(["--status", status])
+        result = self._run(args)
         parsed: list[dict[str, Any]] = json.loads(result.stdout)
         return parsed
 
@@ -424,12 +386,13 @@ class ChainlinkClient:
                 "Failed to close-all chainlink issues for label %r on session close.",
                 self._label, exc_info=True)
 
-    def fetch_and_sort_issues(self, *, include_closed: bool) -> list[dict[str, Any]]:
-        """Fetch every issue under this client's label (`--status all` if `include_closed`, else
-        just `--status open`), enrich each with its full `show_issue` detail, and sort per
-        `issue_sort_key`."""
-        base = self.list_issues(status="all" if include_closed else "open")
+    def fetch_and_sort_issues(
+        self, *, include_closed: bool, extra_label: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch every issue under this client's label (optionally ANDed with `extra_label`;
+        `--status all` if `include_closed`, else just `--status open`), enrich each with its full
+        `show_issue` detail, and sort per `issue_sort_key`."""
+        base = self.list_issues(status="all" if include_closed else "open", extra_label=extra_label)
         issues = list(map(lambda entry: self.show_issue(entry["id"]), base))
-        open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
-        issues.sort(key=issue_sort_key(open_ids))
+        issues.sort(key=issue_sort_key)
         return issues

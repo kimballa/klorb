@@ -38,6 +38,7 @@
       "Bash(npm test *)",
       "Bash(npx eslint *)",
       "Bash(which chainlink *)",
+      "Bash(vnd/x86_64-unknown-linux-gnu/chainlink *)",
       "Read(//home/aaron/.cargo/bin/**)",
       "Bash(npx @vscode/vsce ls)",
       "Bash(venv/bin/pip list *)"

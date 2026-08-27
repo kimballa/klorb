@@ -100,12 +100,6 @@
 
 * Context auto-compaction
 
-* Integrate with `chainlink init --db-only`, once merged. Then we don't need to include the code
-  to remove all the extraneous stuff it adds. (see docs/specs/chainlink-task-tracking.md)
-* Integrate with `chainlink`'s `blocked_by_open` field, once merged. Then we don't have to look
-  up every task in the `blocked_by` list to calculate a true blocker list / `open_blocker_count()`.
-* Integrate with multiple `--label` filters in `chainlink issue list` when merged.
-
 * Add more system interjections:
   * If the agent does *not* have a plan, after a while, redirect it to write down some
     objectives for itself via TodoWrite and use TodoNext to start focusing on task-oriented work.

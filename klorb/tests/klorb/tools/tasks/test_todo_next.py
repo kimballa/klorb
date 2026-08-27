@@ -69,11 +69,14 @@ def test_open_issues_but_none_ready_reports_no_task(
     ready issue -- this branch is exercised by faking `fetch_and_sort_issues`'s return value
     rather than trying to construct genuinely-impossible chainlink state."""
     context = _context(tmp_path, make_session_config)
-    fake_issue = {"id": 1, "status": "open", "priority": "medium", "blocked_by": [2], "labels": []}
+    fake_issue = {
+        "id": 1, "status": "open", "priority": "medium", "blocked_by": [2],
+        "blocked_by_open": [2], "labels": [],
+    }
     monkeypatch.setattr(
-        ChainlinkClient, "fetch_and_sort_issues", lambda self, include_closed: [fake_issue])
-    monkeypatch.setattr(
-        todo_next_module, "open_blocker_count", lambda issue, open_ids: 1)
+        ChainlinkClient, "fetch_and_sort_issues",
+        lambda self, include_closed, extra_label=None: [fake_issue])
+    monkeypatch.setattr(todo_next_module, "open_blocker_count", lambda issue: 1)
 
     result = TodoNextTool(context).apply({})
 

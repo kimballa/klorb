@@ -74,13 +74,22 @@ class _FakeChainlinkClient:
         ]
 
     def show_issue(self, issue_id: int) -> dict[str, Any]:
-        return dict(self._issues[issue_id])
+        return self._with_blocked_by_open(self._issues[issue_id])
 
     def fetch_and_sort_issues(self, *, include_closed: bool) -> list[dict[str, Any]]:
         return [
-            dict(issue) for issue in self._issues.values()
+            self._with_blocked_by_open(issue) for issue in self._issues.values()
             if include_closed or issue["status"] == "open"
         ]
+
+    def _with_blocked_by_open(self, issue: dict[str, Any]) -> dict[str, Any]:
+        """Recompute `blocked_by_open` fresh from current blocker status, the same way real
+        chainlink derives it at query time rather than maintaining it incrementally."""
+        issue = dict(issue)
+        issue["blocked_by_open"] = list(filter(
+            lambda blocker_id: self._issues.get(blocker_id, {}).get("status") == "open",
+            issue.get("blocked_by", [])))
+        return issue
 
     def create_issue(
         self, title: str, *, description: str | None = None, priority: str = "medium",

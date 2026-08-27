@@ -109,14 +109,10 @@ def _claim_one(client: ChainlinkClient, issue_id: int, own_label: str) -> dict[s
     return client.show_issue(issue_id)
 
 
-def task_is_ready(client: ChainlinkClient, task: dict[str, Any]) -> bool:
-    """Whether `task` (a full `issue show` detail) has zero still-open blockers -- the same
-    readiness test `TodoNext`/`fetch_and_sort_issues` apply, computed for one already-fetched
-    task at a time rather than the full fetch-enrich-sort pipeline over every issue."""
-    if not task.get("blocked_by"):
-        return True
-    open_ids = {issue["id"] for issue in client.list_issues(status="open")}
-    return open_blocker_count(task, open_ids) == 0
+def task_is_ready(task: dict[str, Any]) -> bool:
+    """Whether `task` (a full `issue show` detail) has zero still-open blockers, per chainlink's
+    `blocked_by_open` field."""
+    return open_blocker_count(task) == 0
 
 
 def maybe_activate_task(
@@ -147,7 +143,7 @@ def maybe_activate_task(
     if activate is False or task.get("status") != "open":
         return None
     if activate is None:
-        if session.cur_chainlink_task_id is not None or not task_is_ready(client, task):
+        if session.cur_chainlink_task_id is not None or not task_is_ready(task):
             return None
     if ALL_LABEL in task.get("labels", []):
         claimed = _claim_one(client, task["id"], agent_label(session.id))

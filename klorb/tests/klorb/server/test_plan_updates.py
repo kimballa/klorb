@@ -9,11 +9,11 @@ from klorb.server.plan_updates import build_plan_update
 
 def _issue(
     issue_id: int, title: str = "Task", *, status: str = "open", priority: str = "medium",
-    blocked_by: list[int] | None = None,
+    blocked_by: list[int] | None = None, blocked_by_open: list[int] | None = None,
 ) -> dict[str, Any]:
     return {
         "id": issue_id, "title": title, "status": status, "priority": priority,
-        "blocked_by": blocked_by or [],
+        "blocked_by": blocked_by or [], "blocked_by_open": blocked_by_open or [],
     }
 
 
@@ -52,7 +52,7 @@ def test_current_task_maps_to_in_progress() -> None:
 
 def test_blocked_by_an_open_issue_counts_as_an_open_blocker() -> None:
     update = build_plan_update(
-        [_issue(1), _issue(2, blocked_by=[1])], cur_task_id=None)
+        [_issue(1), _issue(2, blocked_by=[1], blocked_by_open=[1])], cur_task_id=None)
 
     blocked_entry = update.entries[1]
     assert blocked_entry.field_meta is not None
@@ -85,7 +85,7 @@ def test_update_level_meta_counts() -> None:
     update = build_plan_update(
         [
             _issue(1),  # open, unblocked, current
-            _issue(2, blocked_by=[1]),  # open, blocked
+            _issue(2, blocked_by=[1], blocked_by_open=[1]),  # open, blocked
             _issue(3, status="closed"),  # closed
         ],
         cur_task_id=1,

@@ -141,10 +141,10 @@ def test_binary_discovery_returns_none_when_not_found(
     assert not tasks_common.chainlink_available()
 
 
-def test_open_blocker_count_only_counts_ids_still_open() -> None:
-    issue = {"id": 5, "blocked_by": [1, 2, 3]}
-    assert open_blocker_count(issue, open_ids={1, 3}) == 2
-    assert open_blocker_count(issue, open_ids=set()) == 0
+def test_open_blocker_count_reads_the_blocked_by_open_field() -> None:
+    assert open_blocker_count({"id": 5, "blocked_by_open": [1, 3]}) == 2
+    assert open_blocker_count({"id": 5, "blocked_by_open": []}) == 0
+    assert open_blocker_count({"id": 5}) == 0
 
 
 @requires_chainlink
@@ -212,7 +212,7 @@ def test_run_does_not_retry_a_non_lock_failure(
 
 
 @requires_chainlink
-def test_ensure_setup_prunes_claude_scaffold_it_created(
+def test_ensure_setup_uses_db_only_and_plants_no_claude_scaffold(
     tmp_path: Path, make_session_config: Callable[..., SessionConfig]
 ) -> None:
     session = _session(tmp_path, make_session_config)
@@ -224,23 +224,6 @@ def test_ensure_setup_prunes_claude_scaffold_it_created(
     assert (workspace_root / ".chainlink" / "issues.db").exists()
     assert not (workspace_root / ".claude").exists()
     assert not (workspace_root / ".mcp.json").exists()
-
-
-@requires_chainlink
-def test_ensure_setup_preserves_a_pre_existing_claude_settings_file(
-    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
-) -> None:
-    session = _session(tmp_path, make_session_config)
-    context = _context(tmp_path, session)
-    workspace_root = context.session_config.workspace.path
-    claude_dir = workspace_root / ".claude"
-    claude_dir.mkdir(parents=True)
-    settings_path = claude_dir / "settings.json"
-    settings_path.write_text('{"myOwnSetting": true}')
-
-    ChainlinkClient(context)
-
-    assert settings_path.read_text() == '{"myOwnSetting": true}'
 
 
 @requires_chainlink
@@ -366,6 +349,21 @@ def test_list_issues_is_scoped_to_this_sessions_label(
     titles_b = {issue["title"] for issue in client_b.list_issues()}
     assert titles_a == {"Issue under label a"}
     assert titles_b == {"Issue under label b"}
+
+
+@requires_chainlink
+def test_list_issues_extra_label_ands_with_the_client_label(
+    tmp_path: Path, make_session_config: Callable[..., SessionConfig]
+) -> None:
+    session = _session(tmp_path, make_session_config)
+    context = _context(tmp_path, session)
+    client = ChainlinkClient(context)
+    client.create_issue("Mine and marked", extra_label="marked")
+    client.create_issue("Mine but unmarked")
+
+    titles = {issue["title"] for issue in client.list_issues(extra_label="marked")}
+
+    assert titles == {"Mine and marked"}
 
 
 @requires_chainlink

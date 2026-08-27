@@ -23,7 +23,6 @@ def build_plan_update(issues: list[dict[str, Any]], cur_task_id: int | None) -> 
     fetch_and_sort_issues` -- onto an ACP `plan` session update:
     one `PlanEntry` per issue, in the same order, plus `_meta.klorb` detail at both the entry and
     update level so a klorb-aware client can render the task panel without re-deriving it."""
-    open_ids = {issue["id"] for issue in issues if issue.get("status") == "open"}
     entries: list[PlanEntry] = []
     open_count = 0
     closed_count = 0
@@ -35,7 +34,7 @@ def build_plan_update(issues: list[dict[str, Any]], cur_task_id: int | None) -> 
             closed_count += 1
         else:
             open_count += 1
-        blocker_count = open_blocker_count(issue, open_ids)
+        blocker_count = open_blocker_count(issue)
         if not closed and blocker_count > 0:
             blocked_count += 1
         is_current = cur_task_id is not None and issue_id == cur_task_id
