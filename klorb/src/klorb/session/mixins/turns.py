@@ -9,18 +9,20 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from klorb.api_provider import ProviderResponse, ResponseAborted
 from klorb.images.prepare import extension_for_mime_type
-from klorb.message import Message, MessageFragment
+from klorb.message import Citation, Message, MessageFragment
 from klorb.session.constants import (
     MAX_TOOL_CALL_ROUNDS,
     ChainedHookMessageUndeliverableError,
     ToolCallLimitExceeded,
 )
-from klorb.session.events import QueuedMessage, TurnEventHandlers
+from klorb.session.events import QueuedMessage, ToolCallEvent, ToolCallStartedEvent, TurnEventHandlers
 from klorb.session.mixins._base import SessionBase
 from klorb.session.mixins.mentions import resolve_at_mentions
+from klorb.session_statistics import ToolCallStats
 from klorb.token_estimate import estimate_message_tokens, estimate_tokens
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.response_envelope import ToolResponseEnvelope, wrap_system_interjection
@@ -275,6 +277,7 @@ class SessionTurnsMixin(SessionBase):
             placeholder.num_tokens = result.message.num_tokens
             placeholder.finish_reason = result.message.finish_reason
             placeholder.tool_calls = result.message.tool_calls
+            placeholder.citations = result.message.citations
         else:
             placeholder = result.message
             self._messages.append(placeholder)
@@ -287,9 +290,59 @@ class SessionTurnsMixin(SessionBase):
             output_tokens=result.completion_tokens,
             cached_tokens=result.cached_tokens,
             cost=result.total_cost,
+            server_tool_calls=result.server_tool_calls,
         )
+        if placeholder.citations:
+            self._report_server_tool_call(placeholder.citations, callbacks)
 
         return placeholder, result
+
+    def _report_server_tool_call(
+        self, citations: list[Citation], callbacks: TurnEventHandlers,
+    ) -> None:
+        """Surface one round's `ServerTool` result to the UI: since a `ServerTool` call never
+        produces a `tool_calls` entry for `_run_tool_calls` to dispatch, no
+        `ToolCallStartedEvent`/`ToolCallEvent` would otherwise fire for it. Synthesizes that
+        pair -- both firing back-to-back, since there's no observable "in progress" phase -- so
+        the existing TUI/ACP tool-call rendering (`Tool.summary()`/`Tool.detail_view()`) picks
+        it up like any other call, and bumps `SessionStatistics.tools` the same way
+        `_run_tool_calls` does for a local call.
+
+        Attributes every round's citations to the session's first registered `ServerTool`
+        (today, only `WebSearchTool` exists) -- disambiguating multiple concurrent server tools
+        isn't possible from OpenRouter's citation payload alone, and isn't needed yet.
+        """
+        if self._tool_registry is None:
+            return
+        server_tool = next(
+            (tool for tool in self._tool_registry.tools() if tool.execution_mode() == "server"),
+            None)
+        if server_tool is None:
+            return
+        call_id = f"server-tool-{uuid4().hex[:12]}"
+        result = [citation.model_dump() for citation in citations]
+        self.statistics.tool_calls += 1
+        tool_stats = self.statistics.tools.setdefault(server_tool.name(), ToolCallStats())
+        tool_stats.success_count += 1
+        if callbacks.on_tool_call_started is not None:
+            callbacks.on_tool_call_started(ToolCallStartedEvent(
+                call_id=call_id, name=server_tool.name(), args={}))
+        if callbacks.on_tool_call is not None:
+            callbacks.on_tool_call(ToolCallEvent(
+                call_id=call_id, name=server_tool.name(), args={}, result=result))
+
+    def _tool_definitions_for_dispatch(self) -> list[dict[str, Any]] | None:
+        """This session's `tools` wire array, computed once (via
+        `ToolRegistry.tool_definitions()`) on the first call and reused for every later one, so
+        the block sent to the provider stays byte-identical turn over turn -- even if a tool's
+        definition would otherwise vary with live config, e.g. `WebSearchTool`'s denylist --
+        for prompt-cache stability. `ToolRegistry.tool_definitions()` itself stays uncached, for
+        callers that want live introspection (a UI tool-list panel, `SearchTools`)."""
+        if self._tool_registry is None:
+            return None
+        if self._frozen_tool_definitions is None:
+            self._frozen_tool_definitions = self._tool_registry.tool_definitions()
+        return self._frozen_tool_definitions
 
     def _dispatch_turn(
         self,
@@ -325,7 +378,7 @@ class SessionTurnsMixin(SessionBase):
         system_prompt = self._resolve_system_prompt()
         reasoning = self._reasoning_params()
         drop_reasoning = self._drop_reasoning()
-        tools = self._tool_registry.tool_definitions() if self._tool_registry is not None else None
+        tools = self._tool_definitions_for_dispatch()
 
         with self._messages_lock:
             self.active_cancel_event = callbacks.cancel_event

@@ -21,11 +21,12 @@ from PIL import Image
 from klorb import process_config as process_config_module
 from klorb.agents.runtime import SubagentHandle, SubagentTurnOutcome
 from klorb.api_provider import ProviderResponse, ResponseAborted
-from klorb.message import Message, MessageFragment, ToolCallRequest
+from klorb.message import Citation, Message, MessageFragment, ToolCallRequest
 from klorb.models.configured_model import ConfiguredModel
 from klorb.models.model import Model
 from klorb.models.registry import ModelRegistry
 from klorb.permissions.directory_access import DirRules
+from klorb.permissions.domain_access import DomainRules
 from klorb.permissions.resource import PathResource, PermissionOverride, SkillResource
 from klorb.permissions.table import MultiPermissionAskRequired, PermissionAskItem, PermissionAskRequired
 from klorb.process_config import ProcessConfig
@@ -49,6 +50,7 @@ from klorb.session_naming import SessionName
 from klorb.system_prompt import DEFAULT_SYS_FILENAME, resolve_prompt_file
 from klorb.token_estimate import estimate_tokens
 from klorb.tools.registry import ToolRegistry
+from klorb.tools.web.search import WebSearchTool
 from klorb.workspace import Workspace
 
 SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-[a-z]+-[a-z]+$")
@@ -89,7 +91,10 @@ def _with_metadata(
 ROLE_WITHOUT_PROMPT_FILES = "test-role-with-no-prompt-files"
 
 
-def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int = 10) -> ProviderResponse:
+def _reply(
+    content: str = "model reply", num_tokens: int = 5, prompt_tokens: int = 10,
+    citations: "list[Citation] | None" = None,
+) -> ProviderResponse:
     return ProviderResponse(
         message=Message(
             content=content,
@@ -98,6 +103,7 @@ def _reply(content: str = "model reply", num_tokens: int = 5, prompt_tokens: int
             processing_state="complete",
             timestamp=datetime.now(),
             finish_reason="stop",
+            citations=citations,
         ),
         prompt_tokens=prompt_tokens,
     )
@@ -1610,6 +1616,57 @@ def test_tool_definitions_offered_to_provider_when_tool_registry_set(
     _, kwargs = mock_provider.send_prompt.call_args
     assert {d["function"]["name"] for d in kwargs["tools"]} == {
         "echo", "add", "ask_permission", "ask_multi_permission", "compacting", "interjecting"}
+
+
+def test_tool_definitions_frozen_across_turns_despite_denylist_change(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """`Session._tool_definitions_for_dispatch()` must return the same `tools` array on every
+    turn once computed, even if a tool's own definition would otherwise vary with live config
+    (`WebSearchTool`'s denylist), so the wire block stays stable for prompt caching."""
+    mock_provider = MagicMock()
+    mock_provider.send_prompt.side_effect = [_reply("r1"), _reply("r2")]
+    config = make_session_config(model="some/model")
+    tool_registry = ToolRegistry(ProcessConfig(), config, {"WebSearch": WebSearchTool})
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+
+    session.send_turn("first")
+    first_tools = mock_provider.send_prompt.call_args.kwargs["tools"]
+
+    config.web_domain_rules = DomainRules(deny=["evil.example.com"])
+    session.send_turn("second")
+    second_tools = mock_provider.send_prompt.call_args.kwargs["tools"]
+
+    assert first_tools == second_tools
+    assert "excluded_domains" not in first_tools[0]["parameters"]
+
+
+def test_server_tool_citations_fire_synthetic_tool_call_events(
+    make_session_config: Callable[..., SessionConfig]
+) -> None:
+    """A reply carrying citations (a `ServerTool` result) has no `tool_calls` entry, so
+    `Session._report_server_tool_call` must synthesize the started/finished events a UI relies
+    on to render it, and update `SessionStatistics` the same way a locally-dispatched call would."""
+    mock_provider = MagicMock()
+    citations = [Citation(url="https://a.example.com", title="A", content="excerpt")]
+    mock_provider.send_prompt.return_value = _reply(citations=citations)
+    config = make_session_config(model="some/model")
+    tool_registry = ToolRegistry(ProcessConfig(), config, {"WebSearch": WebSearchTool})
+    session = Session(config, provider=mock_provider, tool_registry=tool_registry)
+    started = MagicMock()
+    finished = MagicMock()
+
+    session.send_turn("search something", TurnEventHandlers(
+        on_tool_call_started=started, on_tool_call=finished))
+
+    started.assert_called_once()
+    assert started.call_args.args[0].name == "WebSearch"
+    finished.assert_called_once()
+    finished_event = finished.call_args.args[0]
+    assert finished_event.name == "WebSearch"
+    assert finished_event.result == [c.model_dump() for c in citations]
+    assert session.statistics.tool_calls == 1
+    assert session.statistics.tools["WebSearch"].success_count == 1
 
 
 def test_tool_defs_message_inserted_before_first_turn(

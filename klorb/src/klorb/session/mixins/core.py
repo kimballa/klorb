@@ -198,6 +198,11 @@ class SessionCoreMixin(SessionBase):
         self._tool_registry = tool_registry
         if tool_registry is not None:
             tool_registry.session = cast("Session", self)
+        self._frozen_tool_definitions: list[dict[str, Any]] | None = None
+        """This session's `tools` wire array, computed once by `_tool_definitions_for_dispatch()`
+        on the first turn dispatched and reused for every later turn, so the block stays
+        byte-identical across turns for prompt-cache stability even if a tool's definition would
+        otherwise vary with live config (e.g. `WebSearchTool`'s denylist)."""
         self.active_cancel_event: threading.Event | None = None
         """The in-flight turn's `TurnEventHandlers.cancel_event`, or `None` when no turn is
         running — set at the top of `_dispatch_turn` and cleared in its `finally` once the turn

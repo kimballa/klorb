@@ -137,8 +137,18 @@ config) has one place to live.
     re-resolved fresh by `_resolve_system_prompt()` for the *current* active model (see
     [the system-prompt bookkeeping ADR](../adrs/store-system-prompt-as-a-bookkeeping-message.md)).
   * When `tool_registry` is set and non-empty, `_dispatch_turn()` passes
-    `tool_registry.tool_definitions()` as `send_prompt(tools=...)` on every round, and — the
-    first time a turn is dispatched — inserts a `role="tool_defs"` `Message` right after the
+    `_tool_definitions_for_dispatch()`'s result as `send_prompt(tools=...)` on every round.
+    That method computes `tool_registry.tool_definitions()` once, on the session's first call,
+    and caches it on `Session._frozen_tool_definitions`, returning the same list on every
+    later call for the rest of the session's lifetime — so the `tools` wire block stays
+    byte-identical turn over turn even if a tool's own definition would otherwise vary with
+    live config (e.g. `WebSearchTool`'s denylist — see [[tool-framework]]'s "Server tools"),
+    which matters for provider-side prompt-cache stability. `ToolRegistry.tool_definitions()`
+    itself is never cached, so a caller wanting live introspection (a UI tool-list panel,
+    `SearchTools`) still sees current config. See
+    [the tools-block-freeze ADR](../adrs/00210-freeze-session-tool-definitions-at-first-dispatch.md).
+    Also on the first time a turn is dispatched, `_dispatch_turn()` inserts a `role="tool_defs"`
+    `Message` right after the
     `role="system"` message, if one was inserted, or at the very front of history otherwise
     (`_ensure_tool_defs_message()`; a no-op on later turns, since it checks for one first)
     recording what was offered. That message is bookkeeping only: it's never
@@ -188,6 +198,18 @@ config) has one place to live.
     [the tool-calling wiring ADR](../adrs/wire-tool-calling-into-the-session-turn-loop.md),
     [the tool-call caps ADR](../adrs/cap-tool-calls-per-turn-and-per-session.md), and
     [the per-session cap removal ADR](../adrs/remove-the-per-session-tool-call-cap-only-the-per-turn-cap-is-useful.md).
+  * A `ServerTool` result (see [[tool-framework]]) never produces a `tool_calls` entry, so
+    `_run_tool_calls()` never sees it. Instead, whenever a reply's `Message.citations` is
+    non-empty, `_send_and_receive()` synthesizes a `ToolCallStartedEvent`/`ToolCallEvent` pair
+    (both firing back-to-back, since there's no observable in-progress phase) naming this
+    session's registered `ServerTool`, so the same TUI/ACP tool-call rendering fires for it,
+    and bumps `SessionStatistics.tool_calls`/`.tools[name]` the same way a locally-dispatched
+    call would.
+  * `ProviderResponse.server_tool_calls` (a provider-reported usage-block counter, e.g.
+    `{"web_search_requests": 2}`) is merged into `SessionStatistics.server_tool_calls` by every
+    `record_usage()` call. It's purely a reporting aid — OpenRouter's own `usage.cost` already
+    reflects any server-tool surcharge, so `SessionStatistics.total_cost` needs no separate
+    server-tool cost math (see [[tool-framework]]'s "Server tools").
   * `retry_last_turn(on_chunk: ... = None, on_thinking_chunk: ... = None,
     on_tool_call_limit_reached: ... = None) -> str` scans
     backward for the last `role == "user"` `Message`; if it isn't in `"error"` state (or

@@ -5,7 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from pydantic import BaseModel
 
@@ -258,6 +258,12 @@ class Tool(ABC):
     @abstractmethod
     def parameters(self) -> dict[str, Any] | type[BaseModel]:
         """Return a JSON schema dict, or a pydantic BaseModel class, describing this tool's arguments."""
+
+    def execution_mode(self) -> Literal["local", "server"]:
+        """Return `"local"` (the default): `apply()` executes this tool. `"server"`: the
+        provider executes it and folds the result into its reply; `apply()` is never called.
+        """
+        return "local"
 
     def default_visible(self) -> bool:
         """Return whether this tool should be advertised to the model in tool definitions.

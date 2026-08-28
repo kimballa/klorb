@@ -396,6 +396,8 @@
   "tools.webFetch.connectTimeout": 5.0,
   "tools.webFetch.spillBytes": 32768,
   "tools.webFetch.maxBodyBytes": 10485760,
+  "tools.webSearch.maxResults": 10,
+  "tools.webSearch.maxUses": 3,
   "tools.images.defaultMaxDimensionPx": 1568,
   "tools.images.maxBytesRaw": 26214400,
   "tools.images.preferredFormats": [

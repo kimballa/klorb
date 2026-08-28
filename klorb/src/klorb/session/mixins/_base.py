@@ -84,6 +84,7 @@ class SessionBase:
     _image_pipeline_config: ImagePipelineConfig
     _thinking_token_budgets: dict[ThinkingEffort, int]
     _tool_registry: "ToolRegistry | None"
+    _frozen_tool_definitions: list[dict[str, Any]] | None
     tool_state: dict[str, Any]
     active_cancel_event: threading.Event | None
     _tool_calls_this_turn: int

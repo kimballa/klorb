@@ -82,6 +82,7 @@ TOOL_KIND_MAP: dict[str, ToolKind] = {
     "ListMemories": "search",
     "Bash": "execute",
     "WebFetch": "fetch",
+    "WebSearch": "search",
     "TodoList": "think",
     "TodoNext": "think",
     "TodoCreate": "think",

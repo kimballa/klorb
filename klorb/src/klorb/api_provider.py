@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from klorb.message import Message
 from klorb.models.model import CacheMgmtStyle
@@ -38,6 +38,11 @@ class ProviderResponse(BaseModel):
     total_cost: float = 0.0
     """Monetary cost of this request as reported by the provider. Zero when the provider
     doesn't report cost. Accumulated across the session in `SessionStatistics`."""
+
+    server_tool_calls: dict[str, int] = Field(default_factory=dict)
+    """Per-type server-tool call counts reported in this request's usage block (e.g.
+    `{"web_search_requests": 2}`), empty when the provider reports none. Merged into
+    `SessionStatistics.server_tool_calls`."""
 
 
 class ResponseAborted(Exception):

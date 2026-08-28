@@ -249,6 +249,14 @@ ABSOLUTE_MAX_BODY_BYTES = 256 * 1024 * 1024
 """Hard ceiling on response body bytes, regardless of config — `WebFetch` aborts reading if
 the body exceeds this, to avoid consuming unbounded memory."""
 
+DEFAULT_WEB_SEARCH_MAX_RESULTS = 10
+"""Default `max_results` sent in `WebSearchTool.provider_definition()` — see
+`ProcessConfig.web_search_max_results` and `tools.webSearch.maxResults`."""
+
+DEFAULT_WEB_SEARCH_MAX_USES = 3
+"""Default `max_uses` sent in `WebSearchTool.provider_definition()` — see
+`ProcessConfig.web_search_max_uses` and `tools.webSearch.maxUses`."""
+
 DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX = 1568
 """Long-edge downscale cap `klorb.images.prepare.prepare_image_for_model` falls back to for a
 model with no `vision_details.max_width_px`/`max_height_px`/`max_megapixels` — Anthropic's own
@@ -386,6 +394,8 @@ PROCESS_KEY_MAP: dict[str, str] = {
     "tools.webFetch.connectTimeout": "web_fetch_connect_timeout_seconds",
     "tools.webFetch.spillBytes": "web_fetch_spill_bytes",
     "tools.webFetch.maxBodyBytes": "web_fetch_max_body_bytes",
+    "tools.webSearch.maxResults": "web_search_max_results",
+    "tools.webSearch.maxUses": "web_search_max_uses",
     "tools.images.defaultMaxDimensionPx": "image_default_max_dimension_px",
     "tools.images.maxBytesRaw": "image_max_bytes_raw",
     "tools.images.preferredFormats": "image_preferred_formats",
@@ -549,6 +559,11 @@ class ProcessConfig(BaseModel):
     web_fetch_max_body_bytes: int = DEFAULT_WEB_FETCH_MAX_BODY_BYTES
     """Maximum response body bytes `WebFetch` will read, clamped to
     `[1, ABSOLUTE_MAX_BODY_BYTES]`. See `tools.webFetch.maxBodyBytes`."""
+    web_search_max_results: int = DEFAULT_WEB_SEARCH_MAX_RESULTS
+    """`max_results` sent in `WebSearchTool.provider_definition()`. See
+    `tools.webSearch.maxResults`."""
+    web_search_max_uses: int = DEFAULT_WEB_SEARCH_MAX_USES
+    """`max_uses` sent in `WebSearchTool.provider_definition()`. See `tools.webSearch.maxUses`."""
     image_default_max_dimension_px: int = DEFAULT_IMAGE_DEFAULT_MAX_DIMENSION_PX
     """Long-edge downscale cap for a model with no `vision_details` resolution bounds. See
     `tools.images.defaultMaxDimensionPx`."""

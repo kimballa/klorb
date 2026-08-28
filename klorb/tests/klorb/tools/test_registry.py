@@ -10,6 +10,7 @@ from klorb.session import Session, SessionConfig
 from klorb.tools import registry as registry_module
 from klorb.tools.exceptions import NoSuchToolException
 from klorb.tools.registry import ToolRegistry
+from klorb.tools.web.search import WebSearchTool
 
 _TASKS_TOOL_NAMES = {"TodoList", "TodoNext", "TodoCreate", "TodoUpdate"}
 
@@ -114,6 +115,26 @@ def test_registry_has_no_session_before_one_is_constructed() -> None:
     registry = _registry()
     assert registry.session is None
     assert registry.instantiate_tool("echo").context.session is None
+
+
+def test_tool_definitions_emits_server_tool_provider_definition_directly() -> None:
+    """A `ServerTool` (`WebSearchTool`) contributes `provider_definition()`'s raw dict to the
+    `tools` wire array, not the `{"type": "function", ...}` wrapper ordinary tools get."""
+    registry = ToolRegistry(
+        ProcessConfig(), SessionConfig(), {"WebSearch": WebSearchTool})
+
+    definitions = registry.tool_definitions()
+
+    assert definitions == [{
+        "type": "openrouter:web_search",
+        "parameters": {"max_results": 10, "max_uses": 3},
+    }]
+
+
+def test_production_registry_discovers_web_search_tool() -> None:
+    registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
+
+    assert "WebSearch" in {tool.name() for tool in registry.tools()}
 
 
 def test_session_construction_backfills_the_registrys_session_reference(
@@ -341,7 +362,8 @@ def test_default_described_excludes_replace_all_from_tool_definitions() -> None:
     default_visible() (see `test_replace_all_is_visible_but_not_described`)."""
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
 
-    definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
+    definition_names = {
+        d["function"]["name"] for d in registry.tool_definitions() if d.get("type") == "function"}
 
     assert "ReplaceAll" not in definition_names
     # Confirm the tool is still in the registry itself (instantiate_tool still works).
@@ -363,7 +385,8 @@ def test_extra_visible_tools_includes_non_described_tool_in_definitions() -> Non
     registry = ToolRegistry.discover_tools(ProcessConfig(), SessionConfig())
     registry.extra_visible_tools = frozenset({"ReplaceAll"})
 
-    definition_names = {d["function"]["name"] for d in registry.tool_definitions()}
+    definition_names = {
+        d["function"]["name"] for d in registry.tool_definitions() if d.get("type") == "function"}
 
     assert "ReplaceAll" in definition_names
 
@@ -375,7 +398,8 @@ def test_additional_tool_summaries_includes_visible_but_undescribed_tools() -> N
 
     assert "ReplaceAll" in summaries
     assert len(summaries["ReplaceAll"]) <= 80
-    assert "ReplaceAll" not in {d["function"]["name"] for d in registry.tool_definitions()}
+    assert "ReplaceAll" not in {
+        d["function"]["name"] for d in registry.tool_definitions() if d.get("type") == "function"}
 
 
 def test_additional_tool_summaries_excludes_extra_visible_tools() -> None:

@@ -12,7 +12,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from klorb.api_provider import ApiProvider, ProviderResponse, ResponseAborted
-from klorb.message import Message, ToolCallRequest
+from klorb.message import Citation, Message, ToolCallRequest
 from klorb.token_estimate import estimate_tokens
 
 # Set true if you want *extremely* verbose debug logs.
@@ -296,8 +296,14 @@ class OpenRouterApiProvider(ApiProvider):
         prompt_tokens = 0
         cached_tokens = 0
         total_cost = 0.0
+        server_tool_calls: dict[str, int] = {}
         tool_call_accumulators: dict[int, dict[str, str]] = {}
         reasoning_details_accumulators: dict[int, dict[str, Any]] = {}
+        citation_accumulator: dict[str, Citation] = {}
+        """Every distinct `url_citation` annotation seen so far, keyed by URL and in
+        first-seen order -- OpenRouter's streaming delta may repeat or incrementally extend
+        this list chunk to chunk, so accumulating by key (rather than overwriting) avoids
+        both duplicates and dropped entries."""
         try:
             for chunk in stream:
                 if cancel_event is not None and cancel_event.is_set():
@@ -343,6 +349,24 @@ class OpenRouterApiProvider(ApiProvider):
                                 accumulator["name"] = delta_call.function.name
                             if delta_call.function.arguments:
                                 accumulator["arguments"] += delta_call.function.arguments
+                    for annotation in getattr(choice.delta, "annotations", None) or []:
+                        url_citation = (
+                            annotation.get("url_citation") if isinstance(annotation, dict)
+                            else getattr(annotation, "url_citation", None))
+                        if url_citation is None:
+                            continue
+                        url = (
+                            url_citation.get("url") if isinstance(url_citation, dict)
+                            else getattr(url_citation, "url", None))
+                        if not url or url in citation_accumulator:
+                            continue
+                        title = (
+                            url_citation.get("title") if isinstance(url_citation, dict)
+                            else getattr(url_citation, "title", None))
+                        body = (
+                            url_citation.get("content") if isinstance(url_citation, dict)
+                            else getattr(url_citation, "content", None))
+                        citation_accumulator[url] = Citation(url=url, title=title or url, content=body)
                     if choice.finish_reason is not None:
                         finish_reason = choice.finish_reason
                 if chunk.usage is not None:
@@ -351,6 +375,15 @@ class OpenRouterApiProvider(ApiProvider):
                     prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
                     cached_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
                     total_cost = getattr(chunk.usage, "cost", 0.0) or 0.0
+                    server_tool_use = getattr(chunk.usage, "server_tool_use", None)
+                    if server_tool_use is not None:
+                        raw_counts = (
+                            server_tool_use.model_dump() if hasattr(server_tool_use, "model_dump")
+                            else dict(server_tool_use))
+                        server_tool_calls = {
+                            key: value for key, value in raw_counts.items()
+                            if isinstance(value, int) and value
+                        }
         except ResponseAborted:
             raise
         except Exception as exc:
@@ -403,11 +436,12 @@ class OpenRouterApiProvider(ApiProvider):
             timestamp=datetime.now(),
             finish_reason=finish_reason,
             tool_calls=tool_calls,
+            citations=list(citation_accumulator.values()) or None,
         )
         return ProviderResponse(
             message=reply, prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens, cached_tokens=cached_tokens,
-            total_cost=total_cost,
+            total_cost=total_cost, server_tool_calls=server_tool_calls,
         )
 
     @staticmethod

@@ -47,6 +47,9 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     a raw JSON schema dict or a pydantic `BaseModel` subclass.
   * `apply(args: dict[str, Any]) -> Any` — runs the tool given a dict of arguments (as
     returned by the model) and returns the result.
+  * `execution_mode() -> Literal["local", "server"]` — `"local"` (the default): `apply()`
+    executes this tool. `"server"`: the provider executes it itself and folds the result into
+    its reply, so `apply()` is never called — see "Server tools" below.
   * `aliases() -> Sequence[str] | None` — alternative names this tool can be invoked by.
     Defaults to `None`. Aliases are not advertised to the model in tool definitions, but if
     the model guesses one, `ToolRegistry.instantiate_tool` resolves it to the canonical tool
@@ -149,12 +152,13 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     never carries state over between calls. See
     [the fresh-instance-per-call ADR](../adrs/tool-registry-instantiates-a-fresh-tool-per-call.md).
   * `tools() -> list[Tool]` — a freshly-instantiated `Tool` for every discovered tool.
-  * `tool_definitions() -> list[dict[str, Any]]` — builds the OpenAI/OpenRouter
-    function-calling `tools` array: each entry is
-    `{"type": "function", "function": {"name", "description", "parameters"}}`, with
-    pydantic parameter schemas converted to JSON schema via `model_json_schema()`. Only
-    includes a tool that's both `default_visible()` and `default_described()`, or whose name
-    is in `extra_visible_tools` (see below).
+  * `tool_definitions() -> list[dict[str, Any]]` — builds the `tools` array sent to the
+    model. A `"local"`-mode tool contributes the OpenAI/OpenRouter function-calling shape,
+    `{"type": "function", "function": {"name", "description", "parameters"}}`, with pydantic
+    parameter schemas converted to JSON schema via `model_json_schema()`. A `"server"`-mode
+    tool contributes `ServerTool.provider_definition()`'s dict verbatim instead — see "Server
+    tools" below. Only includes a tool that's both `default_visible()` and
+    `default_described()`, or whose name is in `extra_visible_tools` (see below).
   * `additional_tool_summaries() -> list[dict[str, str]]` — `{"name", "description"}` for
     every tool that's `default_visible()` (or in `extra_visible_tools`) but excluded from
     `tool_definitions()` because `default_described()` is `False`. `description` is hard-
@@ -167,6 +171,45 @@ feature: individual tools (file search, shell exec, etc.) will be added under
     `tool_definitions()` regardless of `default_visible()`/`default_described()`, bypassing
     `additional_tool_summaries()` too. Set by the eval harness to exercise one tool's actual
     schema for a specific eval case.
+
+## Server tools
+
+`klorb.tools.server_tool.ServerTool` (`klorb/src/klorb/tools/server_tool.py`) is a `Tool`
+subclass for a capability the model provider executes itself and folds directly into its
+reply, instead of one dispatched locally through `apply()` — e.g. `WebSearchTool` and
+OpenRouter's `openrouter:web_search`. `execution_mode()` returns `"server"`; `apply()` raises
+`RuntimeError` (it should never be invoked, since the model never names a `ServerTool` in a
+`tool_calls` entry for `SessionToolExecutionMixin._run_tool_calls` to dispatch); `parameters()`
+returns `{}` (unused). A concrete subclass implements the same `name()`/`description()`/
+`category()`/`is_read_only()` contract as any other `Tool`, plus:
+
+* `provider_definition() -> dict[str, Any]` — the raw, provider-specific dict
+  `ToolRegistry.tool_definitions()` sends on the wire for this tool, in place of the
+  `{"type": "function", ...}` wrapper.
+
+Because there's no `tool_calls` entry, `Session._send_and_receive()`
+(`klorb/src/klorb/session/mixins/turns.py`) synthesizes a `ToolCallStartedEvent`/
+`ToolCallEvent` pair whenever a reply carries `Message.citations` (see [[session-and-turns]]),
+so a `ServerTool`'s result still flows through the same `Tool.summary()`/`Tool.detail_view()`
+rendering — and the same TUI/ACP tool-call UI — as a locally-dispatched call. A concrete
+`ServerTool` overrides `summary()`/`detail_view()` for its own result shape, same as any other
+`Tool`; there's no shared rendering across server tools in the base class, since each provider
+tool's result shape differs.
+
+`klorb.tools.web.search.WebSearchTool` (`klorb/src/klorb/tools/web/search.py`), name
+`WebSearch`, category `WEB`, read-only, is the one built-in `ServerTool`. Its
+`provider_definition()` is
+`{"type": "openrouter:web_search", "parameters": {"max_results", "max_uses", "excluded_domains"}}`
+(the last key omitted when empty): `max_results` (default 10, `tools.webSearch.maxResults`)
+and `max_uses` (default 3, `tools.webSearch.maxUses`) come from `ProcessConfig`;
+`excluded_domains` comes from `context.session_config.web_domain_rules.deny` — the same
+`webDomains.deny` list `WebFetchTool` consults (see [[permissions]]), not a separate
+web-search-specific denylist, so denying a domain has the same effect for both tools.
+OpenRouter executes the search itself and returns sources as `url_citation` annotations,
+captured as `klorb.message.Citation`s on the reply (`Message.citations`) by
+`klorb.openrouter.OpenRouterApiProvider.send_prompt`, deduped by URL across streaming chunks.
+`summary()` reports a result count; `detail_view()` renders a numbered title/URL/first-line-of-
+excerpt list.
 
 ## Malformed tool-call arguments
 

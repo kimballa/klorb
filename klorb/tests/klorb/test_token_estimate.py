@@ -103,6 +103,24 @@ def test_estimate_tokens_does_not_raise_on_special_token_like_substrings() -> No
     assert estimate_tokens("<|endoftext|>") > 0
 
 
+def test_tool_token_counts_keys_local_tools_by_function_name() -> None:
+    definitions = [
+        {"type": "function", "function": {"name": "Echo", "description": "d", "parameters": {}}},
+    ]
+    counts = token_estimate.tool_token_counts(definitions)
+    assert set(counts) == {"Echo"}
+    assert counts["Echo"] > 0
+
+
+def test_tool_token_counts_keys_server_tools_by_type() -> None:
+    definitions = [
+        {"type": "openrouter:web_search", "parameters": {"max_results": 10}},
+    ]
+    counts = token_estimate.tool_token_counts(definitions)
+    assert set(counts) == {"openrouter:web_search"}
+    assert counts["openrouter:web_search"] > 0
+
+
 def test_tiktoken_cache_target_dir_is_under_klorb_data_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

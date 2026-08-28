@@ -44,12 +44,14 @@ def estimate_tokens(text: str) -> int:
 
 
 def tool_token_counts(tool_definitions: list[dict[str, Any]]) -> dict[str, int]:
-    """Token count of each tool definition's full function-calling JSON encoding (name +
-    description + parameters schema).
+    """Token count of each tool definition's full JSON encoding. A `"local"`-mode tool is keyed
+    by its function name (`definition["function"]["name"]`); a `"server"`-mode tool (see
+    `klorb.tools.server_tool.ServerTool`) has no such wrapper, so it's keyed by its own
+    `definition["type"]` instead (e.g. `"openrouter:web_search"`).
     """
     return {
-        definition["function"]["name"]: estimate_tokens(
-            json.dumps(definition, default=str, ensure_ascii=False))
+        (definition["function"]["name"] if "function" in definition else definition["type"]):
+            estimate_tokens(json.dumps(definition, default=str, ensure_ascii=False))
         for definition in tool_definitions
     }
 

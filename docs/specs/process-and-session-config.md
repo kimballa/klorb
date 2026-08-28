@@ -363,7 +363,8 @@ Two other, differently-scoped JSON files are easy to confuse with `default-confi
   `providers.openrouter.baseUrl`, `shell.command`,
   `shell.timeout`, `watchdog.timeout`, `tools.bash.command`, `tools.bash.timeout`,
   `tools.bash.spillBytes`,
-  `tools.bash.shfmtCommand`, `classifier.model`, `classifier.timeout`, `classifier.e2eTimeout`,
+  `tools.bash.shfmtCommand`, `tools.webSearch.maxResults`, `tools.webSearch.maxUses`,
+  `classifier.model`, `classifier.timeout`, `classifier.e2eTimeout`,
   `models.default.fast`, `models.default.normal`, `models.default.heavy`,
   `compatibility.claudeMarkdown`, `tools.logCalls`, `ui.theme`) can
   be set at the top level. `classifier.*` configures the first-turn session-naming classifier

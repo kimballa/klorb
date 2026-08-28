@@ -89,6 +89,15 @@ class ToolCallRequest(BaseModel):
         return self.reflected_tool_args if self.reflected_tool_args is not None else self.arguments
 
 
+class Citation(BaseModel):
+    """One `url_citation` annotation a provider attached to a reply -- e.g. a source a
+    `ServerTool` (`klorb.tools.server_tool.ServerTool`) consulted server-side."""
+
+    url: str
+    title: str
+    content: str | None = None
+
+
 class Message(BaseModel):
     """
     One message in a session's conversation history.
@@ -132,6 +141,10 @@ class Message(BaseModel):
     array a provider returned alongside its plain-text reasoning, accumulated by
     index as chunks stream in. Preserved verbatim. `None` for
     every other role, and for a `"thinking"` message whose provider never sent this field."""
+
+    citations: list[Citation] | None = None
+    """Populated on a reply whose provider attached `url_citation` annotations, e.g. a
+    `ServerTool` search consulted server-side. `None` when the provider sent none."""
 
     def body(self) -> str:
         """A reasonable plain-text representation of this message's current substance,

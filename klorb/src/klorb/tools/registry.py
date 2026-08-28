@@ -7,7 +7,7 @@ import inspect
 import logging
 import pkgutil
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ from klorb.permissions.resource import PermissionOverride
 from klorb.process_config import ProcessConfig
 from klorb.session import Session, SessionConfig
 from klorb.tools.exceptions import NoSuchToolException
+from klorb.tools.server_tool import ServerTool
 from klorb.tools.setup_context import ToolSetupContext
 from klorb.tools.tasks.common import chainlink_available
 from klorb.tools.tool import Tool
@@ -191,13 +192,18 @@ class ToolRegistry:
         return tool.default_visible() and tool.default_described()
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        """Build the OpenAI-style tool definitions to send to the model alongside a prompt.
-        Only tools `_fully_described()` returns `True` for are included -- a tool that's
-        visible but not described is summarized instead in `additional_tool_summaries()`.
+        """Build the tool definitions to send to the model alongside a prompt: the OpenAI-style
+        `{"type": "function", ...}` shape for a `Tool` whose `execution_mode()` is `"local"`, or
+        `ServerTool.provider_definition()`'s raw dict for one whose `execution_mode()` is
+        `"server"`. Only tools `_fully_described()` returns `True` for are included -- a tool
+        that's visible but not described is summarized instead in `additional_tool_summaries()`.
         """
         definitions: list[dict[str, Any]] = []
         for tool in self.tools():
             if not self._fully_described(tool):
+                continue
+            if tool.execution_mode() == "server":
+                definitions.append(cast(ServerTool, tool).provider_definition())
                 continue
             parameters = tool.parameters()
             if isinstance(parameters, type) and issubclass(parameters, BaseModel):

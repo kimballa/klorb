@@ -59,6 +59,10 @@ this one shape.
     verbatim rather than rendered or reinterpreted, so it can be resent unmodified on a later
     turn — see [[preserve-reasoning-across-turns-by-default]]. `None` for every other role,
     and for a `"thinking"` message whose provider never sent this field.
+  * `citations: list[Citation] | None` — populated on a reply whose provider attached
+    `url_citation` annotations (e.g. a `ServerTool` search consulted server-side — see
+    [[tool-framework]]'s "Server tools"). `Citation` (also in `klorb/src/klorb/message.py`) has
+    `url: str`, `title: str`, `content: str | None`. `None` when the provider sent none.
   * `processing_state: ProcessingState` — a `Literal["pending", "error", "started_receipt",
     "complete"]` tracking this message's lifecycle. `Session` mutates this in place as a
     turn progresses (see [[session-and-turns]] and

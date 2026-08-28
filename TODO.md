@@ -69,8 +69,6 @@
 
 * More tools:
   * Add Evals for GrepTool, SemanticSearchTool, and FindFileTool.
-  * WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
-    (see "Plan 013: WebFetch" section below)... Or maybe use an openrouter server tool? Just add `{ "type": "openrouter:web_search", "parameters": { "max_results": 3 } },` to the `tools` array and we're off to the races? Just need to format the result for the harness. Also count tool calls in the usage block for reporting call counts and billing ($0.007/each). See https://openrouter.ai/docs/guides/features/server-tools/web-search for more. 
   * SearchTools currently only does case-insensitive literal match over tool
     name/description/parameter schema docs. Add semantic index search too (requires a
     json- or tool-specific chunker).
@@ -174,7 +172,6 @@
   supports methods besides GET, so it can return True for GET/HEAD/OPTIONS and False
   otherwise.
   * Use AgentCapabilities to control which http methods a subagent can use.
-* Dedicated WebSearchTool -- use Brave Search: <https://api-dashboard.search.brave.com/app/plans>
 
 ### Plan 017: Multiple sessions per workspace
 

@@ -41,17 +41,18 @@ def _chunk(
     reasoning: str | None = None,
     reasoning_details: list[dict[str, Any]] | None = None,
     tool_calls: list[MagicMock] | None = None,
+    annotations: list[dict[str, Any]] | None = None,
 ) -> MagicMock:
     has_choice = (
         content is not None or finish_reason is not None or reasoning is not None
-        or reasoning_details or tool_calls
+        or reasoning_details or tool_calls or annotations
     )
     return MagicMock(
         choices=[
             MagicMock(
                 delta=MagicMock(
                     content=content, reasoning=reasoning, reasoning_details=reasoning_details,
-                    tool_calls=tool_calls),
+                    tool_calls=tool_calls, annotations=annotations),
                 finish_reason=finish_reason),
         ] if has_choice else [],
         usage=usage,
@@ -69,11 +70,13 @@ def _reply_chunks(content: str, completion_tokens: int = 1, prompt_tokens: int =
 
 def _usage(
     completion_tokens: int = 1, prompt_tokens: int = 1,
+    server_tool_use: dict[str, int] | None = None,
 ) -> MagicMock:
     return MagicMock(
         completion_tokens=completion_tokens,
         prompt_tokens=prompt_tokens,
         prompt_tokens_details=None,
+        server_tool_use=server_tool_use,
     )
 
 
@@ -224,6 +227,85 @@ def test_send_prompt_reads_usage_from_choiceless_final_chunk() -> None:
 
     assert result.message.num_tokens == estimate_tokens("hi")
     assert result.prompt_tokens == 9
+
+
+def test_send_prompt_collects_url_citation_annotations() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", annotations=[{
+            "type": "url_citation",
+            "url_citation": {"url": "https://a.example.com", "title": "A", "content": "excerpt"},
+        }]),
+        _chunk(finish_reason="stop", usage=_usage(1, 1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    citations = result.message.citations
+    assert citations is not None
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation.url == "https://a.example.com"
+    assert citation.title == "A"
+    assert citation.content == "excerpt"
+
+
+def test_send_prompt_dedupes_repeated_citations_across_chunks() -> None:
+    mock_client = MagicMock()
+    same_citation = {
+        "type": "url_citation",
+        "url_citation": {"url": "https://a.example.com", "title": "A", "content": "excerpt"},
+    }
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", annotations=[same_citation]),
+        _chunk(content=" there", annotations=[same_citation]),
+        _chunk(finish_reason="stop", usage=_usage(1, 1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    citations = result.message.citations
+    assert citations is not None
+    assert len(citations) == 1
+
+
+def test_send_prompt_leaves_citations_none_when_no_annotations() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    assert result.message.citations is None
+
+
+def test_send_prompt_reads_server_tool_use_counts_from_usage() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", finish_reason="stop", usage=_usage(
+            1, 1, server_tool_use={"web_search_requests": 2})),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    assert result.server_tool_calls == {"web_search_requests": 2}
+
+
+def test_send_prompt_server_tool_calls_empty_when_usage_omits_it() -> None:
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = [
+        _chunk(content="hi", finish_reason="stop", usage=_usage(1, 1)),
+    ]
+    provider = openrouter.OpenRouterApiProvider(client=mock_client)
+
+    result = provider.send_prompt([_user_message()])
+
+    assert result.server_tool_calls == {}
 
 
 def test_send_prompt_skips_on_chunk_for_empty_deltas() -> None:

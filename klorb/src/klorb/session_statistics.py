@@ -6,6 +6,13 @@ calls complete.
 
 from pydantic import BaseModel, Field
 
+SERVER_TOOL_COST_PER_CALL_USD: dict[str, float] = {"web_search_requests": 0.007}
+"""Estimated per-call cost of a provider-reported server-tool usage-block counter (see
+`ProviderResponse.server_tool_calls`), keyed the same way OpenRouter names that counter. Used
+only for the itemized display in `format_report()` -- the actual billed amount is always
+`SessionStatistics.total_cost`, which OpenRouter already reports inclusive of any server-tool
+surcharge."""
+
 
 class ToolCallStats(BaseModel):
     """Per-tool success/failure counts, accumulated across the session's lifetime."""
@@ -58,18 +65,25 @@ class SessionStatistics(BaseModel):
     """Aggregate monetary cost across all requests in this session. Zero when the
     provider does not report cost."""
 
+    server_tool_calls: dict[str, int] = Field(default_factory=dict)
+    """Aggregate per-type server-tool call counts across the session (e.g.
+    `{"web_search_requests": 5}`), from `ProviderResponse.server_tool_calls`."""
+
     def record_usage(
         self,
         input_tokens: int = 0,
         output_tokens: int = 0,
         cached_tokens: int = 0,
         cost: float = 0.0,
+        server_tool_calls: dict[str, int] | None = None,
     ) -> None:
         """Accumulate one request's token usage into the session totals."""
         self.input_tokens += input_tokens
         self.output_tokens += output_tokens
         self.cached_tokens += cached_tokens
         self.total_cost += cost
+        for key, count in (server_tool_calls or {}).items():
+            self.server_tool_calls[key] = self.server_tool_calls.get(key, 0) + count
 
     def format_report(self) -> str:
         """Return a human-readable, multi-line summary suitable for display in the history
@@ -93,6 +107,14 @@ class SessionStatistics(BaseModel):
                     f"    {tool_name}: {stats.success_count} succeeded, "
                     f"{stats.failed_count} failed ({total} total)"
                 )
+        if self.server_tool_calls:
+            lines.append("")
+            lines.append("  Server tool calls:")
+            for key in sorted(self.server_tool_calls):
+                count = self.server_tool_calls[key]
+                cost_per_call = SERVER_TOOL_COST_PER_CALL_USD.get(key)
+                estimate = f" (~${count * cost_per_call:.3f})" if cost_per_call else ""
+                lines.append(f"    {key}: {count}{estimate}")
         # --- token usage ---
         lines.append("")
         lines.append("Token Usage")
